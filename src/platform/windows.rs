@@ -10,6 +10,7 @@
 
 use std::ffi::c_void;
 use std::mem::size_of;
+use std::path::Path;
 use std::ptr::null_mut;
 use std::sync::Once;
 use std::time::Duration;
@@ -36,13 +37,15 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, DispatchMessageW, EnumChildWindows, EnumWindows, GW_OWNER, GWL_EXSTYLE,
     GetClassNameW, GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
     GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
-    IsWindowVisible, KillTimer, MSG, SW_RESTORE, SetForegroundWindow, SetTimer, ShowWindow,
-    TranslateMessage, WM_HOTKEY, WM_TIMER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    IsWindowVisible, KillTimer, MSG, PostQuitMessage, SW_RESTORE, SetForegroundWindow, SetTimer,
+    ShowWindow, TranslateMessage, WM_HOTKEY, WM_TIMER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW,
 };
 use windows_sys::core::{BOOL, GUID, HRESULT};
 
 use super::windows_hud::HudWindow;
 use super::windows_touchpad::{Sample, Source};
+use super::windows_tray::{self, Action, HotkeyStatus, Tray};
 use super::{Backend, Event};
 use crate::config::{Claim, Config};
 use crate::gesture::Phase;
@@ -615,7 +618,12 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler) -> Result<()> {
+pub fn run_daemon(
+    cfg: &Config,
+    hotkeys: &[Hotkey],
+    config_path: &Path,
+    handle: &mut super::Handler,
+) -> Result<()> {
     // One daemon per session: a second would fail every RegisterHotKey anyway.
     let name = wide("Local\\window-jump-daemon");
     unsafe {
@@ -628,7 +636,7 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
 
     let mut cfg = cfg.clone();
     let mut hotkeys = hotkeys.to_vec();
-    let mut registered = register_hotkeys(&hotkeys, 0);
+    let (mut registered, mut statuses) = register_hotkeys(&hotkeys, 0);
 
     // Thread timers: the tick, and while a hotkey's modifiers are held, the
     // check for their release. Both post WM_TIMER to this thread with the
@@ -642,10 +650,12 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
     // message-only one. Without a Precision Touchpad it simply never fires.
     let touchpad = Source::new(!cfg.swipes.is_empty());
     let mut swipe_claim: Option<Claim> = None;
+    // A tray that Windows refuses is not fatal: hotkeys must still work.
+    let mut tray = Tray::new(&statuses);
     let mut msg: MSG = unsafe { std::mem::zeroed() };
     // Hotkeys registered with a null HWND, and the timers, are posted to
-    // this thread's queue with a null HWND; the overlay's and touchpad's own
-    // messages carry their windows and are dispatched to them.
+    // this thread's queue with a null HWND; the overlay's, touchpad's and
+    // tray's own messages carry their windows and are dispatched to them.
     while unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } > 0 {
         let mut changed = None;
         if !msg.hwnd.is_null() {
@@ -656,10 +666,8 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
             // The hidden window's WndProc parsed any WM_INPUT into samples.
             if let Some(touchpad) = &touchpad {
                 for sample in touchpad.drain() {
-                    if let Some(event) = swipe_event(&cfg, &mut swipe_claim, sample)
-                        && let Some(new) = handle(&backend, event)
-                    {
-                        changed = Some(new);
+                    if let Some(event) = swipe_event(&cfg, &mut swipe_claim, sample) {
+                        changed = handle(&backend, event);
                     }
                 }
             }
@@ -693,15 +701,57 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
         if let Some(new) = changed {
             match new.validate() {
                 Ok(parsed) => {
-                    registered = register_hotkeys(&parsed, registered);
+                    (registered, statuses) = register_hotkeys(&parsed, registered);
                     hotkeys = parsed;
                     cfg = new;
                     // A reload can change the claims; the next Begin picks
                     // them up.
                     swipe_claim = None;
+                    if let Some(t) = tray.as_ref() {
+                        t.set_status(&statuses);
+                    }
                 }
                 Err(e) => eprintln!("window-jump: ignoring an invalid config: {e:#}"),
             }
+        }
+
+        let Some(t) = tray.as_mut() else {
+            continue;
+        };
+        let mut quit = false;
+        for action in t.take_actions() {
+            match action {
+                Action::Reload => {
+                    // Same path as the two-second file watcher, forced.
+                    if let Some(new) = handle(&backend, Event::Reload) {
+                        match new.validate() {
+                            Ok(parsed) => {
+                                let (n, s) = register_hotkeys(&parsed, registered);
+                                registered = n;
+                                statuses = s;
+                                hotkeys = parsed;
+                                cfg = new;
+                                swipe_claim = None;
+                                t.set_status(&statuses);
+                            }
+                            Err(e) => {
+                                eprintln!("window-jump: ignoring an invalid config: {e:#}")
+                            }
+                        }
+                    }
+                }
+                Action::OpenConfig => windows_tray::open_config_file(config_path),
+                Action::ToggleAutostart => windows_tray::toggle_autostart(),
+                Action::Quit => {
+                    t.remove();
+                    unsafe { PostQuitMessage(0) };
+                    quit = true;
+                    break;
+                }
+            }
+        }
+        if quit {
+            break;
         }
     }
     Ok(())
@@ -814,22 +864,27 @@ fn held_mods() -> Mods {
 }
 
 /// Drops the `previous` hotkey ids and registers `hotkeys` as ids 1..=n (the
-/// binding index + 1; 0 is not a valid id). Returns n, the ids now in use.
-fn register_hotkeys(hotkeys: &[Hotkey], previous: usize) -> usize {
+/// binding index + 1; 0 is not a valid id). Returns n, the ids now in use,
+/// and whether each binding made it (for the tray's status).
+fn register_hotkeys(hotkeys: &[Hotkey], previous: usize) -> (usize, Vec<HotkeyStatus>) {
     for id in 1..=previous {
         unsafe { UnregisterHotKey(null_mut(), id as i32) };
     }
-    let mut ok = 0;
+    let mut statuses = Vec::with_capacity(hotkeys.len());
     for (i, hk) in hotkeys.iter().enumerate() {
         let (mods, vk) = hk.to_windows();
-        if unsafe { RegisterHotKey(null_mut(), i as i32 + 1, mods, vk) } == 0 {
+        let registered = unsafe { RegisterHotKey(null_mut(), i as i32 + 1, mods, vk) } != 0;
+        if !registered {
             eprintln!("window-jump: could not register {hk}: another app already uses it");
-        } else {
-            ok += 1;
         }
+        statuses.push(HotkeyStatus {
+            keys: hk.to_string(),
+            registered,
+        });
     }
+    let ok = windows_tray::registered_count(&statuses);
     eprintln!("window-jump: registered {ok} hotkey(s)");
-    hotkeys.len()
+    (hotkeys.len(), statuses)
 }
 #[cfg(test)]
 mod tests {

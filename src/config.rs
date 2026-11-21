@@ -207,6 +207,20 @@ pub fn load(path: &Path) -> Result<Config> {
     }
 }
 
+/// Creates `path` from [`TEMPLATE`] when it does not exist, creating its
+/// directory too. Returns whether it wrote the file. The tray's "Open config
+/// file" item uses this so the item always has something to open.
+pub fn ensure(path: &Path) -> Result<bool> {
+    if path.exists() {
+        return Ok(false);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    std::fs::write(path, TEMPLATE).with_context(|| format!("writing {}", path.display()))?;
+    Ok(true)
+}
+
 /// The commented starter file written by `window-jump config init`.
 pub const TEMPLATE: &str = r#"# window-jump configuration.
 # Every setting is optional; what is shown here are the defaults.
@@ -314,6 +328,16 @@ mod tests {
         let mut cfg = Config::default();
         cfg.swipes[0].fingers = 2;
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn ensure_writes_the_template_only_once() {
+        let dir = std::env::temp_dir().join(format!("window-jump-ensure-{}", std::process::id()));
+        let path = dir.join("nested").join("config.toml");
+        assert!(ensure(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), TEMPLATE);
+        assert!(!ensure(&path).unwrap());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
