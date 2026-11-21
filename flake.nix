@@ -21,10 +21,16 @@
         }
       );
 
-      # Building the package runs the unit tests (cargo test).
+      # Building the package runs the unit tests (cargo test). vm-touchpad
+      # boots GNOME in a VM and swipes on a virtual touchpad (needs KVM).
       checks = forAllSystems (
-        system: _: {
+        system: pkgs: {
           inherit (self.packages.${system}) window-jump gnome-shell-extension;
+          vm-touchpad = import ./nix/tests/touchpad.nix {
+            inherit pkgs;
+            window-jump = self.packages.${system}.window-jump;
+            extension = self.packages.${system}.gnome-shell-extension;
+          };
         }
       );
 

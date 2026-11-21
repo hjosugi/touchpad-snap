@@ -98,12 +98,6 @@ impl HudWindow {
         }
     }
 
-    /// The overlay's window, so it can be moved to the desktop of the window
-    /// it is about.
-    pub fn window(&self) -> HWND {
-        self.hwnd
-    }
-
     /// Shows `title` / `detail` centred on the monitor of `near` for
     /// `duration_ms`, replacing whatever was shown.
     pub fn show(&self, near: HWND, title: &str, detail: &str, duration_ms: u32) {

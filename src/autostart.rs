@@ -42,19 +42,6 @@ fn desktop_file() -> PathBuf {
         .join("window-jump.desktop")
 }
 
-/// Whether the daemon is currently set to start at login. The tray menu uses
-/// this for its checkmark.
-pub fn enabled() -> bool {
-    #[cfg(windows)]
-    {
-        registry::run_value_exists()
-    }
-    #[cfg(not(windows))]
-    {
-        desktop_file().exists()
-    }
-}
-
 pub fn enable() -> Result<String> {
     let command = daemon_command()?;
 
@@ -110,9 +97,9 @@ pub fn disable() -> Result<String> {
 #[cfg(windows)]
 mod registry {
     use anyhow::{Result, bail};
-    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, ERROR_SUCCESS};
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
     use windows_sys::Win32::System::Registry::{
-        HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+        HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
     };
 
     const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -138,24 +125,6 @@ mod registry {
             bail!("writing the Run registry value failed (error {rc})");
         }
         Ok(())
-    }
-
-    pub fn run_value_exists() -> bool {
-        let mut data = [0u16; 1024];
-        let mut len = (data.len() * 2) as u32;
-        let mut kind = 0u32;
-        let rc = unsafe {
-            RegGetValueW(
-                HKEY_CURRENT_USER,
-                wide(RUN_KEY).as_ptr(),
-                wide(VALUE).as_ptr(),
-                RRF_RT_REG_SZ,
-                &mut kind,
-                data.as_mut_ptr().cast(),
-                &mut len,
-            )
-        };
-        rc == ERROR_SUCCESS || rc == ERROR_MORE_DATA
     }
 
     pub fn delete_run_value() -> Result<()> {

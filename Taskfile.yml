@@ -56,7 +56,7 @@ tasks:
       - window-jump autostart disable 2>/dev/null || rm -f '{{.HOME}}/.config/autostart/window-jump.desktop'
 
   release:
-    desc: 'Tag and push a release: task release -- 0.3.0 (bump Cargo.toml, metadata.json and CHANGELOG.md first)'
+    desc: 'Tag and push a release: task release -- 0.2.0 (bump Cargo.toml, metadata.json and CHANGELOG.md first)'
     cmds:
       - test -n "{{.CLI_ARGS}}"
       - grep -q '^version = "{{.CLI_ARGS}}"' Cargo.toml

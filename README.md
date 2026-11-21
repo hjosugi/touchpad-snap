@@ -13,9 +13,8 @@ compositor where Wayland allows nothing else.
   swipes you claim (fingers + modifiers) are taken from GNOME; a plain
   three-finger swipe still switches workspace. Keep the fingers down and keep
   moving to step through several windows; move back to step back.
-- **Swipes on Windows**: the same modifier + three-finger swipe works on a
-  Windows Precision Touchpad; Windows' own three/four-finger gestures must be
-  turned off first (see below).
+- **Swipes on Windows**: map a touchpad gesture to the hotkey in Windows
+  Settings (see below).
 - **Overlay**: after each jump the window title and "App · 2 / 5" (plus the
   app icon on GNOME) show briefly in the middle of the screen, so you can
   follow where you are while scrubbing. On Windows this needs the daemon.
@@ -36,8 +35,8 @@ window-jump next / daemon                       window-jump next / daemon
         │  D-Bus (session bus)                          │  Win32
         ▼                                               ▼
 window-jump@hjosugi.github.io                   EnumWindows, SetForegroundWindow,
-(GNOME Shell extension, inside the compositor)  RegisterHotKey, Raw Input
- · List / Activate windows                       (Precision Touchpad)
+(GNOME Shell extension, inside the compositor)  RegisterHotKey
+ · List / Activate windows
  · grabs the daemon's hotkeys
  · claims modifier + touchpad swipes
 ```
@@ -100,33 +99,13 @@ or through dconf) and run `window-jump autostart enable`. Without NixOS:
    .\window-jump.exe autostart enable   # runs window-jumpw.exe (no console window) at login
    .\window-jumpw.exe                    # start it now
    ```
-3. Touchpad (optional): swipes need a **Windows Precision Touchpad** (most
-   modern laptops have one). Turn off the built-in **Three-finger gestures** and
-   **Four-finger gestures** under **Settings → Bluetooth & devices → Touchpad**
-   (set them to *Nothing*), then use the same `[[swipe]]` bindings as on GNOME:
-   with the default config, hold `Ctrl` and swipe three fingers left or right.
-   Windows' own gestures still fire if they stay enabled; raw input cannot
-   intercept them, so both actions would happen.
-
-`window-jumpw.exe` shows a notification-area icon. Its menu reports how many
-hotkeys were registered (and names any another app already took), and offers
-**Reload config**, **Open config file**, **Start at login** and **Quit** — no
-Task Manager needed to stop the daemon.
+3. Touchpad: **Settings → Bluetooth & devices → Touchpad → Advanced gestures**,
+   set e.g. *Three-finger swipe left* to **Custom shortcut** and press
+   `Win+Alt+N`; *right* to `Win+Alt+P`.
 
 Windows are grouped by executable (`notepad.exe`, `Code.exe`…); UWP apps are
-looked up behind their ApplicationFrameHost frame.
-
-Windows on other virtual desktops are included when `workspace = "all"` (the
-default) and skipped when it is `"current"`. The current desktop is `ws 0`;
-other desktops get positive numbers. Jumping to such a window is best effort:
-Windows has no documented API to switch desktops, so window-jump sends
-`Win+Ctrl+Left/Right` (at most eight steps each way) and reports an error if
-the window cannot be reached. Suspended UWP windows stay hidden.
-
-Manual test: create a second desktop with `Win+Ctrl+D`, open a second Notepad
-there (or move one with Task View), return with `Win+Ctrl+Left`, then run
-`window-jump list` (the second Notepad shows a positive `ws`) and
-`window-jump next` from the first Notepad.
+looked up behind their ApplicationFrameHost frame. Windows on other virtual
+desktops are not included yet.
 
 ### From source
 
@@ -183,7 +162,7 @@ action = "next"
 keys = "Super+Alt+P"
 action = "prev"
 
-[[swipe]]                 # GNOME; Windows with a Precision Touchpad
+[[swipe]]                 # GNOME only
 fingers = 3               # 3–5
 modifiers = ["ctrl"]
 direction = "left"        # left | right | up | down
@@ -203,11 +182,7 @@ previous config stays in effect.
 Tips:
 
 - Avoid `Super` alone as the swipe modifier: releasing it opens the GNOME
-  Activities overview (and may open the Start menu on Windows). `Ctrl`,
-  `Ctrl+Alt` or `Shift` are safe.
-- On Windows, turn off the built-in three/four-finger gestures first.
-  Precision Touchpads report their contacts as raw HID input, and Windows'
-  shell sees the same gesture independently — it cannot be intercepted.
+  Activities overview. `Ctrl`, `Ctrl+Alt` or `Shift` are safe.
 - If a hotkey cannot be grabbed (GNOME or another app already uses it), the
   daemon says so at startup; `window-jump daemon -v` logs every event.
 
@@ -220,15 +195,20 @@ cargo build --all-targets && ./test/e2e/gnome.sh
                                # end to end in a throw-away headless GNOME Shell:
                                # real windows, hotkeys typed on a virtual keyboard
 pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe   # on Windows
-pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe -VirtualDesktops
-                               # also covers a window on a second virtual desktop
-nix flake check                # Nix build (runs cargo test)
+nix build .#checks.x86_64-linux.vm-touchpad -L
+                               # a full GNOME session in a VM (needs KVM),
+                               # swiped on a virtual touchpad
+nix flake check                # all Nix checks: the build (runs cargo test) and the VM test
 ```
 
 The e2e test never touches your running desktop: it starts its own
-gnome-shell with its own D-Bus, HOME and dconf. See
+gnome-shell with its own D-Bus, HOME and dconf. That shell reads no input
+devices, so the touchpad path is tested in the VM instead: a uinput touchpad
+plays three-finger swipes through libinput, mutter and GNOME Shell, and the
+test checks that Ctrl + three fingers jumps without switching workspace while
+plain three fingers still switch it. See
 [gnome-extension/README.md](gnome-extension/README.md) for the D-Bus protocol.
-CI runs all of the above on GNOME 46, 48, 49, 50 and 51 (Ubuntu, Debian, Fedora and Arch containers) and on Windows Server 2022.
+CI runs all of the above on GNOME 46, 48, 49, 50 and 51 (Ubuntu, Debian, Fedora and Arch containers), in the NixOS VM, and on Windows Server 2022.
 
 ## License
 
