@@ -55,18 +55,113 @@ KDE Plasma では小さな KWin スクリプトが拡張の役割を果たしま
 
 ### NixOS / Nix flake
 
+flake は NixOS 用と Home Manager 用のモジュールを、それぞれ `default` と
+`touchpad-snap` という名前で公開しています。
+
 ```nix
 # flake.nix
-inputs.touchpad-snap.url = "github:hjosugi/touchpad-snap";
+{
+  inputs.touchpad-snap.url = "github:hjosugi/touchpad-snap";
 
-# configuration.nix（specialArgs などで touchpad-snap を渡す）
+  outputs = { self, nixpkgs, touchpad-snap, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      modules = [
+        touchpad-snap.nixosModules.default
+        ./configuration.nix
+      ];
+    };
+  };
+}
+```
+
+```nix
+# configuration.nix
+services.touchpad-snap = {
+  enable = true;
+  settings = {
+    order = "mru";
+    hotkey = [ { keys = "Super+Alt+N"; action = "next"; } ];
+  };
+};
+```
+
+このモジュールは次を行います。
+
+- `touchpad-snap` パッケージを入れ、`touchpad-snap daemon` を
+  **ユーザー** systemd サービスとして `graphical-session.target` に結び付け、
+  `Restart=on-failure` で動かします。
+- `settings`（通常の TOML スキーマ）を
+  `/etc/touchpad-snap/config.toml` に書き出し、daemon を
+  `--config /etc/touchpad-snap/config.toml` 付きで起動します。
+- GNOME Shell 拡張を入れ、`programs.dconf.profiles.user.databases` 経由で
+  `org.gnome.shell.enabled-extensions` の**システム既定値**に
+  `touchpad-snap@hjosugi.github.io` を追加します。
+
+オプションは `enable`（既定 `false`）、`package`、`settings`（既定 `{}`）、
+`systemd.enable`（既定 `true`）、`gnome.enable`（既定 `true`）です。
+`gnome.enable = true` のとき拡張パッケージは `gnome.extensionPackage` で
+選べます。daemon を自分で管理するなら `systemd.enable = false`、GNOME 以外
+のデスクトップなら `gnome.enable = false` にします。
+
+dconf のデータベースは `user-db:user` の後ろに置かれる*既定値*です。すでに
+`enabled-extensions` を自分で書いているユーザー（拡張アプリでオン・オフした
+場合など）ではユーザーの値が優先され、システム既定値は使われません。最初の
+切り替え後に一度ログアウトしてログインし直し、次のどちらかを行ってください。
+
+```sh
+gnome-extensions enable touchpad-snap@hjosugi.github.io
+```
+
+または、ユーザー側のキーを消してシステム既定値に戻します。
+
+```sh
+dconf reset /org/gnome/shell/enabled-extensions
+```
+
+モジュールを使わない場合も、パッケージは直接指定できます。
+
+```nix
 environment.systemPackages = [
   touchpad-snap.packages.${pkgs.stdenv.hostPlatform.system}.touchpad-snap
   touchpad-snap.packages.${pkgs.stdenv.hostPlatform.system}.gnome-shell-extension
 ];
 ```
 
-そのあと拡張を有効にし（`gnome-extensions enable touchpad-snap@hjosugi.github.io` か dconf）、`touchpad-snap autostart enable` を実行します。NixOS 以外でも `nix run github:hjosugi/touchpad-snap -- doctor` で試せます。
+そのあと拡張を有効にし（`gnome-extensions enable touchpad-snap@hjosugi.github.io`
+か dconf）、`touchpad-snap autostart enable` を実行します。NixOS 以外でも
+`nix run github:hjosugi/touchpad-snap -- doctor` で試せます。
+
+#### Home Manager
+
+```nix
+{
+  imports = [ inputs.touchpad-snap.homeManagerModules.default ];
+
+  services.touchpad-snap = {
+    enable = true;
+    settings = {
+      order = "mru";
+      hotkey = [ { keys = "Super+Alt+N"; action = "next"; } ];
+    };
+  };
+}
+```
+
+オプション名は NixOS モジュールと同じです。設定は
+`$XDG_CONFIG_HOME/touchpad-snap/config.toml`（通常は
+`~/.config/touchpad-snap/config.toml`）に書き出されます。これは daemon が
+既定で読むパスなので、ユーザーサービスは `touchpad-snap daemon` をそのまま
+実行します。`gnome.enable` は Home Manager の
+`programs.gnome-shell.extensions` を使い、これも
+`org/gnome/shell/enabled-extensions` を書き込みます。このリストは丸ごと
+管理されるため、ほかの拡張も `programs.gnome-shell.extensions` に追加して
+ください（既存リストへの追記にはなりません）。
+
+以前の名前は **window-jump** で、バイナリは初回起動時に
+`~/.config/window-jump/config.toml` を
+`~/.config/touchpad-snap/config.toml` へコピーします。どちらのモジュールも
+新しいファイルを自分で書く（NixOS は明示的に `--config` を渡す）ため、
+この自動コピーは起きません。古い設定は `settings` に移してください。
 
 ### Windows 10 / 11
 
@@ -279,10 +374,14 @@ cargo build --all-targets && ./test/e2e/gnome.sh
 pwsh test/e2e/windows.ps1 -Bin target/debug/touchpad-snap.exe   # Windows 上で
 pwsh test/e2e/windows.ps1 -Bin target/debug/touchpad-snap.exe -VirtualDesktops
                                # 2 つ目の仮想デスクトップ上のウィンドウも確認
+nix build .#checks.x86_64-linux.module-eval
+                               # NixOS モジュール・生成される設定・ユニットを評価する
+                               # （KVM 不要）
 nix build .#checks.x86_64-linux.vm-touchpad -L
                                # VM 内の本物の GNOME セッションで、仮想タッチパッドから
                                # スワイプする（KVM が必要）
-nix flake check                # Nix のチェック一式: ビルド（cargo test を含む）と VM テスト
+nix flake check                # Nix のチェック一式: ビルド（cargo test を含む）、
+                               # module-eval、VM テスト
 ```
 
 e2e テストは動作中のデスクトップには一切触れません。専用の gnome-shell・D-Bus・HOME・dconf を立ち上げて使い捨てます。この gnome-shell は入力デバイスを読まないため、タッチパッドの経路は VM で確かめます。uinput の仮想タッチパッドから 3 本指スワイプを libinput・mutter・GNOME Shell に流し、Ctrl＋3 本指の左スワイプと Alt＋3 本指の上下スワイプでは、ワークスペースもアクティビティ画面も動かずにウィンドウが切り替わること、修飾キーなしの 3 本指では今まで通りどちらも動くことを確認します。D-Bus プロトコルは [gnome-extension/README.md](gnome-extension/README.md) を参照してください。CI では上記すべてを GNOME 46・48・49・50・51（Ubuntu、Debian、Fedora、Arch のコンテナ）、NixOS の VM、Windows Server 2022 で実行しています。

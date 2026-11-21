@@ -26,6 +26,11 @@
       checks = forAllSystems (
         system: pkgs: {
           inherit (self.packages.${system}) touchpad-snap gnome-shell-extension;
+          # Evaluates the NixOS module, its generated config and the user
+          # unit; no KVM and no NixOS system build.
+          module-eval = import ./nix/tests/module-eval.nix {
+            inherit pkgs nixpkgs self system;
+          };
           vm-touchpad = import ./nix/tests/touchpad.nix {
             inherit pkgs;
             touchpad-snap = self.packages.${system}.touchpad-snap;
@@ -33,6 +38,18 @@
           };
         }
       );
+
+      nixosModules = {
+        default = self.nixosModules.touchpad-snap;
+        touchpad-snap = import ./nix/nixos.nix { inherit self; };
+      };
+
+      # No `home-manager` input: the module only uses the `lib`, `pkgs` and
+      # `config` that Home Manager passes to every module at import time.
+      homeManagerModules = {
+        default = self.homeManagerModules.touchpad-snap;
+        touchpad-snap = import ./nix/home-manager.nix { inherit self; };
+      };
 
       devShells = forAllSystems (
         system: pkgs: {
