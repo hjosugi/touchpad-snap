@@ -19,6 +19,8 @@ use crate::model::Snapshot;
 #[cfg(target_os = "linux")]
 pub mod gnome;
 #[cfg(target_os = "linux")]
+pub mod kde;
+#[cfg(target_os = "linux")]
 pub mod libinput;
 #[cfg(target_os = "linux")]
 pub mod portal;
@@ -79,6 +81,12 @@ pub fn connect() -> Result<Box<dyn Backend>> {
         {
             return Ok(Box::new(gnome::Gnome::connect()?));
         }
+        // Plasma does not run the GNOME extension; a KWin script loaded on
+        // demand provides the window list and focus. Its hotkeys go through the
+        // portal, so the daemon is handled below like the other non-GNOME case.
+        if kde::detect_from_env().detected() {
+            return Ok(Box::new(kde::Kde::connect()?));
+        }
         match wlroots::Wlroots::connect() {
             Ok(backend) => Ok(Box::new(backend)),
             Err(wlroots_error) => {
@@ -102,7 +110,7 @@ pub fn connect() -> Result<Box<dyn Backend>> {
     #[cfg(not(any(target_os = "linux", windows)))]
     {
         anyhow::bail!(
-            "window-jump supports GNOME (Linux), Sway/Hyprland/niri (Linux) and Windows only, for now"
+            "window-jump supports GNOME, KDE Plasma, Sway/Hyprland/niri (Linux) and Windows only, for now"
         )
     }
 }
@@ -201,6 +209,15 @@ pub fn run_daemon(
                 }
             };
         }
+        // Plasma has no extension; the KDE backend lists and focuses windows
+        // while the portal serves the hotkeys. Respect an explicit override,
+        // even though there is no GNOME extension to talk to on Plasma.
+        if kde::detect_from_env().detected() {
+            return match source {
+                HotkeySource::Portal => portal::run_hotkeys_with(cfg, hotkeys, verbose, handle),
+                HotkeySource::Gnome => gnome::run_daemon(cfg, hotkeys, verbose, handle),
+            };
+        }
         // Hotkeys are normally bound in the compositor config; the daemon is
         // optional there, so say how rather than grabbing keys behind its back.
         if wlroots::detect_from_env().is_ok() || wlroots::desktop_hint_from_env().is_some() {
@@ -219,7 +236,7 @@ pub fn run_daemon(
     {
         let _ = (cfg, hotkeys, config_path, verbose, handle);
         anyhow::bail!(
-            "window-jump supports GNOME, Sway/Hyprland/niri (Linux) and Windows only, for now"
+            "window-jump supports GNOME, KDE Plasma, Sway/Hyprland/niri (Linux) and Windows only, for now"
         )
     }
 }

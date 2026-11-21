@@ -3,8 +3,9 @@
 Switch between the windows **of the app you are in**, with a hotkey or a
 modifier + touchpad swipe — like `Cmd+`` ` on macOS or the "cycle windows of
 the current app" action in BetterTouchTool, for **GNOME (Wayland and X11)**,
-**Sway, Hyprland and niri**, and **Windows**. Written in Rust; a small GNOME
-Shell extension bridges to the compositor where Wayland allows nothing else.
+**KDE Plasma**, **Sway, Hyprland and niri**, and **Windows**. Written in Rust;
+a small GNOME Shell extension or KWin script bridges to the compositor where
+Wayland allows nothing else.
 
 [日本語の README はこちら](README.ja.md)
 
@@ -51,6 +52,10 @@ grab global keys or see the touchpad gestures GNOME uses for itself. The
 extension runs inside GNOME Shell and offers exactly that on the session bus;
 all the logic (which window is next, what a swipe means, the config) is in the
 Rust program. Everything the daemon registered is dropped the moment it exits.
+
+On KDE Plasma a small KWin script plays the extension's role (see
+[KDE Plasma](#kde-plasma)); hotkeys come from the desktop's GlobalShortcuts
+portal, so `window-jump daemon` works there too.
 
 ## Install
 
@@ -149,7 +154,7 @@ directory: copy it to `~/.local/share/gnome-shell/extensions/`.
 | `window-jump daemon [-v]` | Serve the configured hotkeys and swipes. |
 | `window-jump list [--json]` | Show windows grouped by app. |
 | `window-jump activate <id>` | Focus one window by id. |
-| `window-jump doctor` | Check config, extension and window list. |
+| `window-jump doctor` | Check config, backend and window list. |
 | `window-jump config init\|path\|check` | Write / locate / validate the config file. |
 | `window-jump autostart enable\|disable` | Start the daemon at login. |
 
@@ -201,6 +206,44 @@ section); without it, it only prints the reminder. The overlay is a
 GNOME/Windows feature for now. `window-jump doctor` names the compositor it
 detected.
 
+## KDE Plasma
+
+Plasma does not support GNOME Shell extensions. Instead, window-jump writes a
+small KWin script to `$XDG_RUNTIME_DIR/window-jump/` and loads it on demand
+through `org.kde.KWin.Scripting` under a per-process name. The script sends
+`workspace.windowList()` over a private session-bus service and applies the
+focus command that comes back. Nothing is installed in System Settings and
+nothing is enabled there: the script exists only while the `window-jump`
+command (or the daemon) is running, and is unloaded again when it exits.
+`window-jump list`, `next`, `prev`, `activate` and `doctor` work as usual, and
+`doctor` reports the detected session and whether KWin scripting is reachable.
+MRU order is best effort, taken from KWin's stacking order.
+
+`window-jump daemon` takes its hotkeys from the
+[GlobalShortcuts portal](#globalshortcuts-portal-kde-gnome-48) (the desktop
+shows a confirmation dialog), and uses the KWin bridge for listing and
+focusing windows. This needs `xdg-desktop-portal-kde` running. If the portal is
+unavailable, the daemon cannot grab global hotkeys on KDE: bind
+`window-jump next` / `window-jump prev` as command shortcuts in **System
+Settings → Shortcuts** instead, and do not run the daemon. Touchpad swipes and
+the overlay are GNOME/Windows features for now; KDE only lists and focuses
+windows.
+
+The bridge is normally cleaned up automatically. If window-jump was killed
+hard, its script stops polling but stays registered until KWin restarts. Log
+out and back in (KWin scripts loaded this way are not persistent), or unload it
+with the pid of the process that loaded it:
+
+```sh
+qdbus6 org.kde.KWin /Scripting unloadScript window-jump-kde-bridge-<pid>
+```
+
+The generated file can be removed with:
+
+```sh
+rm -f "$XDG_RUNTIME_DIR"/window-jump/kde-bridge-*.js
+```
+
 ## GlobalShortcuts portal (KDE, GNOME 48+)
 
 Normally `window-jump daemon` grabs hotkeys through the GNOME extension. To let
@@ -210,8 +253,9 @@ the desktop register them instead, set `WINDOW_JUMP_HOTKEYS=portal`:
 WINDOW_JUMP_HOTKEYS=portal window-jump daemon
 ```
 
-The desktop then shows a confirmation dialog and remembers the bindings. KDE
-needs no KWin script for this, and GNOME 48+ implements the same portal. On
+The desktop then shows a confirmation dialog and remembers the bindings. On
+KDE this is how the daemon gets its hotkeys; the KWin script described above is
+only for window listing and focus, and GNOME 48+ implements the same portal. On
 GNOME the extension is still used for window listing, the HUD and swipes — only
 the hotkeys move to the portal. When the variable is unset, GNOME keeps using
 the extension's grabs and other desktops try the portal automatically; on
