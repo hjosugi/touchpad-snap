@@ -8,7 +8,7 @@ claims. Install it together with the `window-jump` binary.
 `lib.js` is the GNOME-free part (modifier mapping, the swipe claim state
 machine), unit-tested with Node: `npm test` at the repository root.
 
-## D-Bus protocol (version 1)
+## D-Bus protocol (version 2)
 
 | | |
 |---|---|
@@ -31,6 +31,9 @@ machine), unit-tested with Node: `npm test` at the repository root.
   is -1 for a window on every workspace. Focus on a dialog counts as focus on
   its parent.
 - `Activate(t id) → b ok` — focus a window, switching workspace if needed.
+- `ShowHud(t id, u index, u total, u duration_ms) → b ok` — briefly show an
+  overlay for a window (app icon, title, "index / total") centred on its
+  monitor; a new one replaces the previous. *(Since version 2.)*
 - `SetAccelerators(a(ss) bindings) → as failed` — grab
   `(accelerator, action)` pairs, e.g. `("<Super><Alt>n", "hotkey:0")`, for
   the calling connection. Replaces that caller's previous grabs. Returns the
@@ -55,4 +58,5 @@ When the caller's connection closes, its grabs and claims are released.
 
 ### Property
 
-- `ProtocolVersion` (u) — 1.
+- `ProtocolVersion` (u) — 2. Version 1 had no `ShowHud`; the binary works
+  with either and skips the overlay on version 1.

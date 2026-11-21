@@ -20,6 +20,11 @@ pub mod windows;
 pub trait Backend {
     fn snapshot(&self) -> Result<Snapshot>;
     fn activate(&self, id: u64) -> Result<()>;
+    /// Briefly shows which window was jumped to (`index` is 1-based within
+    /// `total`). Best effort; backends without an overlay do nothing.
+    fn show_hud(&self, _id: u64, _index: usize, _total: usize, _duration_ms: u64) -> Result<()> {
+        Ok(())
+    }
     /// One line for `window-jump doctor`.
     fn describe(&self) -> String;
 }

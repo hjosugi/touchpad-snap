@@ -17,6 +17,7 @@ pub struct Config {
     pub include_minimized: bool,
     pub mru_session_ms: u64,
     pub gesture: GestureConfig,
+    pub hud: HudConfig,
     #[serde(rename = "hotkey")]
     pub hotkeys: Vec<HotkeyBinding>,
     #[serde(rename = "swipe")]
@@ -31,6 +32,23 @@ pub struct GestureConfig {
     /// Further travel per extra step while the fingers stay down; 0 = one
     /// step per swipe.
     pub repeat_step: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HudConfig {
+    /// Show the app, window title and "2 / 5" after each jump (GNOME).
+    pub enabled: bool,
+    pub duration_ms: u64,
+}
+
+impl Default for HudConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            duration_ms: 700,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -73,6 +91,7 @@ impl Default for Config {
             include_minimized: true,
             mru_session_ms: 1000,
             gesture: GestureConfig::default(),
+            hud: HudConfig::default(),
             hotkeys: vec![
                 HotkeyBinding {
                     keys: "Super+Alt+N".into(),
@@ -214,6 +233,12 @@ threshold = 120.0
 # While the fingers stay down, every further `repeat_step` of travel jumps
 # again (moving back jumps back). 0 = one jump per swipe.
 repeat_step = 220.0
+
+[hud]
+# After each jump, briefly show the app, the window title and "2 / 5" in the
+# middle of the window's screen (GNOME; Windows has no overlay yet).
+enabled = true
+duration_ms = 700
 
 # Global hotkeys. Modifiers: Super (Win), Ctrl, Alt, Shift.
 # Keys: A-Z, 0-9, F1-F24, Left, Right, Up, Down, Tab, Space, Return, Escape,

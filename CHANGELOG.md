@@ -8,6 +8,10 @@
   seconds) and registers the new hotkeys and swipes without a restart. An
   invalid edit is reported once and the previous config stays in effect; a
   removed file means the defaults. (#4)
+- GNOME: an overlay after each jump (app icon, window title, "2 / 5"),
+  `[hud] enabled` / `duration_ms` in the config. Extension protocol 2 adds
+  `ShowHud`; the binary still works with a protocol 1 extension, without the
+  overlay. (#5)
 
 ## [0.1.0] - 2026-11-21
 
