@@ -19,6 +19,12 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ../Cargo.lock;
 
+  # window-jumpw is the console-less daemon for Windows; on Linux it is the
+  # same as `window-jump daemon`.
+  postInstall = ''
+    rm $out/bin/window-jumpw
+  '';
+
   meta = {
     description = "Switch between windows of the same app with hotkeys and touchpad swipes";
     homepage = "https://github.com/hjosugi/window-jump";
