@@ -3,9 +3,10 @@
 //! Windows are listed the way Alt+Tab lists them (visible, not tool windows,
 //! unowned, not a suspended UWP frame), grouped by executable path, including
 //! windows on other virtual desktops (see [`workspace_for_window`]). Hotkeys
-//! go through `RegisterHotKey`. Touchpad swipes are left to Windows itself:
-//! Settings → Bluetooth & devices → Touchpad → Advanced gestures can send any
-//! key combination, so map a three-finger swipe to the configured hotkeys.
+//! go through `RegisterHotKey`. Precision Touchpad swipes arrive as `WM_INPUT`
+//! from raw input (see windows_touchpad.rs), so the same `[[swipe]]` bindings
+//! as on GNOME work here too; Windows' own three/four-finger gestures have to
+//! be turned off in Settings, since raw input cannot intercept them.
 
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -41,8 +42,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 use windows_sys::core::{BOOL, GUID, HRESULT};
 
 use super::windows_hud::HudWindow;
+use super::windows_touchpad::{Sample, Source};
 use super::{Backend, Event};
-use crate::config::Config;
+use crate::config::{Claim, Config};
+use crate::gesture::Phase;
 use crate::hotkey::{Hotkey, Mods};
 use crate::model::{Snapshot, Window};
 
@@ -229,7 +232,7 @@ impl Backend for Win32 {
     }
 
     fn describe(&self) -> String {
-        "Win32 (EnumWindows / RegisterHotKey)".into()
+        "Win32 (EnumWindows / RegisterHotKey / raw touchpad input)".into()
     }
 }
 
@@ -623,9 +626,9 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
         // Deliberately leaked: held until the process exits.
     }
 
+    let mut cfg = cfg.clone();
     let mut hotkeys = hotkeys.to_vec();
     let mut registered = register_hotkeys(&hotkeys, 0);
-    explain_swipes(cfg);
 
     // Thread timers: the tick, and while a hotkey's modifiers are held, the
     // check for their release. Both post WM_TIMER to this thread with the
@@ -635,49 +638,67 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
 
     let mut backend = Win32::new();
     backend.hud = HudWindow::new();
+    // Raw input needs a window to target; the touchpad module owns the hidden
+    // message-only one. Without a Precision Touchpad it simply never fires.
+    let touchpad = Source::new(!cfg.swipes.is_empty());
+    let mut swipe_claim: Option<Claim> = None;
     let mut msg: MSG = unsafe { std::mem::zeroed() };
     // Hotkeys registered with a null HWND, and the timers, are posted to
-    // this thread's queue with a null HWND; the overlay's own messages carry
-    // its window and are dispatched to it.
+    // this thread's queue with a null HWND; the overlay's and touchpad's own
+    // messages carry their windows and are dispatched to them.
     while unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } > 0 {
+        let mut changed = None;
         if !msg.hwnd.is_null() {
             unsafe {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
-            continue;
-        }
-        let changed = match msg.message {
-            WM_HOTKEY => match msg.wParam as usize {
-                0 => None,
-                id => {
-                    let index = id - 1;
-                    let mods = hotkeys.get(index).map(|h| h.mods).unwrap_or_default();
-                    // Without modifiers there is nothing to hold.
-                    let tracked = !mods.is_empty();
-                    let changed = handle(&backend, Event::Hotkey { index, tracked });
-                    if tracked {
-                        release.watch(mods);
+            // The hidden window's WndProc parsed any WM_INPUT into samples.
+            if let Some(touchpad) = &touchpad {
+                for sample in touchpad.drain() {
+                    if let Some(event) = swipe_event(&cfg, &mut swipe_claim, sample)
+                        && let Some(new) = handle(&backend, event)
+                    {
+                        changed = Some(new);
                     }
-                    changed
-                }
-            },
-            WM_TIMER if msg.wParam == tick => handle(&backend, Event::Tick),
-            WM_TIMER if release.is_timer(msg.wParam) => {
-                if release.poll() {
-                    handle(&backend, Event::Released)
-                } else {
-                    None
                 }
             }
-            _ => None,
-        };
+        } else {
+            changed = match msg.message {
+                WM_HOTKEY => match msg.wParam as usize {
+                    0 => None,
+                    id => {
+                        let index = id - 1;
+                        let mods = hotkeys.get(index).map(|h| h.mods).unwrap_or_default();
+                        // Without modifiers there is nothing to hold.
+                        let tracked = !mods.is_empty();
+                        let changed = handle(&backend, Event::Hotkey { index, tracked });
+                        if tracked {
+                            release.watch(mods);
+                        }
+                        changed
+                    }
+                },
+                WM_TIMER if msg.wParam == tick => handle(&backend, Event::Tick),
+                WM_TIMER if release.is_timer(msg.wParam) => {
+                    if release.poll() {
+                        handle(&backend, Event::Released)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+        }
         if let Some(new) = changed {
             match new.validate() {
                 Ok(parsed) => {
                     registered = register_hotkeys(&parsed, registered);
                     hotkeys = parsed;
-                    explain_swipes(&new);
+                    cfg = new;
+                    // A reload can change the claims; the next Begin picks
+                    // them up.
+                    swipe_claim = None;
                 }
                 Err(e) => eprintln!("window-jump: ignoring an invalid config: {e:#}"),
             }
@@ -729,6 +750,69 @@ fn modifiers_down(mods: Mods) -> bool {
         || (mods.contains(Mods::SUPER) && (down(VK_LWIN) || down(VK_RWIN)))
 }
 
+/// Turns a parsed touchpad sample into a swipe event, but only for a
+/// (finger count, modifiers) combination the config claims. Modifiers are
+/// sampled at Begin, as on GNOME.
+fn swipe_event(cfg: &Config, active: &mut Option<Claim>, sample: Sample) -> Option<Event> {
+    match sample.phase {
+        Phase::Begin => {
+            let claim = Claim {
+                fingers: sample.fingers,
+                mods: held_mods(),
+            };
+            if cfg.claims().contains(&claim) {
+                *active = Some(claim);
+                Some(Event::Swipe {
+                    phase: Phase::Begin,
+                    claim,
+                    dx: 0.0,
+                    dy: 0.0,
+                })
+            } else {
+                *active = None;
+                None
+            }
+        }
+        Phase::Update => {
+            let claim = (*active)?;
+            Some(Event::Swipe {
+                phase: Phase::Update,
+                claim,
+                dx: sample.dx,
+                dy: sample.dy,
+            })
+        }
+        Phase::End | Phase::Cancel => {
+            let claim = active.take()?;
+            Some(Event::Swipe {
+                phase: sample.phase,
+                claim,
+                dx: 0.0,
+                dy: 0.0,
+            })
+        }
+    }
+}
+
+/// Modifiers held right now, in the same bits the GNOME extension sends.
+fn held_mods() -> Mods {
+    let down = |vk: u16| unsafe { GetAsyncKeyState(vk as i32) < 0 };
+    let mut mods = Mods::default();
+    if down(VK_SHIFT) {
+        mods |= Mods::SHIFT;
+    }
+    if down(VK_CONTROL) {
+        mods |= Mods::CTRL;
+    }
+    if down(VK_MENU) {
+        mods |= Mods::ALT;
+    }
+    if down(VK_LWIN) || down(VK_RWIN) {
+        mods |= Mods::SUPER;
+    }
+    mods
+}
+
 /// Drops the `previous` hotkey ids and registers `hotkeys` as ids 1..=n (the
 /// binding index + 1; 0 is not a valid id). Returns n, the ids now in use.
 fn register_hotkeys(hotkeys: &[Hotkey], previous: usize) -> usize {
@@ -747,16 +831,6 @@ fn register_hotkeys(hotkeys: &[Hotkey], previous: usize) -> usize {
     eprintln!("window-jump: registered {ok} hotkey(s)");
     hotkeys.len()
 }
-
-fn explain_swipes(cfg: &Config) {
-    if !cfg.swipes.is_empty() {
-        eprintln!(
-            "window-jump: [[swipe]] bindings are GNOME-only. On Windows, map touchpad swipes to the hotkeys in \
-             Settings → Bluetooth & devices → Touchpad → Advanced gestures."
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
