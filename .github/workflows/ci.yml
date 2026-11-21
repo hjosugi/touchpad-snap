@@ -31,6 +31,19 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
 
+  rust-libinput:
+    name: Rust (libinput feature, build and tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libinput-dev libudev-dev pkg-config
+      - run: cargo clippy --all-targets --locked --features libinput -- -D warnings
+      - run: cargo test --locked --features libinput
+
   windows-arm64:
     name: Rust (windows aarch64, build only)
     runs-on: windows-latest

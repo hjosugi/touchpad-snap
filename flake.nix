@@ -47,6 +47,10 @@
               glib # gdbus
               dbus # dbus-run-session
               go-task
+              # --features libinput: libinput, its udev backend and pkg-config
+              pkg-config
+              libinput
+              systemd
             ];
           };
         }

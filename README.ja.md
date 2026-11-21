@@ -7,6 +7,7 @@
 - **ショートカット**: 既定は `Super+Alt+N`（次）/ `Super+Alt+P`（前）。設定で変更できます。
 - **GNOME のスワイプ**: `Ctrl` を押しながら 3 本指でスワイプ。登録した組み合わせ（指の本数＋修飾キー）だけを GNOME から横取りするので、修飾キーなしの 3 本指スワイプは今まで通りワークスペース切り替えに使えます。指を離さずに動かし続けると何枚も進み、戻すと戻ります。
 - **Windows のスワイプ**: Windows Precision Touchpad なら、GNOME と同じ「修飾キー＋3 本指スワイプ」が使えます。ただし Windows 標準の 3 / 4 本指ジェスチャーは先にオフにする必要があります（後述）。
+- **その他のデスクトップのスワイプ**: 省略可能な `--features libinput` 付きでビルドすると、KDE・Sway/Hyprland/niri・X11 のウィンドウマネージャーでは libinput から直接スワイプを読み取れます（後述）。GNOME では拡張を使う経路が優先です。
 - **切り替え先の表示**: 切り替えるたびに、ウィンドウのタイトルと「アプリ · 2 / 5」（GNOME ではアプリのアイコンも）を画面中央に一瞬表示します。スワイプで何枚も進むときに今どこにいるかが分かります。Windows では daemon 経由のときに表示されます。
 - **並び順**: `stable`（固定順で全ウィンドウを巡回）、`position`（画面の左から右）、`mru`（Alt+Tab と同じ動き。1 回押すと直近 2 枚を往復し、修飾キーを押したまま続けて押すと古い方へ進み、離したところで確定する）。
 - **他のツールからも使える**: `window-jump next` / `window-jump prev` は普通のコマンドなので、GNOME のカスタムショートカット、AutoHotkey、keyd、マウスのユーティリティなどにも割り当てられます。
@@ -136,7 +137,7 @@ binds {
 }
 ```
 
-`window-jump daemon` は不要です（実行するとコンポジタ設定への割り当てを促すメッセージを出すだけです）。タッチパッドのスワイプと切り替え先の表示は今のところ GNOME / Windows 向けです。`window-jump doctor` が判別したコンポジタ名を表示します。
+`window-jump daemon` はホットキーには不要です（実行するとコンポジタ設定への割り当てを促すメッセージを出します）。省略可能な `libinput` フィーチャー付きでビルドすると、タッチパッドのスワイプのために daemon を動かし続けます（次節）。無い場合はメッセージを出すだけです。切り替え先の表示は今のところ GNOME / Windows 向けです。`window-jump doctor` が判別したコンポジタ名を表示します。
 
 ## GlobalShortcuts ポータル（KDE、GNOME 48 以降）
 
@@ -147,6 +148,30 @@ WINDOW_JUMP_HOTKEYS=portal window-jump daemon
 ```
 
 デスクトップが確認ダイアログを表示し、割り当てを記憶します。KDE では KWin スクリプトが不要で、GNOME 48 以降も同じポータルに対応しています。GNOME ではウィンドウ一覧・HUD・スワイプに引き続き拡張を使い、ホットキーだけをポータルへ移します。未指定なら GNOME は従来どおり拡張のグラブを使い、それ以外のデスクトップはポータルを自動で試します（Sway・Hyprland・niri では上記のコンポジタ設定による割り当てが通常です）。ポータルの有無とアプリ ID（`io.github.hjosugi.WindowJump`）の登録結果は `window-jump doctor` で確認できます。アプリ ID を必要とするデスクトップでは、`.desktop` ファイル名と一致していれば受理されます。ポータルのセッションは 1 回しかバインドできないため、ホットキーの変更は daemon の再起動後に反映されます。
+
+## libinput ジェスチャー（KDE、Sway・Hyprland・niri、X11）
+
+GNOME では拡張、Windows では Precision Touchpad がスワイプを担当します。それ以外のデスクトップでは、省略可能な `libinput` フィーチャーを付けてビルドすると、libinput-gestures のように libinput から直接ジェスチャーを読めます。
+
+```sh
+cargo install --locked --path . --features libinput   # チェックアウトから
+# または
+cargo build --release --features libinput
+```
+
+`input` クレートは libinput と libudev を使うため、ビルドには開発用ファイルが必要です（Debian/Ubuntu なら `libinput-dev libudev-dev pkg-config`、Fedora なら `libinput-devel libudev-devel`、このリポジトリでは `nix develop`）。
+
+`/dev/input/event*` を読むには、ユーザーが `input` グループに入っている必要があります。
+
+```sh
+sudo usermod -aG input "$USER"
+```
+
+ログアウトしてログインし直すと反映されます。`window-jump doctor` の `gestures` 行に、フィーチャーが組み込まれているか、タッチパッドが見つかったか、`/dev/input` を読めるかが表示されます。`input` グループに入るとキーボードを含むすべての入力デバイスを読めるようになる点に注意してください。それが許容できない場合は、対象を絞った udev ルールを使ってください。
+
+あとは通常どおり daemon を動かします。Sway・Hyprland・niri ではホットキーは従来どおりコンポジタ設定から、KDE などのポータル対応デスクトップでは GlobalShortcuts から登録します。daemon は設定した `[[swipe]]` をタッチパッドから処理します。GNOME では拡張を使い続けてください。拡張はスワイプを横取りできるので、シェル側でも同じ操作が起きません。
+
+libinput はコンポジタが同じジェスチャーを見るのを止められません。window-jump は横取りしないため、コンポジタ側でもワークスペース切り替えやウィンドウ移動など、その指に割り当てられた動作が同時に起きる可能性があります。コンポジタが使っていない修飾キー＋指の本数（既定の `Ctrl`＋3 本指はたいてい安全です）を使うか、コンポジタ側のジェスチャーをオフにしてください。Windows Precision Touchpad と同じ制約です。
 
 ## 設定
 
@@ -174,7 +199,7 @@ action = "next"
 keys = "Super+Alt+P"
 action = "prev"
 
-[[swipe]]                 # GNOME / Windows（Precision Touchpad）
+[[swipe]]                 # GNOME / Windows（Precision Touchpad）/ libinput ビルド
 fingers = 3               # 3〜5
 modifiers = ["ctrl"]
 direction = "left"        # left | right | up | down

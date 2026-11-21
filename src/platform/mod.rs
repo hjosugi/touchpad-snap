@@ -19,6 +19,8 @@ use crate::model::Snapshot;
 #[cfg(target_os = "linux")]
 pub mod gnome;
 #[cfg(target_os = "linux")]
+pub mod libinput;
+#[cfg(target_os = "linux")]
 pub mod portal;
 #[cfg(windows)]
 pub mod windows;
@@ -202,7 +204,7 @@ pub fn run_daemon(
         // Hotkeys are normally bound in the compositor config; the daemon is
         // optional there, so say how rather than grabbing keys behind its back.
         if wlroots::detect_from_env().is_ok() || wlroots::desktop_hint_from_env().is_some() {
-            return wlroots::run_daemon();
+            return wlroots::run_daemon(cfg, verbose, handle);
         }
         match source {
             HotkeySource::Portal => portal::run_hotkeys_with(cfg, hotkeys, verbose, handle),

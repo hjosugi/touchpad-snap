@@ -10,6 +10,12 @@ readme = "README.md"
 keywords = ["window-switcher", "gnome", "wayland", "windows", "gestures"]
 categories = ["command-line-utilities", "gui"]
 
+[features]
+default = []
+# Read touchpad swipes directly from libinput (Linux; needs libinput, libudev
+# and the user in the input group). See README.md.
+libinput = ["dep:input"]
+
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.9", features = ["derive"] }
@@ -23,6 +29,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_Wi
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"
+input = { version = "0.10", optional = true }
 
 [profile.release]
 lto = true

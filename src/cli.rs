@@ -331,6 +331,8 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
 
     #[cfg(target_os = "linux")]
     println!("portal   {}", platform::portal::doctor());
+    #[cfg(target_os = "linux")]
+    println!("gestures {}", platform::libinput::doctor());
 
     if problems > 0 {
         bail!("{problems} problem(s) found");

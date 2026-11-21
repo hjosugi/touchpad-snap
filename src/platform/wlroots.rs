@@ -8,6 +8,9 @@
 use anyhow::{Result, bail};
 
 use super::Backend;
+#[cfg(feature = "libinput")]
+use super::Event as DaemonEvent;
+use crate::config::Config;
 use crate::model::Snapshot;
 
 mod hyprland;
@@ -147,15 +150,64 @@ impl Backend for Wlroots {
     }
 }
 
-/// There is no portable global-key or gesture API on wlroots. Say so once and
-/// return instead of blocking; hotkeys belong in the compositor config.
-pub fn run_daemon() -> Result<()> {
+/// There is no portable global-key or gesture API on wlroots. Hotkeys belong
+/// in the compositor config; say so once. Without the `libinput` feature the
+/// daemon then returns instead of blocking. With it, the daemon stays for
+/// touchpad swipes read straight from libinput (and still reloads the config).
+pub fn run_daemon(cfg: &Config, verbose: bool, handle: &mut super::Handler) -> Result<()> {
     eprintln!(
         "window-jump: this compositor has no portable global-hotkey API; \
          bind `window-jump next` / `window-jump prev` in its config instead \
          (for example `bindsym $mod+n exec window-jump next`). \
-         The daemon is not needed here."
+         The daemon is not needed for hotkeys."
     );
+    #[cfg(feature = "libinput")]
+    {
+        eprintln!("window-jump: serving configured touchpad swipes through libinput");
+        run_gestures(cfg, verbose, handle)
+    }
+    #[cfg(not(feature = "libinput"))]
+    {
+        let _ = (cfg, verbose, handle);
+        Ok(())
+    }
+}
+
+/// The daemon loop used when libinput gestures are compiled in: no hotkeys to
+/// register, just gesture events and the config-reload tick.
+#[cfg(feature = "libinput")]
+fn run_gestures(cfg: &Config, verbose: bool, handle: &mut super::Handler) -> Result<()> {
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    let backend = Wlroots::connect()?;
+    let (tx, rx) = mpsc::channel();
+    // Keep the channel connected even if the libinput thread stops (no seat,
+    // no permission); the daemon then keeps checking the config.
+    let keepalive = tx.clone();
+    let gestures = super::libinput::GestureSource::spawn(cfg.claims(), tx, verbose);
+    let _keepalive = keepalive;
+
+    let mut last_tick = Instant::now();
+    loop {
+        let wait = super::TICK.saturating_sub(last_tick.elapsed());
+        let incoming = match rx.recv_timeout(wait) {
+            Ok(event) => Some(event),
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+        let mut changed = None;
+        if last_tick.elapsed() >= super::TICK {
+            last_tick = Instant::now();
+            changed = handle(&backend, DaemonEvent::Tick);
+        }
+        if let Some(event) = incoming {
+            changed = changed.or(handle(&backend, event));
+        }
+        if let Some(new) = changed {
+            gestures.set_claims(new.claims());
+        }
+    }
     Ok(())
 }
 

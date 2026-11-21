@@ -460,6 +460,14 @@ pub fn parse_signal(msg: &Message, session: &str, hotkeys: &[Hotkey]) -> Option<
     }
 }
 
+/// What the portal loop receives: a hotkey signal, or (with the `libinput`
+/// feature) a gesture from the touchpad reader thread.
+enum Incoming {
+    Signal(Message),
+    #[cfg(feature = "libinput")]
+    Gesture(Event),
+}
+
 /// Portal-only daemon loop: no extension hotkeys, but the desktop's backend
 /// still lists, activates and draws the HUD.
 pub fn run_hotkeys(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler) -> Result<()> {
@@ -480,14 +488,14 @@ pub fn run_hotkeys_with(
 
     let shortcuts = Shortcuts::register_on(conn, cfg, &hotkeys, verbose)?;
     let mut session = String::new();
-    let (tx, rx) = std::sync::mpsc::channel::<Message>();
+    let (tx, rx) = std::sync::mpsc::channel::<Incoming>();
     if let Some(shortcuts) = &shortcuts {
         session = shortcuts.session_handle().as_str().to_string();
         let signals = shortcuts.signals()?;
         let signal_tx = tx.clone();
         std::thread::spawn(move || {
             for msg in signals.flatten() {
-                if signal_tx.send(msg).is_err() {
+                if signal_tx.send(Incoming::Signal(msg)).is_err() {
                     break;
                 }
             }
@@ -495,6 +503,25 @@ pub fn run_hotkeys_with(
     } else {
         eprintln!("window-jump: running without global hotkeys");
     }
+
+    // Touchpad gestures from libinput, bridged into the same loop. The
+    // portal's hotkey behaviour is unchanged.
+    #[cfg(feature = "libinput")]
+    let gestures = {
+        let (gesture_tx, gesture_rx) = std::sync::mpsc::channel::<Event>();
+        let source = super::libinput::GestureSource::spawn(cfg.claims(), gesture_tx, verbose);
+        eprintln!("window-jump: serving configured touchpad swipes through libinput");
+        let bridge_tx = tx.clone();
+        std::thread::spawn(move || {
+            for event in gesture_rx {
+                if bridge_tx.send(Incoming::Gesture(event)).is_err() {
+                    break;
+                }
+            }
+        });
+        source
+    };
+
     // Keep the sender alive even when there is no portal session, so the loop
     // keeps ticking instead of seeing a disconnected channel.
     let _keepalive = tx;
@@ -512,15 +539,24 @@ pub fn run_hotkeys_with(
             last_tick = Instant::now();
             changed = handle(backend.as_ref(), Event::Tick);
         }
-        if let Some(msg) = incoming
-            && let Some(event) = parse_signal(&msg, &session, &hotkeys)
-        {
-            changed = changed.or(handle(backend.as_ref(), event));
+        match incoming {
+            Some(Incoming::Signal(msg)) => {
+                if let Some(event) = parse_signal(&msg, &session, &hotkeys) {
+                    changed = changed.or(handle(backend.as_ref(), event));
+                }
+            }
+            #[cfg(feature = "libinput")]
+            Some(Incoming::Gesture(event)) => {
+                changed = changed.or(handle(backend.as_ref(), event));
+            }
+            None => {}
         }
         if let Some(new) = changed {
             match new.validate() {
                 Ok(parsed) => {
                     hotkeys = parsed;
+                    #[cfg(feature = "libinput")]
+                    gestures.set_claims(new.claims());
                     eprintln!(
                         "window-jump: config reloaded; GlobalShortcuts bindings change after a restart"
                     );

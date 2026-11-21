@@ -16,6 +16,10 @@ Shell extension bridges to the compositor where Wayland allows nothing else.
 - **Swipes on Windows**: the same modifier + three-finger swipe works on a
   Windows Precision Touchpad; Windows' own three/four-finger gestures must be
   turned off first (see below).
+- **Swipes elsewhere**: an optional `--features libinput` build reads swipes
+  straight from libinput on KDE, Sway/Hyprland/niri and X11 window managers
+  (see [libinput gestures](#libinput-gestures-kde-swayhyprlandniri-x11)).
+  On GNOME the extension path is preferred.
 - **Overlay**: after each jump the window title and "App · 2 / 5" (plus the
   app icon on GNOME) show briefly in the middle of the screen, so you can
   follow where you are while scrubbing. On Windows this needs the daemon.
@@ -190,10 +194,12 @@ binds {
 }
 ```
 
-`window-jump daemon` is not needed on these compositors; it only prints a
-reminder to bind the commands in the compositor config. Touchpad swipes and
-the overlay are GNOME/Windows features for now. `window-jump doctor` names the
-compositor it detected.
+`window-jump daemon` is not needed for hotkeys on these compositors; it
+prints a reminder to bind the commands in the compositor config. Built with the
+optional `libinput` feature it stays running for touchpad swipes (next
+section); without it, it only prints the reminder. The overlay is a
+GNOME/Windows feature for now. `window-jump doctor` names the compositor it
+detected.
 
 ## GlobalShortcuts portal (KDE, GNOME 48+)
 
@@ -214,6 +220,47 @@ choice. `window-jump doctor` reports whether the portal is available and whether
 app id (`io.github.hjosugi.WindowJump`) was registered; desktops that require it
 accept the id when it matches a `.desktop` file. Changing the hotkey list takes
 effect after a daemon restart, since a portal session is bound only once.
+
+## libinput gestures (KDE, Sway/Hyprland/niri, X11)
+
+GNOME's extension and Windows Precision Touchpads provide swipes out of the
+box. Elsewhere the daemon can read gestures directly from libinput, like
+libinput-gestures, if window-jump is built with the optional `libinput` feature:
+
+```sh
+cargo install --locked --path . --features libinput   # from a checkout
+# or
+cargo build --release --features libinput
+```
+
+The `input` crate uses libinput and libudev, so the development files are
+needed to build (`libinput-dev libudev-dev pkg-config` on Debian/Ubuntu,
+`libinput-devel libudev-devel` on Fedora, or `nix develop` in this repository).
+
+Reading `/dev/input/event*` needs the user in the `input` group:
+
+```sh
+sudo usermod -aG input "$USER"
+```
+
+Log out and back in for the new group to take effect. `window-jump doctor` has
+a `gestures` line: whether the feature is compiled in, whether a touchpad was
+found, and whether `/dev/input` is readable. Group membership lets your user
+read every input device, keyboards included; use a narrower udev rule instead
+if that trade-off is not acceptable.
+
+Then run the daemon as usual. On Sway, Hyprland and niri the hotkeys still come
+from the compositor config; on KDE and other portal desktops from
+GlobalShortcuts. The daemon serves the configured `[[swipe]]` bindings from the
+touchpad. On GNOME keep using the extension: it can claim swipes, so the shell
+does not also act on them.
+
+libinput cannot stop the compositor from seeing the same gesture. window-jump
+does not intercept it, so the compositor may switch workspace, move a window
+or do whatever else it has bound to those fingers at the same time. Use a
+modifier + finger count the compositor does not use for its own gestures (the
+default `Ctrl` + three fingers is usually safe), or turn the compositor
+gesture off. This is the same limitation as Windows Precision Touchpad input.
 
 ## Configuration
 
@@ -243,7 +290,7 @@ action = "next"
 keys = "Super+Alt+P"
 action = "prev"
 
-[[swipe]]                 # GNOME; Windows with a Precision Touchpad
+[[swipe]]                 # GNOME; Windows and libinput builds elsewhere
 fingers = 3               # 3–5
 modifiers = ["ctrl"]
 direction = "left"        # left | right | up | down
