@@ -8,8 +8,10 @@
 #
 #   nix build .#checks.x86_64-linux.vm-touchpad -L      (needs KVM)
 #
-# Asserts that Ctrl + three fingers jumps to the app's other window without
-# switching workspace, and that plain three fingers still switch workspace.
+# Asserts that the default swipes jump between the app's windows and leave
+# GNOME alone (Ctrl + three fingers left: no workspace switch; Alt + three
+# fingers up/down: no overview), and that plain three fingers still open the
+# overview and switch workspace.
 {
   pkgs,
   window-jump,
@@ -62,6 +64,7 @@ pkgs.testers.runNixOSTest {
       extension
       swipe
       pkgs.gnome-text-editor
+      pkgs.libinput
     ];
 
     programs.dconf.profiles.user.databases = [
@@ -135,8 +138,10 @@ pkgs.testers.runNixOSTest {
         print("--- shell state ---")
         print(shell_state())
         print(machine.execute("journalctl -b --no-pager | grep -E 'window-jump|gnome-shell|JS ' | tail -n 80")[1])
-        print("--- signals from the extension ---")
-        print(machine.execute("grep -E 'member=|uint32|double' /tmp/signals.log | head -n 60")[1])
+        print("--- the last signals from the extension (phase, fingers, mods, dx, dy) ---")
+        print(machine.execute("grep -E 'uint32|double' /tmp/signals.log | awk '{print $2}' | paste -d' ' - - - - - | tail -n 25")[1])
+        print("--- the last gestures libinput reported ---")
+        print(machine.execute("grep -E 'GESTURE|KEYBOARD_KEY' /tmp/libinput.log | tail -n 40")[1])
         raise Exception(f"timed out waiting for: {what}")
 
 
@@ -146,6 +151,10 @@ pkgs.testers.runNixOSTest {
 
     def shell_state():
         return shell_eval("JSON.stringify({mode: Main.actionMode, overview: Main.overview.visible, modals: Main.modalCount, grab: String(global.stage.get_grab_actor()), key_focus: String(global.stage.get_key_focus())})")
+
+
+    def overview():
+        return shell_eval("Main.overview.visible") == "(true, 'true')"
 
 
     def focus_on(wid):
@@ -172,9 +181,11 @@ pkgs.testers.runNixOSTest {
         machine.wait_for_unit("default.target", "alice")
         machine.wait_for_file("/run/swipe/ready")
         wait_for("GNOME Shell start-up", lambda: shell_eval("Main.layoutManager._startingUp") == "(true, 'false')", 120)
-        wait_for("daemon registration", lambda: "registered 2 hotkey(s) and 1 swipe claim(s)" in daemon_log(), 180)
-        # What the extension sends the daemon, shown if something times out.
+        wait_for("daemon registration", lambda: "registered 2 hotkey(s) and 2 swipe claim(s)" in daemon_log(), 180)
+        # What the extension sends the daemon and what libinput makes of the
+        # virtual devices, shown if something times out.
         machine.succeed(as_alice('dbus-monitor --session "type=signal,interface=org.hjosugi.WindowJump1" >/tmp/signals.log 2>&1 &'))
+        machine.succeed("libinput debug-events --show-keycodes >/tmp/libinput.log 2>&1 &")
 
     with subtest("two windows of one app"):
         # The session starts in the overview, where swipes are not claimed.
@@ -190,12 +201,42 @@ pkgs.testers.runNixOSTest {
         print("shell state before the swipe:", shell_state())
         # Long enough to clear the 120-unit threshold even after libinput has
         # spent the first millimetres deciding that this is a swipe.
-        machine.succeed("swipe send --ctrl --fingers 3 --dx -40")
+        machine.succeed("swipe send --mod ctrl --fingers 3 --dx -40")
         wait_for("Ctrl + swipe left -> second editor", lambda: focused() == second, 20)
         assert "swipe Left with 3 fingers" in daemon_log()
         time.sleep(1)
         assert snapshot()["active_workspace"] == 0, "the claimed swipe also switched workspace"
         machine.screenshot("after-ctrl-swipe")
+
+    with subtest("Alt + three fingers up/down: next/prev, no overview"):
+        # A third window tells next from prev: [first, second, third].
+        machine.succeed(as_alice("gnome-text-editor --standalone >/tmp/editor3.log 2>&1 &"))
+        wait_for("text editor window 3", lambda: len(editors()) == 3)
+        third = editors()[2]
+        assert editors()[:2] == [first, second]
+        focus_on(first)
+        machine.succeed("swipe send --mod alt --fingers 3 --dy -40")
+        wait_for("Alt + swipe up -> second editor", lambda: focused() == second, 20)
+        machine.succeed("swipe send --mod alt --fingers 3 --dy -40")
+        wait_for("Alt + swipe up -> third editor", lambda: focused() == third, 20)
+        machine.succeed("swipe send --mod alt --fingers 3 --dy 40")
+        wait_for("Alt + swipe down -> second editor", lambda: focused() == second, 20)
+        log = daemon_log()
+        assert log.count("swipe Up with 3 fingers") == 2 and log.count("swipe Down with 3 fingers") == 1, log
+        time.sleep(1)
+        assert not overview(), "the claimed swipe also opened the overview"
+        assert snapshot()["active_workspace"] == 0
+        machine.screenshot("after-alt-swipes")
+
+    with subtest("plain three fingers up: left to GNOME, opens the overview"):
+        jumps = daemon_log().count("swipe Up")
+        machine.succeed("swipe send --fingers 3 --dy -40")
+        wait_for("plain swipe up -> overview", overview, 20)
+        assert daemon_log().count("swipe Up") == jumps, "the daemon saw an unclaimed swipe"
+        machine.screenshot("after-plain-swipe-up")
+        machine.send_key("esc")
+        wait_for("overview closed again", lambda: not overview(), 20)
+        focus_on(second)
 
     with subtest("plain three fingers: left to GNOME, switches workspace"):
         jumps = daemon_log().count("swipe Left")
