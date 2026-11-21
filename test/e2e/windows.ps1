@@ -172,7 +172,8 @@ try {
     $procs += Start-Process notepad -PassThru
     WaitFor 'third Notepad window' { (Notepads).Count -ge 3 }
     $n = Notepads
-    Set-Content -Path $cfg -Encoding ascii -Value '{ "cycle": { "order": "mru" } }'
+    Set-Content -Path $cfg -Encoding ascii `
+        -Value '{ "cycle": { "order": "mru" }, "bindings": [ { "trigger": { "type": "hotkey", "keys": "Ctrl+Alt+N" }, "actions": [ { "type": "window.next" } ] } ] }'
     WaitFor 'daemon to load order = mru' { Select-String -Path $log -Pattern 'reloaded' -Quiet }
     foreach ($i in 2, 1, 0) {
         & $Bin activate $n[$i].id
