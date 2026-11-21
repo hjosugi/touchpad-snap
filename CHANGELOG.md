@@ -4,6 +4,9 @@
 
 ### Added
 
+- GNOME Shell 51 support. CI now runs the end-to-end test on GNOME 46, 48,
+  49, 50 and 51. (#7)
+
 - The daemon reloads `config.toml` when it changes (checked every two
   seconds) and registers the new hotkeys and swipes without a restart. An
   invalid edit is reported once and the previous config stays in effect; a
