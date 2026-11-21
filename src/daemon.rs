@@ -1,10 +1,11 @@
-//! The long-running part: reacts to hotkeys and swipes.
+//! The long-running part: reacts to hotkeys and swipes, and picks up
+//! changes to the config file.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::config::{Claim, Config};
+use crate::config::{self, Claim, Config};
 use crate::cycle::{self, Pick, Step};
 use crate::gesture::{Phase, SwipeRecognizer};
 use crate::platform::{self, Backend, Event};
@@ -28,6 +29,43 @@ pub fn jump(backend: &dyn Backend, cfg: &Config, step: Step, state_path: &Path) 
     Ok(pick)
 }
 
+/// Watches the config file by content: the daemon reads it on every tick
+/// (it is tiny), which needs no platform file-watching API and does not
+/// depend on mtime granularity.
+struct ConfigWatch {
+    path: PathBuf,
+    /// What the file held when last looked at; `None` if it did not exist.
+    seen: Option<Vec<u8>>,
+}
+
+impl ConfigWatch {
+    fn new(path: PathBuf) -> Self {
+        let seen = std::fs::read(&path).ok();
+        Self { path, seen }
+    }
+
+    /// The new config if the file changed since the last call. An invalid
+    /// file is reported once and otherwise ignored; a removed file means
+    /// the defaults.
+    fn poll(&mut self) -> Option<Config> {
+        let now = std::fs::read(&self.path).ok();
+        if now == self.seen {
+            return None;
+        }
+        self.seen = now;
+        match config::load(&self.path) {
+            Ok(cfg) => {
+                eprintln!("window-jump: reloaded {}", self.path.display());
+                Some(cfg)
+            }
+            Err(e) => {
+                eprintln!("window-jump: keeping the previous config: {e:#}");
+                None
+            }
+        }
+    }
+}
+
 /// Turns events into jumps. Kept apart from the platform loop so it can be
 /// tested with a fake backend.
 pub struct Handler {
@@ -35,6 +73,7 @@ pub struct Handler {
     recognizer: SwipeRecognizer,
     claim: Option<Claim>,
     state_path: PathBuf,
+    watch: Option<ConfigWatch>,
     verbose: bool,
 }
 
@@ -46,12 +85,34 @@ impl Handler {
             recognizer,
             claim: None,
             state_path,
+            watch: None,
             verbose,
         }
     }
 
-    pub fn handle(&mut self, backend: &dyn Backend, event: Event) {
+    /// Reload the config from `path` when it changes (checked on
+    /// [`Event::Tick`]).
+    pub fn watch_config(mut self, path: PathBuf) -> Self {
+        self.watch = Some(ConfigWatch::new(path));
+        self
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.cfg
+    }
+
+    /// Handles one event. Returns the new config when it was reloaded, so the
+    /// platform can register the new hotkeys and swipes.
+    pub fn handle(&mut self, backend: &dyn Backend, event: Event) -> Option<Config> {
         match event {
+            Event::Tick => {
+                let cfg = self.watch.as_mut()?.poll()?;
+                self.recognizer =
+                    SwipeRecognizer::new(cfg.gesture.threshold, cfg.gesture.repeat_step);
+                self.claim = None;
+                self.cfg = cfg.clone();
+                return Some(cfg);
+            }
             Event::Hotkey(i) => {
                 if let Some(binding) = self.cfg.hotkeys.get(i) {
                     let step = binding.action;
@@ -71,7 +132,7 @@ impl Handler {
                     self.recognizer.begin();
                     self.claim = Some(claim);
                 }
-                let Some(claim) = self.claim else { return };
+                let claim = self.claim?;
                 if matches!(phase, Phase::Begin | Phase::Update) {
                     for direction in self.recognizer.update(dx, dy) {
                         if let Some(step) = self.cfg.swipe_action(claim, direction) {
@@ -91,6 +152,7 @@ impl Handler {
                 }
             }
         }
+        None
     }
 
     fn run(&self, backend: &dyn Backend, step: Step) {
@@ -105,9 +167,10 @@ impl Handler {
     }
 }
 
-pub fn run(cfg: Config, verbose: bool) -> Result<()> {
+pub fn run(cfg: Config, config_path: PathBuf, verbose: bool) -> Result<()> {
     let hotkeys = cfg.validate()?;
-    let mut handler = Handler::new(cfg.clone(), session::default_path(), verbose);
+    let mut handler =
+        Handler::new(cfg.clone(), session::default_path(), verbose).watch_config(config_path);
     platform::run_daemon(&cfg, &hotkeys, &mut |backend, event| {
         handler.handle(backend, event)
     })
@@ -215,6 +278,49 @@ mod tests {
             },
         );
         assert_eq!(fake.activated.borrow().len(), 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reloads_the_config_file_when_it_changes() {
+        let fake = Fake::new();
+        let dir = std::env::temp_dir().join(format!("window-jump-reload-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "hotkey = []\n").unwrap();
+        let cfg = config::load(&path).unwrap();
+        let mut h = Handler::new(cfg, dir.join("state.json"), false).watch_config(path.clone());
+
+        // Unchanged: nothing to do.
+        assert_eq!(h.handle(&fake, Event::Tick), None);
+
+        // A new binding is picked up and handed to the platform.
+        std::fs::write(
+            &path,
+            "[[hotkey]]\nkeys = \"Ctrl+Alt+J\"\naction = \"prev\"\n",
+        )
+        .unwrap();
+        let new = h.handle(&fake, Event::Tick).expect("reloaded");
+        assert_eq!(new.hotkeys.len(), 1);
+        assert_eq!(h.config().hotkeys[0].keys, "Ctrl+Alt+J");
+        // ...and used: hotkey 0 is now "prev" (1 → 3, wrapping backwards).
+        h.handle(&fake, Event::Hotkey(0));
+        assert_eq!(*fake.activated.borrow(), vec![3]);
+
+        // A broken file keeps the previous config, and is not re-reported.
+        std::fs::write(&path, "order = \"sideways\"\n").unwrap();
+        assert_eq!(h.handle(&fake, Event::Tick), None);
+        assert_eq!(h.handle(&fake, Event::Tick), None);
+        assert_eq!(h.config().hotkeys[0].keys, "Ctrl+Alt+J");
+
+        // Removing the file means the defaults.
+        std::fs::remove_file(&path).unwrap();
+        let defaults = h.handle(&fake, Event::Tick).expect("defaults");
+        assert_eq!(defaults, Config::default());
+
+        // Without a watched path, ticks never reload.
+        let mut plain = Handler::new(Config::default(), dir.join("state.json"), false);
+        assert_eq!(plain.handle(&fake, Event::Tick), None);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

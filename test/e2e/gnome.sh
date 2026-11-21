@@ -114,6 +114,29 @@ sleep 0.5
 focus_is "${editors[1]}" || fail "a swipe without a binding moved focus"
 ok "swipes: Ctrl + three fingers left jumps, unbound swipes do not"
 
+# Editing the config while the daemon runs: the new hotkey takes over within
+# a couple of seconds, without a restart.
+mkdir -p "$XDG_CONFIG_HOME/window-jump"
+cat > "$XDG_CONFIG_HOME/window-jump/config.toml" <<'TOML'
+[[hotkey]]
+keys = "Ctrl+Alt+J"
+action = "next"
+TOML
+wait_for "daemon to reload the config" 15 grep -q "registered 1 hotkey(s) and 1 swipe claim(s)" "$daemon_log"
+grep -q "reloaded .*config.toml" "$daemon_log" || fail "daemon did not log the reload"
+focus_on "${editors[0]}"
+press_keys Control_L Alt_L j || fail "injecting Ctrl+Alt+J failed"
+wait_for "Ctrl+Alt+J → second editor" 15 focus_is "${editors[1]}"
+# A broken edit is ignored; the working hotkey stays.
+echo 'order = "sideways"' > "$XDG_CONFIG_HOME/window-jump/config.toml"
+wait_for "daemon to reject the broken config" 15 grep -q "keeping the previous config" "$daemon_log"
+press_keys Control_L Alt_L j || fail "injecting Ctrl+Alt+J failed"
+wait_for "Ctrl+Alt+J still works → first editor" 15 focus_is "${editors[0]}"
+# Removing the file brings back the defaults (Super+Alt+N/P).
+rm "$XDG_CONFIG_HOME/window-jump/config.toml"
+wait_for "daemon back on the defaults" 15 bash -c "grep -c 'registered 2 hotkey(s) and 1 swipe claim(s)' '$daemon_log' | grep -qx 2"
+ok "config reload: new hotkey active without a restart, broken edits ignored, removal restores defaults"
+
 # A second daemon refuses to start.
 if wj daemon >"$E2E_ROOT/daemon2.log" 2>&1; then fail "second daemon started"; fi
 grep -q "already running" "$E2E_ROOT/daemon2.log" || fail "second daemon gave no reason"

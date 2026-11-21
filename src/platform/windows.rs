@@ -18,13 +18,13 @@ use windows_sys::Win32::System::Threading::{
     AttachThreadInput, CreateMutexW, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::RegisterHotKey;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, EnumChildWindows, EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW,
     GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
     GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
-    IsWindowVisible, MSG, SW_RESTORE, SetForegroundWindow, ShowWindow, WM_HOTKEY, WS_EX_APPWINDOW,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    IsWindowVisible, MSG, SW_RESTORE, SetForegroundWindow, SetTimer, ShowWindow, WM_HOTKEY,
+    WM_TIMER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 use super::{Backend, Event};
@@ -227,11 +227,7 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-pub fn run_daemon(
-    cfg: &Config,
-    hotkeys: &[Hotkey],
-    handle: &mut dyn FnMut(&dyn Backend, Event),
-) -> Result<()> {
+pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler) -> Result<()> {
     // One daemon per session: a second would fail every RegisterHotKey anyway.
     let name = wide("Local\\window-jump-daemon");
     unsafe {
@@ -242,34 +238,61 @@ pub fn run_daemon(
         // Deliberately leaked: held until the process exits.
     }
 
-    let mut registered = 0;
+    let mut registered = register_hotkeys(hotkeys, 0);
+    explain_swipes(cfg);
+
+    // Timer messages posted to this thread drive Event::Tick.
+    unsafe { SetTimer(null_mut(), 0, super::TICK.as_millis() as u32, None) };
+
+    let backend = Win32;
+    let mut msg: MSG = unsafe { std::mem::zeroed() };
+    // Hotkeys registered with a null HWND are posted to this thread's queue.
+    while unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } > 0 {
+        let changed = match msg.message {
+            WM_HOTKEY => match msg.wParam as usize {
+                0 => None,
+                id => handle(&backend, Event::Hotkey(id - 1)),
+            },
+            WM_TIMER => handle(&backend, Event::Tick),
+            _ => None,
+        };
+        if let Some(new) = changed {
+            match new.validate() {
+                Ok(parsed) => {
+                    registered = register_hotkeys(&parsed, registered);
+                    explain_swipes(&new);
+                }
+                Err(e) => eprintln!("window-jump: ignoring an invalid config: {e:#}"),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Drops the `previous` hotkey ids and registers `hotkeys` as ids 1..=n (the
+/// binding index + 1; 0 is not a valid id). Returns n, the ids now in use.
+fn register_hotkeys(hotkeys: &[Hotkey], previous: usize) -> usize {
+    for id in 1..=previous {
+        unsafe { UnregisterHotKey(null_mut(), id as i32) };
+    }
+    let mut ok = 0;
     for (i, hk) in hotkeys.iter().enumerate() {
         let (mods, vk) = hk.to_windows();
-        // Hotkey ids are the binding index + 1 (0 is not a valid id).
         if unsafe { RegisterHotKey(null_mut(), i as i32 + 1, mods, vk) } == 0 {
             eprintln!("window-jump: could not register {hk}: another app already uses it");
         } else {
-            registered += 1;
+            ok += 1;
         }
     }
-    eprintln!("window-jump: registered {registered} hotkey(s)");
+    eprintln!("window-jump: registered {ok} hotkey(s)");
+    hotkeys.len()
+}
+
+fn explain_swipes(cfg: &Config) {
     if !cfg.swipes.is_empty() {
         eprintln!(
             "window-jump: [[swipe]] bindings are GNOME-only. On Windows, map touchpad swipes to the hotkeys in \
              Settings → Bluetooth & devices → Touchpad → Advanced gestures."
         );
     }
-
-    let backend = Win32;
-    let mut msg: MSG = unsafe { std::mem::zeroed() };
-    // Hotkeys registered with a null HWND are posted to this thread's queue.
-    while unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } > 0 {
-        if msg.message == WM_HOTKEY {
-            let id = msg.wParam as usize;
-            if id >= 1 {
-                handle(&backend, Event::Hotkey(id - 1));
-            }
-        }
-    }
-    Ok(())
 }

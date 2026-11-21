@@ -156,7 +156,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         Command::Activate { id } => platform::connect()?.activate(id),
         Command::Daemon { verbose } => {
             let cfg = config::load(&config_path)?;
-            daemon::run(cfg, verbose)
+            daemon::run(cfg, config_path, verbose)
         }
         Command::Config { command } => match command {
             ConfigCommand::Path => {

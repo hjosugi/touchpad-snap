@@ -167,7 +167,9 @@ direction = "right"
 action = "prev"
 ```
 
-`hotkey = []` / `swipe = []` turn them off. Restart the daemon after editing.
+`hotkey = []` / `swipe = []` turn them off. The daemon picks up changes to the
+file within about two seconds; an invalid edit is reported in its log and the
+previous config stays in effect.
 
 Tips:
 

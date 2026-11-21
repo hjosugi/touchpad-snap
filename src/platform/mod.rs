@@ -24,9 +24,14 @@ pub trait Backend {
     fn describe(&self) -> String;
 }
 
+/// How often the platform loops send [`Event::Tick`].
+pub const TICK: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Something the daemon reacts to.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
+    /// Sent about every [`TICK`] for housekeeping (the config file check).
+    Tick,
     /// The hotkey at this index of `Config::hotkeys` was pressed.
     Hotkey(usize),
     /// Motion of a claimed touchpad swipe.
@@ -54,13 +59,14 @@ pub fn connect() -> Result<Box<dyn Backend>> {
     }
 }
 
+/// What the daemon's event handler returns: `Some(config)` when the config
+/// changed and the platform has to register its hotkeys and swipes again.
+pub type Handler<'a> = dyn FnMut(&dyn Backend, Event) -> Option<Config> + 'a;
+
 /// Registers the configured hotkeys and swipes, then calls `handle` for every
-/// event until the process is stopped.
-pub fn run_daemon(
-    cfg: &Config,
-    hotkeys: &[Hotkey],
-    handle: &mut dyn FnMut(&dyn Backend, Event),
-) -> Result<()> {
+/// event until the process is stopped. `cfg` must have passed
+/// [`Config::validate`], which also produced `hotkeys`.
+pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut Handler) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         gnome::run_daemon(cfg, hotkeys, handle)
