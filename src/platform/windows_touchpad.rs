@@ -46,7 +46,7 @@ const Y: u16 = 0x31;
 // Contact Identifier (0x51) is deliberately not used: averaging the reported
 // X/Y values needs no stable identity, and reports may reassign them.
 
-const CLASS_NAME: &str = "window-jump-touchpad";
+const CLASS_NAME: &str = "touchpad-snap-touchpad";
 
 /// One parsed report, already reduced to what the platform-neutral tracker
 /// needs.
@@ -103,14 +103,14 @@ impl Source {
             );
             if hwnd.is_null() {
                 if swipes_configured {
-                    eprintln!("window-jump: could not create the touchpad input window");
+                    eprintln!("touchpad-snap: could not create the touchpad input window");
                 }
                 return None;
             }
 
             if swipes_configured && !touchpad_present() {
                 eprintln!(
-                    "window-jump: no Windows Precision Touchpad found; [[swipe]] bindings will not fire"
+                    "touchpad-snap: no Windows Precision Touchpad found; [[swipe]] bindings will not fire"
                 );
             }
 
@@ -124,7 +124,7 @@ impl Source {
                 RegisterRawInputDevices(&device, 1, std::mem::size_of::<RAWINPUTDEVICE>() as u32);
             if registered == 0 {
                 if swipes_configured {
-                    eprintln!("window-jump: could not register for touchpad raw input");
+                    eprintln!("touchpad-snap: could not register for touchpad raw input");
                 }
                 DestroyWindow(hwnd);
                 return None;

@@ -4,7 +4,7 @@ let
   cargoToml = lib.importTOML ../Cargo.toml;
 in
 rustPlatform.buildRustPackage {
-  pname = "window-jump";
+  pname = "touchpad-snap";
   inherit (cargoToml.package) version;
 
   src = lib.fileset.toSource {
@@ -19,17 +19,17 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ../Cargo.lock;
 
-  # window-jumpw is the console-less daemon for Windows; on Linux it is the
-  # same as `window-jump daemon`.
+  # touchpad-snapw is the console-less daemon for Windows; on Linux it is the
+  # same as `touchpad-snap daemon`.
   postInstall = ''
-    rm $out/bin/window-jumpw
+    rm $out/bin/touchpad-snapw
   '';
 
   meta = {
     description = "Switch between windows of the same app with hotkeys and touchpad swipes";
-    homepage = "https://github.com/hjosugi/window-jump";
+    homepage = "https://github.com/hjosugi/touchpad-snap";
     license = lib.licenses.mit;
-    mainProgram = "window-jump";
+    mainProgram = "touchpad-snap";
     platforms = lib.platforms.linux;
   };
 }

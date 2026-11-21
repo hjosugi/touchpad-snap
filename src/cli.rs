@@ -1,4 +1,4 @@
-//! Command-line interface, shared by `window-jump` and `window-jumpw`.
+//! Command-line interface, shared by `touchpad-snap` and `touchpad-snapw`.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -13,14 +13,14 @@ use crate::{autostart, daemon, platform, session};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "window-jump",
+    name = "touchpad-snap",
     version,
     about = "Switch between windows of the same app with hotkeys and touchpad swipes (GNOME, KDE Plasma, Sway, Hyprland, niri, Windows)",
-    after_help = "Bind `window-jump next` / `window-jump prev` to any shortcut, or run `window-jump daemon` \
+    after_help = "Bind `touchpad-snap next` / `touchpad-snap prev` to any shortcut, or run `touchpad-snap daemon` \
                   for the hotkeys and swipes in the config file."
 )]
 struct Cli {
-    /// Config file [default: ~/.config/window-jump/config.toml, %APPDATA%\window-jump\config.toml]
+    /// Config file [default: ~/.config/touchpad-snap/config.toml, %APPDATA%\touchpad-snap\config.toml]
     #[arg(long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
 
@@ -141,7 +141,7 @@ where
     match dispatch(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("window-jump: {e:#}");
+            eprintln!("touchpad-snap: {e:#}");
             ExitCode::FAILURE
         }
     }
@@ -354,12 +354,12 @@ mod tests {
 
     #[test]
     fn parses_jump_overrides() {
-        let cli = Cli::try_parse_from(["window-jump", "next", "--order", "mru"]).unwrap();
+        let cli = Cli::try_parse_from(["touchpad-snap", "next", "--order", "mru"]).unwrap();
         match cli.command {
             Command::Next(a) => assert_eq!(a.order, Some(Order::Mru)),
             other => panic!("{other:?}"),
         }
-        assert!(Cli::try_parse_from(["window-jump", "next", "--order", "nope"]).is_err());
+        assert!(Cli::try_parse_from(["touchpad-snap", "next", "--order", "nope"]).is_err());
     }
 
     #[test]

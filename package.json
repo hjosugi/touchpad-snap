@@ -1,5 +1,5 @@
 {
-  "name": "window-jump-gnome-extension-tests",
+  "name": "touchpad-snap-gnome-extension-tests",
   "private": true,
   "type": "module",
   "scripts": {

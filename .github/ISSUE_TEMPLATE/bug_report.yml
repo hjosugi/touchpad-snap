@@ -11,14 +11,14 @@ body:
   - type: textarea
     id: doctor
     attributes:
-      label: Output of `window-jump doctor`
+      label: Output of `touchpad-snap doctor`
       render: text
     validations:
       required: true
   - type: textarea
     id: log
     attributes:
-      label: Output of `window-jump daemon -v` while reproducing (if the daemon is involved)
+      label: Output of `touchpad-snap daemon -v` while reproducing (if the daemon is involved)
       render: text
   - type: input
     id: platform
@@ -30,6 +30,6 @@ body:
   - type: input
     id: version
     attributes:
-      label: window-jump version (`window-jump --version`)
+      label: touchpad-snap version (`touchpad-snap --version`)
     validations:
       required: true

@@ -34,7 +34,7 @@ impl Hyprland {
             .ok()
             .filter(|signature| !signature.trim().is_empty())
             .context(
-                "HYPRLAND_INSTANCE_SIGNATURE is not set; start window-jump from inside Hyprland",
+                "HYPRLAND_INSTANCE_SIGNATURE is not set; start touchpad-snap from inside Hyprland",
             )?;
         let runtime = std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)

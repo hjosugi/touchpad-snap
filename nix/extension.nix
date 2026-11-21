@@ -1,17 +1,17 @@
 { lib, stdenvNoCC }:
 
 let
-  uuid = "window-jump@hjosugi.github.io";
+  uuid = "touchpad-snap@hjosugi.github.io";
   cargoToml = lib.importTOML ../Cargo.toml;
 in
 stdenvNoCC.mkDerivation {
-  pname = "gnome-shell-extension-window-jump";
+  pname = "gnome-shell-extension-touchpad-snap";
   inherit (cargoToml.package) version;
 
   # The directory name carries an "@", which a store path cannot, so name it.
   src = builtins.path {
     path = ../gnome-extension + "/${uuid}";
-    name = "window-jump-gnome-extension-src";
+    name = "touchpad-snap-gnome-extension-src";
   };
 
   dontBuild = true;
@@ -27,8 +27,8 @@ stdenvNoCC.mkDerivation {
   passthru.extensionUuid = uuid;
 
   meta = {
-    description = "GNOME Shell bridge for window-jump: window list, global hotkeys and touchpad swipes on the session bus";
-    homepage = "https://github.com/hjosugi/window-jump";
+    description = "GNOME Shell bridge for touchpad-snap: window list, global hotkeys and touchpad swipes on the session bus";
+    homepage = "https://github.com/hjosugi/touchpad-snap";
     license = lib.licenses.mit;
     platforms = lib.platforms.linux;
   };

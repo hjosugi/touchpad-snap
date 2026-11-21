@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end test against a real (headless) GNOME Shell.
 #
-# Drives the extension's D-Bus API directly and through the window-jump
-# binary: List, Activate, SetAccelerators, `window-jump list/next/prev`, and
+# Drives the extension's D-Bus API directly and through the touchpad-snap
+# binary: List, Activate, SetAccelerators, `touchpad-snap list/next/prev`, and
 # the daemon's registration of hotkeys and swipe claims.
 #
 # Needs gnome-shell, gnome-text-editor, gnome-calculator, dbus-run-session,
@@ -11,10 +11,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 e2e_enter "$@"
 
 e2e_start_shell
-ok "extension loaded and owns org.hjosugi.WindowJump"
+ok "extension loaded and owns io.github.hjosugi.TouchpadSnap"
 
-version=$(gdbus call --session --dest org.hjosugi.WindowJump --object-path /org/hjosugi/WindowJump \
-    --method org.freedesktop.DBus.Properties.Get org.hjosugi.WindowJump1 ProtocolVersion)
+version=$(gdbus call --session --dest io.github.hjosugi.TouchpadSnap --object-path /io/github/hjosugi/TouchpadSnap \
+    --method org.freedesktop.DBus.Properties.Get io.github.hjosugi.TouchpadSnap1 ProtocolVersion)
 [[ $version == "(<uint32 3>,)" ]] || fail "unexpected protocol version: $version"
 [[ $(list_json | jq '.windows | length') == 0 ]] || fail "expected no windows initially"
 ok "protocol 3, empty list at startup"
@@ -34,34 +34,34 @@ echo "$json" | jq -e 'all(.windows[]; .id > 0 and .pid > 0 and .width > 0 and .h
     || fail "every window needs id, pid and geometry"
 ok "three windows, the two editors share an app (${editors[*]}), calculator $calc"
 
-wj list | grep -q "TextEditor" || fail "`window-jump list` does not show the editors"
-ok "window-jump list"
+wj list | grep -q "TextEditor" || fail "`touchpad-snap list` does not show the editors"
+ok "touchpad-snap list"
 
 # Focus the first editor, then cycle with the binary. Asserted on keyboard
 # focus, which is what the binary itself goes by.
 focus_on "${editors[0]}"
 
-wj next || fail "window-jump next failed"
+wj next || fail "touchpad-snap next failed"
 wait_for "next → second editor" 15 focus_is "${editors[1]}"
 ok "next: ${editors[0]} → ${editors[1]}"
 
-wj next || fail "window-jump next failed"
+wj next || fail "touchpad-snap next failed"
 wait_for "next wraps → first editor" 15 focus_is "${editors[0]}"
 ok "next wraps round to ${editors[0]} (calculator skipped)"
 
-wj prev || fail "window-jump prev failed"
+wj prev || fail "touchpad-snap prev failed"
 wait_for "prev → second editor" 15 focus_is "${editors[1]}"
 ok "prev: ${editors[0]} → ${editors[1]}"
 
 # Quick repeats inside the focus hint still step through the windows.
-wj next && wj next || fail "window-jump next failed"
+wj next && wj next || fail "touchpad-snap next failed"
 wait_for "two quick nexts → second editor again" 15 focus_is "${editors[1]}"
 front_is "${editors[1]}" || fail "MRU order does not follow the jumps"
 ok "two quick nexts land back on ${editors[1]}"
 
 # The calculator is alone in its app: jumping from it is a no-op, not an error.
 focus_on "$calc"
-wj next || fail "window-jump next from a single-window app must succeed"
+wj next || fail "touchpad-snap next from a single-window app must succeed"
 sleep 0.5
 focus_is "$calc" || fail "jumping from a single-window app moved focus"
 ok "single-window app: next is a no-op"
@@ -134,8 +134,8 @@ ok "swipes: Ctrl + left and Alt + up jump, unbound swipes do not"
 
 # Editing the config while the daemon runs: the new hotkey takes over within
 # a couple of seconds, without a restart.
-mkdir -p "$XDG_CONFIG_HOME/window-jump"
-cat > "$XDG_CONFIG_HOME/window-jump/config.toml" <<'TOML'
+mkdir -p "$XDG_CONFIG_HOME/touchpad-snap"
+cat > "$XDG_CONFIG_HOME/touchpad-snap/config.toml" <<'TOML'
 [[hotkey]]
 keys = "Ctrl+Alt+J"
 action = "next"
@@ -146,12 +146,12 @@ focus_on "${editors[0]}"
 press_keys Control_L Alt_L j || fail "injecting Ctrl+Alt+J failed"
 wait_for "Ctrl+Alt+J → second editor" 15 focus_is "${editors[1]}"
 # A broken edit is ignored; the working hotkey stays.
-echo 'order = "sideways"' > "$XDG_CONFIG_HOME/window-jump/config.toml"
+echo 'order = "sideways"' > "$XDG_CONFIG_HOME/touchpad-snap/config.toml"
 wait_for "daemon to reject the broken config" 15 grep -q "keeping the previous config" "$daemon_log"
 press_keys Control_L Alt_L j || fail "injecting Ctrl+Alt+J failed"
 wait_for "Ctrl+Alt+J still works → first editor" 15 focus_is "${editors[0]}"
 # Removing the file brings back the defaults (Super+Alt+N/P).
-rm "$XDG_CONFIG_HOME/window-jump/config.toml"
+rm "$XDG_CONFIG_HOME/touchpad-snap/config.toml"
 wait_for "daemon back on the defaults" 15 bash -c "grep -c 'registered 2 hotkey(s) and 2 swipe claim(s)' '$daemon_log' | grep -qx 2"
 ok "config reload: new hotkey active without a restart, broken edits ignored, removal restores defaults"
 
@@ -162,7 +162,7 @@ ok "config reload: new hotkey active without a restart, broken edits ignored, re
 mark_log() { log_mark=$(wc -l <"$daemon_log"); }
 logged() { tail -n +$((log_mark + 1)) "$daemon_log" | grep -q "$1"; }
 mark_log
-cat > "$XDG_CONFIG_HOME/window-jump/config.toml" <<'TOML'
+cat > "$XDG_CONFIG_HOME/touchpad-snap/config.toml" <<'TOML'
 order = "mru"
 TOML
 wait_for "daemon to load order = mru" 15 logged "reloaded .*config.toml"
@@ -188,7 +188,7 @@ wait_for "the release to be reported" 15 logged "hotkey modifiers released"
 press_keys Super_L Alt_L n || fail "injecting Super+Alt+N failed"
 wait_for "next press → back to the first editor" 15 focus_is "${editors3[0]}"
 ok "hotkey sessions: held modifiers keep digging past the timeout, release commits"
-rm "$XDG_CONFIG_HOME/window-jump/config.toml"
+rm "$XDG_CONFIG_HOME/touchpad-snap/config.toml"
 
 # A second daemon refuses to start.
 if wj daemon >"$E2E_ROOT/daemon2.log" 2>&1; then fail "second daemon started"; fi
@@ -207,8 +207,8 @@ wait_for "Super+Alt+N released after the daemon exited" 15 regrab
 ok "daemon exit releases its hotkeys"
 
 # Nothing the extension did along the way may have thrown.
-if grep -E "JS ERROR|JS WARNING" "$e2e_shell_log" | grep -q "window-jump@"; then
-    grep -E -A5 "JS ERROR|JS WARNING" "$e2e_shell_log" | grep -B2 -A5 "window-jump@" >&2
+if grep -E "JS ERROR|JS WARNING" "$e2e_shell_log" | grep -q "touchpad-snap@"; then
+    grep -E -A5 "JS ERROR|JS WARNING" "$e2e_shell_log" | grep -B2 -A5 "touchpad-snap@" >&2
     fail "the extension logged JavaScript errors"
 fi
 ok "no JavaScript errors from the extension"

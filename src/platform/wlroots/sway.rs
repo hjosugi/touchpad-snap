@@ -29,7 +29,7 @@ impl Sway {
         let socket = std::env::var_os("SWAYSOCK")
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
-            .context("SWAYSOCK is not set; start window-jump from inside Sway")?;
+            .context("SWAYSOCK is not set; start touchpad-snap from inside Sway")?;
         if !socket.exists() {
             bail!(
                 "SWAYSOCK points to {}, which does not exist; is Sway running?",

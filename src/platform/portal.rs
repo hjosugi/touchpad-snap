@@ -48,7 +48,7 @@ pub const REGISTRY_INTERFACE: &str = "org.freedesktop.host.portal.Registry";
 
 /// A stable application id. It should match a `.desktop` file's basename for
 /// desktops that require one.
-pub const APP_ID: &str = "io.github.hjosugi.WindowJump";
+pub const APP_ID: &str = "io.github.hjosugi.TouchpadSnap";
 
 const SHORTCUT_PREFIX: &str = "hotkey:";
 
@@ -135,7 +135,7 @@ fn next_token(kind: &str) -> String {
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
     // A D-Bus object path element: only [A-Za-z0-9_].
-    format!("window_jump_{kind}_{}_{nanos}_{n}", std::process::id())
+    format!("touchpad_snap_{kind}_{}_{nanos}_{n}", std::process::id())
 }
 
 fn dbus_error_name(e: &zbus::Error) -> Option<String> {
@@ -163,14 +163,14 @@ pub fn register_app_id(conn: &Connection, verbose: bool) -> Result<AppIdStatus> 
     ) {
         Ok(_) => {
             if verbose {
-                eprintln!("window-jump: registered app id {APP_ID} with the desktop portal");
+                eprintln!("touchpad-snap: registered app id {APP_ID} with the desktop portal");
             }
             Ok(AppIdStatus::Registered)
         }
         Err(e) if is_missing(&e, "UnknownMethod") || is_missing(&e, "UnknownInterface") => {
             if verbose {
                 eprintln!(
-                    "window-jump: the desktop portal has no app id registration ({}); continuing",
+                    "touchpad-snap: the desktop portal has no app id registration ({}); continuing",
                     dbus_error_name(&e).unwrap_or_default()
                 );
             }
@@ -179,7 +179,7 @@ pub fn register_app_id(conn: &Connection, verbose: bool) -> Result<AppIdStatus> 
         Err(e) if is_missing(&e, "AccessDenied") => {
             if verbose {
                 eprintln!(
-                    "window-jump: the desktop portal refused app id registration; continuing"
+                    "touchpad-snap: the desktop portal refused app id registration; continuing"
                 );
             }
             Ok(AppIdStatus::Ignored)
@@ -189,7 +189,7 @@ pub fn register_app_id(conn: &Connection, verbose: bool) -> Result<AppIdStatus> 
         ),
         Err(e) => {
             if verbose {
-                eprintln!("window-jump: app id registration failed: {e}");
+                eprintln!("touchpad-snap: app id registration failed: {e}");
             }
             Ok(AppIdStatus::Ignored)
         }
@@ -209,7 +209,7 @@ pub fn shortcuts_version(conn: &Connection) -> Result<u32> {
         .map_err(|e| anyhow!("the GlobalShortcuts interface is unavailable: {e}"))
 }
 
-/// One line for `window-jump doctor`; never fails.
+/// One line for `touchpad-snap doctor`; never fails.
 pub fn doctor() -> String {
     let conn = match Connection::session() {
         Ok(conn) => conn,
@@ -372,7 +372,7 @@ fn create_session(conn: &Connection, verbose: bool) -> Result<OwnedObjectPath> {
     }
     let session = session_handle_from(&results)?;
     if verbose {
-        eprintln!("window-jump: created GlobalShortcuts session {session}");
+        eprintln!("touchpad-snap: created GlobalShortcuts session {session}");
     }
     Ok(session)
 }
@@ -412,16 +412,16 @@ fn bind_shortcuts(
                 .and_then(|v| Vec::<(String, HashMap<String, OwnedValue>)>::try_from(v).ok())
                 .map(|v| v.len())
                 .unwrap_or(hotkeys.len());
-            eprintln!("window-jump: the desktop bound {bound} global shortcut(s)");
+            eprintln!("touchpad-snap: the desktop bound {bound} global shortcut(s)");
             Ok(true)
         }
         Response::Declined(code) => {
             eprintln!(
-                "window-jump: the desktop did not accept the global shortcuts (response {code}); \
-                 running without hotkeys. Approve them in the desktop's shortcut settings and restart window-jump."
+                "touchpad-snap: the desktop did not accept the global shortcuts (response {code}); \
+                 running without hotkeys. Approve them in the desktop's shortcut settings and restart touchpad-snap."
             );
             if verbose {
-                eprintln!("window-jump: GlobalShortcuts BindShortcuts returned response {code}");
+                eprintln!("touchpad-snap: GlobalShortcuts BindShortcuts returned response {code}");
             }
             Ok(false)
         }
@@ -430,9 +430,9 @@ fn bind_shortcuts(
 
 fn description(cfg: &Config, index: usize) -> &'static str {
     match cfg.hotkeys.get(index).map(|b| b.action) {
-        Some(Step::Next) => "window-jump: focus the next window of this app",
-        Some(Step::Prev) => "window-jump: focus the previous window of this app",
-        None => "window-jump: switch windows of this app",
+        Some(Step::Next) => "touchpad-snap: focus the next window of this app",
+        Some(Step::Prev) => "touchpad-snap: focus the previous window of this app",
+        None => "touchpad-snap: switch windows of this app",
     }
 }
 
@@ -502,7 +502,7 @@ pub fn run_hotkeys_with(
             }
         });
     } else {
-        eprintln!("window-jump: running without global hotkeys");
+        eprintln!("touchpad-snap: running without global hotkeys");
     }
 
     // Touchpad gestures from libinput, bridged into the same loop. The
@@ -511,7 +511,7 @@ pub fn run_hotkeys_with(
     let gestures = {
         let (gesture_tx, gesture_rx) = std::sync::mpsc::channel::<Event>();
         let source = super::libinput::GestureSource::spawn(cfg.claims(), gesture_tx, verbose);
-        eprintln!("window-jump: serving configured touchpad swipes through libinput");
+        eprintln!("touchpad-snap: serving configured touchpad swipes through libinput");
         let bridge_tx = tx.clone();
         std::thread::spawn(move || {
             for event in gesture_rx {
@@ -559,10 +559,10 @@ pub fn run_hotkeys_with(
                     #[cfg(feature = "libinput")]
                     gestures.set_claims(new.claims());
                     eprintln!(
-                        "window-jump: config reloaded; GlobalShortcuts bindings change after a restart"
+                        "touchpad-snap: config reloaded; GlobalShortcuts bindings change after a restart"
                     );
                 }
-                Err(e) => eprintln!("window-jump: ignoring an invalid config: {e:#}"),
+                Err(e) => eprintln!("touchpad-snap: ignoring an invalid config: {e:#}"),
             }
         }
     }
@@ -648,7 +648,7 @@ mod tests {
     #[test]
     fn activated_and_deactivated_signals_map_to_events() {
         let session = OwnedObjectPath::try_from(
-            "/org/freedesktop/portal/desktop/session/1_2/window_jump".to_string(),
+            "/org/freedesktop/portal/desktop/session/1_2/touchpad_snap".to_string(),
         )
         .unwrap();
         let hotkeys = [parse("Super+Alt+N"), parse("F5")];

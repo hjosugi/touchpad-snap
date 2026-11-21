@@ -8,16 +8,16 @@
 //! owns a small session-bus service that the script polls:
 //!
 //! ```text
-//! window-jump (this process)                 KWin (org.kde.KWin)
-//!   org.hjosugi.WindowJump.KWin.P<pid>  <──  Poll(<json window list>)
-//!   /org/hjosugi/WindowJump/KWin         ──> "activate <internalId>" | ""
+//! touchpad-snap (this process)                 KWin (org.kde.KWin)
+//!   io.github.hjosugi.TouchpadSnap.KWin.P<pid>  <──  Poll(<json window list>)
+//!   /io/github/hjosugi/TouchpadSnap/KWin         ──> "activate <internalId>" | ""
 //! ```
 //!
 //! The script is embedded in the binary and written to
-//! `$XDG_RUNTIME_DIR/window-jump/` (or the cache directory) with a
+//! `$XDG_RUNTIME_DIR/touchpad-snap/` (or the cache directory) with a
 //! per-process name before `org.kde.KWin.Scripting.LoadScript` loads it. The
 //! per-process D-Bus name and script mean a daemon and a one-shot
-//! `window-jump next` can coexist. The script is unloaded again when the
+//! `touchpad-snap next` can coexist. The script is unloaded again when the
 //! backend is dropped; a process that is killed outright leaves an idle script
 //! behind until KWin restarts (it stops polling when the service is gone).
 //!
@@ -46,12 +46,12 @@ pub const KWIN_SCRIPTING_INTERFACE: &str = "org.kde.kwin.Scripting";
 pub const KWIN_SCRIPT_INTERFACE: &str = "org.kde.kwin.Script";
 
 /// This bridge's D-Bus names. The per-process suffix lives in [`bus_name`].
-pub const BUS_NAME: &str = "org.hjosugi.WindowJump.KWin";
-pub const OBJECT_PATH: &str = "/org/hjosugi/WindowJump/KWin";
-pub const INTERFACE: &str = "org.hjosugi.WindowJump.KWin1";
+pub const BUS_NAME: &str = "io.github.hjosugi.TouchpadSnap.KWin";
+pub const OBJECT_PATH: &str = "/io/github/hjosugi/TouchpadSnap/KWin";
+pub const INTERFACE: &str = "io.github.hjosugi.TouchpadSnap.KWin1";
 
 const SCRIPT: &str = include_str!("kde/kwin-script.js");
-const SERVICE_PLACEHOLDER: &str = "__WINDOW_JUMP_SERVICE__";
+const SERVICE_PLACEHOLDER: &str = "__TOUCHPAD_SNAP_SERVICE__";
 const FIRST_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -64,7 +64,7 @@ pub fn bus_name(pid: u32) -> String {
 /// The KWin plugin name used for `loadScript`/`unloadScript`. Unique per
 /// process for the same reason as [`bus_name`].
 pub fn plugin_name(pid: u32) -> String {
-    format!("window-jump-kde-bridge-{pid}")
+    format!("touchpad-snap-kde-bridge-{pid}")
 }
 
 /// Where the generated script is written. `$XDG_RUNTIME_DIR` is private to the
@@ -79,7 +79,7 @@ pub fn script_path(pid: u32) -> PathBuf {
                 .map(PathBuf::from)
         })
         .unwrap_or_else(std::env::temp_dir);
-    base.join("window-jump")
+    base.join("touchpad-snap")
         .join(format!("kde-bridge-{pid}.js"))
 }
 
@@ -146,7 +146,7 @@ pub fn detect_from_env() -> Detection {
     detect(|key| std::env::var(key).ok())
 }
 
-/// One line for `window-jump doctor`; never fails when Plasma is not running.
+/// One line for `touchpad-snap doctor`; never fails when Plasma is not running.
 pub fn doctor() -> String {
     let detection = detect_from_env();
     if !detection.detected() {
@@ -293,7 +293,7 @@ struct RawWindow {
     pid: i64,
     desktops: Vec<i32>,
     on_all_desktops: bool,
-    /// Sent by the script for completeness; window-jump's model groups by
+    /// Sent by the script for completeness; touchpad-snap's model groups by
     /// desktop, so activities are parsed but do not choose the workspace.
     #[allow(dead_code)]
     activities: Vec<String>,
@@ -368,7 +368,7 @@ struct Bridge {
     wake: Arc<Condvar>,
 }
 
-#[zbus::interface(name = "org.hjosugi.WindowJump.KWin1")]
+#[zbus::interface(name = "io.github.hjosugi.TouchpadSnap.KWin1")]
 impl Bridge {
     /// Called by the KWin script with a JSON snapshot; returns the command to
     /// apply. The script passes the return value to its callback and runs it.
@@ -431,7 +431,7 @@ impl Kde {
                 let id = load_script(&conn, &script_path, &plugin)?;
                 if id < 0 {
                     let _ = std::fs::remove_file(&script_path);
-                    bail!("KWin refused to load the window-jump bridge script");
+                    bail!("KWin refused to load the touchpad-snap bridge script");
                 }
                 id
             }
@@ -632,11 +632,11 @@ fn explain(error: zbus::Error) -> anyhow::Error {
     if text.contains("ServiceUnknown") || text.contains("NameHasNoOwner") {
         anyhow!(
             "KWin is not reachable on the session bus. \
-             Start window-jump inside a Plasma session (is KWin running?)"
+             Start touchpad-snap inside a Plasma session (is KWin running?)"
         )
     } else if text.contains("UnknownMethod") || text.contains("UnknownInterface") {
         anyhow!(
-            "this KWin does not expose the scripting interface window-jump needs \
+            "this KWin does not expose the scripting interface touchpad-snap needs \
              (KWin 5.20+ / Plasma 6)"
         )
     } else {
@@ -698,16 +698,16 @@ mod tests {
 
     #[test]
     fn bridge_names_are_per_process_and_namespaced() {
-        assert_eq!(bus_name(42), "org.hjosugi.WindowJump.KWin.P42");
-        assert_eq!(plugin_name(42), "window-jump-kde-bridge-42");
+        assert_eq!(bus_name(42), "io.github.hjosugi.TouchpadSnap.KWin.P42");
+        assert_eq!(plugin_name(42), "touchpad-snap-kde-bridge-42");
         assert_eq!(
             bus_name(42).rsplit('.').next(),
             Some("P42"),
             "the pid suffix is a valid D-Bus name element"
         );
-        assert_eq!(OBJECT_PATH, "/org/hjosugi/WindowJump/KWin");
-        assert_eq!(INTERFACE, "org.hjosugi.WindowJump.KWin1");
-        assert!(script_path(42).ends_with("window-jump/kde-bridge-42.js"));
+        assert_eq!(OBJECT_PATH, "/io/github/hjosugi/TouchpadSnap/KWin");
+        assert_eq!(INTERFACE, "io.github.hjosugi.TouchpadSnap.KWin1");
+        assert!(script_path(42).ends_with("touchpad-snap/kde-bridge-42.js"));
         assert!(SCRIPT.contains(SERVICE_PLACEHOLDER));
         assert!(SCRIPT.contains("callDBus"));
         assert!(SCRIPT.contains("windowList"));

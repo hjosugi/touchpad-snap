@@ -13,10 +13,10 @@
 //! [`std::sync::mpsc`] channel.
 //!
 //! Reading `/dev/input` needs the user in the `input` group (or an equivalent
-//! udev rule); `window-jump doctor` reports whether it is readable. libinput
+//! udev rule); `touchpad-snap doctor` reports whether it is readable. libinput
 //! does not take the device away from the compositor, so the compositor still
 //! acts on the same gesture. Use plain fingers for the compositor's gestures
-//! and a modifier + fingers for window-jump, or turn the compositor gesture
+//! and a modifier + fingers for touchpad-snap, or turn the compositor gesture
 //! off.
 
 use std::path::{Path, PathBuf};
@@ -237,10 +237,10 @@ impl GestureSource {
         let thread_claims = Arc::clone(&claims);
         let thread_stop = Arc::clone(&stop);
         let spawned = std::thread::Builder::new()
-            .name("window-jump-libinput".into())
+            .name("touchpad-snap-libinput".into())
             .spawn(move || run(thread_claims, thread_stop, tx, verbose));
         if let Err(e) = spawned {
-            eprintln!("window-jump: could not start the libinput gesture thread: {e}");
+            eprintln!("touchpad-snap: could not start the libinput gesture thread: {e}");
         }
         Self { claims, stop }
     }
@@ -273,7 +273,7 @@ fn run(
     });
     if input.udev_assign_seat(SEAT).is_err() {
         eprintln!(
-            "window-jump: libinput could not be assigned seat {SEAT}; touchpad swipes are unavailable"
+            "touchpad-snap: libinput could not be assigned seat {SEAT}; touchpad swipes are unavailable"
         );
         return;
     }
@@ -295,7 +295,7 @@ fn run(
                         if device.has_capability(DeviceCapability::Gesture) {
                             found_touchpad = true;
                             if verbose {
-                                eprintln!("window-jump: libinput touchpad: {}", device.name());
+                                eprintln!("touchpad-snap: libinput touchpad: {}", device.name());
                             }
                         }
                     }
@@ -321,7 +321,7 @@ fn run(
                             if let Some(claim) = session.begin(fingers, held, &claims) {
                                 if verbose {
                                     eprintln!(
-                                        "window-jump: libinput swipe begins: {fingers} fingers, mods {:#x}",
+                                        "touchpad-snap: libinput swipe begins: {fingers} fingers, mods {:#x}",
                                         claim.mods.0
                                     );
                                 }
@@ -368,14 +368,14 @@ fn run(
                     .and_then(|failure| failure.clone());
                 if let Some((path, errno)) = failure {
                     eprintln!(
-                        "window-jump: cannot open {}: {errno} ({}); touchpad swipes are \
+                        "touchpad-snap: cannot open {}: {errno} ({}); touchpad swipes are \
                          unavailable. Add your user to the \"input\" group and log in again.",
                         path.display(),
                         std::io::Error::from_raw_os_error(errno)
                     );
                 } else {
                     eprintln!(
-                        "window-jump: no touchpad with gesture support was found; \
+                        "touchpad-snap: no touchpad with gesture support was found; \
                          touchpad swipes are unavailable"
                     );
                 }
@@ -525,7 +525,7 @@ fn input_readable(touchpads: &[(String, PathBuf)]) -> bool {
         .any(|path| std::fs::File::open(path).is_ok())
 }
 
-/// One line for `window-jump doctor`. Never fails and never needs the feature:
+/// One line for `touchpad-snap doctor`. Never fails and never needs the feature:
 /// it reports whether this build can read gestures, whether a touchpad is
 /// present, and whether `/dev/input` is readable.
 pub fn doctor() -> String {

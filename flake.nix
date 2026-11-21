@@ -1,5 +1,5 @@
 {
-  description = "window-jump: switch between windows of the same app with hotkeys and touchpad swipes";
+  description = "touchpad-snap: switch between windows of the same app with hotkeys and touchpad swipes";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
@@ -15,8 +15,8 @@
     {
       packages = forAllSystems (
         system: pkgs: {
-          default = self.packages.${system}.window-jump;
-          window-jump = pkgs.callPackage ./nix/package.nix { };
+          default = self.packages.${system}.touchpad-snap;
+          touchpad-snap = pkgs.callPackage ./nix/package.nix { };
           gnome-shell-extension = pkgs.callPackage ./nix/extension.nix { };
         }
       );
@@ -25,10 +25,10 @@
       # boots GNOME in a VM and swipes on a virtual touchpad (needs KVM).
       checks = forAllSystems (
         system: pkgs: {
-          inherit (self.packages.${system}) window-jump gnome-shell-extension;
+          inherit (self.packages.${system}) touchpad-snap gnome-shell-extension;
           vm-touchpad = import ./nix/tests/touchpad.nix {
             inherit pkgs;
-            window-jump = self.packages.${system}.window-jump;
+            touchpad-snap = self.packages.${system}.touchpad-snap;
             extension = self.packages.${system}.gnome-shell-extension;
           };
         }
@@ -37,7 +37,7 @@
       devShells = forAllSystems (
         system: pkgs: {
           default = pkgs.mkShell {
-            inputsFrom = [ self.packages.${system}.window-jump ];
+            inputsFrom = [ self.packages.${system}.touchpad-snap ];
             packages = with pkgs; [
               clippy
               rustfmt
