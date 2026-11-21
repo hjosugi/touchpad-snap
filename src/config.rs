@@ -1,30 +1,118 @@
-//! `config.toml`: cycling options, hotkeys and swipe bindings.
+//! `config.json`: bindings (trigger → actions), cycling options and the
+//! settings shared by the daemon and the CLI.
+//!
+//! The file is strict inside objects this build knows, but one bad binding
+//! never discards the others: [`Config::load_report`] returns the valid
+//! bindings and a [`LoadReport`] naming every skipped one. Unknown trigger or
+//! action types are warnings (a feature of a newer build); a malformed known
+//! binding is an error (a typo to fix), but only in that binding.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::cycle::{CycleOptions, Order, Step, WorkspaceScope};
 use crate::gesture::SwipeDirection;
 use crate::hotkey::{Hotkey, Modifier, Mods, mods_of};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Where the committed schema lives; `config schema` prints the same JSON.
+pub const SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/hjosugi/touchpad-snap/main/schema/config.schema.json";
+/// The only config file version this build understands.
+pub const VERSION: u32 = 2;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Binding {
+    /// What the binding is for; shown by `config check`, the tray and logs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub trigger: Trigger,
+    /// Future `when` conditions (issue #37). Present but non-null means the
+    /// binding is skipped, not that this build knows what it means.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<Value>,
+    /// Fire again every further `gesture.repeat_step`. Defaults to true when
+    /// the chain contains a window cycle action, false otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<bool>,
+    /// Run in order.
+    pub actions: Vec<Action>,
+}
+
+impl Binding {
+    pub fn repeats(&self) -> bool {
+        self.repeat.unwrap_or_else(|| {
+            self.actions
+                .iter()
+                .any(|a| matches!(a, Action::Next | Action::Prev))
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", deny_unknown_fields)]
+pub enum Trigger {
+    #[serde(rename = "swipe")]
+    Swipe {
+        fingers: u32,
+        #[serde(default)]
+        modifiers: Vec<Modifier>,
+        direction: SwipeDirection,
+    },
+    #[serde(rename = "hotkey")]
+    Hotkey { keys: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", deny_unknown_fields)]
+pub enum Action {
+    /// Focus the next window of the focused app.
+    #[serde(rename = "window.next")]
+    Next,
+    /// Focus the previous window of the focused app.
+    #[serde(rename = "window.prev")]
+    Prev,
+    /// Wait before the next action in the chain.
+    #[serde(rename = "delay")]
+    Delay { ms: u64 },
+}
+
+impl From<Step> for Action {
+    fn from(step: Step) -> Self {
+        match step {
+            Step::Next => Action::Next,
+            Step::Prev => Action::Prev,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
-pub struct Config {
+pub struct CycleConfig {
     pub order: Order,
     pub workspace: WorkspaceScope,
     pub include_minimized: bool,
     pub mru_session_ms: u64,
-    pub gesture: GestureConfig,
-    pub hud: HudConfig,
-    #[serde(rename = "hotkey")]
-    pub hotkeys: Vec<HotkeyBinding>,
-    #[serde(rename = "swipe")]
-    pub swipes: Vec<SwipeBinding>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl Default for CycleConfig {
+    fn default() -> Self {
+        Self {
+            order: Order::Stable,
+            workspace: WorkspaceScope::All,
+            include_minimized: true,
+            mru_session_ms: 1000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct GestureConfig {
     /// Finger travel before a swipe counts (GNOME's full workspace swipe is 400).
@@ -34,7 +122,16 @@ pub struct GestureConfig {
     pub repeat_step: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl Default for GestureConfig {
+    fn default() -> Self {
+        Self {
+            threshold: 120.0,
+            repeat_step: 220.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct HudConfig {
     /// Show the window title and "App · 2 / 5" after each jump (on Windows,
@@ -52,70 +149,113 @@ impl Default for HudConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct HotkeyBinding {
-    pub keys: String,
-    pub action: Step,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SwipeBinding {
-    pub fingers: u32,
+pub struct Config {
+    #[serde(rename = "$schema", default = "default_schema")]
+    pub schema: String,
+    #[serde(default = "default_version")]
+    pub version: u32,
     #[serde(default)]
-    pub modifiers: Vec<Modifier>,
-    pub direction: SwipeDirection,
-    pub action: Step,
+    pub cycle: CycleConfig,
+    #[serde(default)]
+    pub gesture: GestureConfig,
+    #[serde(default)]
+    pub hud: HudConfig,
+    #[serde(default = "default_bindings")]
+    pub bindings: Vec<Binding>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub report: LoadReport,
 }
 
-impl Default for GestureConfig {
-    fn default() -> Self {
-        Self {
-            threshold: 120.0,
-            repeat_step: 220.0,
-        }
-    }
+fn default_true() -> bool {
+    true
+}
+
+fn default_version() -> u32 {
+    VERSION
+}
+
+fn default_schema() -> String {
+    SCHEMA_URL.into()
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let swipe = |modifier, direction, action| SwipeBinding {
+        Self {
+            schema: SCHEMA_URL.into(),
+            version: VERSION,
+            cycle: CycleConfig::default(),
+            gesture: GestureConfig::default(),
+            hud: HudConfig::default(),
+            bindings: default_bindings(),
+            report: LoadReport::default(),
+        }
+    }
+}
+
+/// The bindings that make up today's default behaviour.
+fn default_bindings() -> Vec<Binding> {
+    let hotkey = |name: &str, keys: &str, action: Action| Binding {
+        name: Some(name.into()),
+        enabled: true,
+        trigger: Trigger::Hotkey { keys: keys.into() },
+        when: None,
+        repeat: None,
+        actions: vec![action],
+    };
+    let swipe = |name: &str, modifier, direction, action| Binding {
+        name: Some(name.into()),
+        enabled: true,
+        trigger: Trigger::Swipe {
             fingers: 3,
             modifiers: vec![modifier],
             direction,
-            action,
-        };
-        Self {
-            order: Order::Stable,
-            workspace: WorkspaceScope::All,
-            include_minimized: true,
-            mru_session_ms: 1000,
-            gesture: GestureConfig::default(),
-            hud: HudConfig::default(),
-            hotkeys: vec![
-                HotkeyBinding {
-                    keys: "Super+Alt+N".into(),
-                    action: Step::Next,
-                },
-                HotkeyBinding {
-                    keys: "Super+Alt+P".into(),
-                    action: Step::Prev,
-                },
-            ],
-            // Content follows the fingers, as with GNOME's workspace swipe:
-            // swiping left (or up) brings in the next window. Two modifiers,
-            // one per axis, so that either hand position works: Ctrl for the
-            // axis GNOME switches workspace on, Alt for the one it opens the
-            // overview on.
-            swipes: vec![
-                swipe(Modifier::Ctrl, SwipeDirection::Left, Step::Next),
-                swipe(Modifier::Ctrl, SwipeDirection::Right, Step::Prev),
-                swipe(Modifier::Alt, SwipeDirection::Up, Step::Next),
-                swipe(Modifier::Alt, SwipeDirection::Down, Step::Prev),
-            ],
-        }
-    }
+        },
+        when: None,
+        repeat: None,
+        actions: vec![action],
+    };
+    // Content follows the fingers, as with GNOME's workspace swipe: swiping
+    // left (or up) brings in the next window. Two modifiers, one per axis, so
+    // that either hand position works: Ctrl for the axis GNOME switches
+    // workspace on, Alt for the one it opens the overview on.
+    vec![
+        hotkey("Next window of this app", "Super+Alt+N", Action::Next),
+        hotkey("Previous window of this app", "Super+Alt+P", Action::Prev),
+        swipe(
+            "Next window (Ctrl + swipe left)",
+            Modifier::Ctrl,
+            SwipeDirection::Left,
+            Action::Next,
+        ),
+        swipe(
+            "Previous window (Ctrl + swipe right)",
+            Modifier::Ctrl,
+            SwipeDirection::Right,
+            Action::Prev,
+        ),
+        swipe(
+            "Next window (Alt + swipe up)",
+            Modifier::Alt,
+            SwipeDirection::Up,
+            Action::Next,
+        ),
+        swipe(
+            "Previous window (Alt + swipe down)",
+            Modifier::Alt,
+            SwipeDirection::Down,
+            Action::Prev,
+        ),
+    ]
+}
+
+fn default_binding_values() -> Vec<Value> {
+    default_bindings()
+        .into_iter()
+        .map(|binding| serde_json::to_value(binding).expect("a binding serializes"))
+        .collect()
 }
 
 /// A swipe claim: which (fingers, modifiers) combinations the GNOME
@@ -126,93 +266,583 @@ pub struct Claim {
     pub mods: Mods,
 }
 
+/// Where a loaded config came from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Source {
+    #[default]
+    Defaults,
+    Json(PathBuf),
+    LegacyToml(PathBuf),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Warning,
+    Error,
+}
+
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Severity::Warning => f.write_str("warning"),
+            Severity::Error => f.write_str("error"),
+        }
+    }
+}
+
+/// One binding that was skipped, and why.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingProblem {
+    /// Index into the file's `bindings` array.
+    pub index: usize,
+    pub name: Option<String>,
+    pub severity: Severity,
+    pub message: String,
+}
+
+impl BindingProblem {
+    /// `bindings[2] (name): warning: ...`
+    pub fn describe(&self) -> String {
+        let name = self
+            .name
+            .as_deref()
+            .map(|n| format!(" ({n})"))
+            .unwrap_or_default();
+        format!(
+            "bindings[{}]{}: {}: {}",
+            self.index, name, self.severity, self.message
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LoadReport {
+    pub source: Source,
+    pub problems: Vec<BindingProblem>,
+}
+
+impl LoadReport {
+    pub fn has_errors(&self) -> bool {
+        self.problems.iter().any(|p| p.severity == Severity::Error)
+    }
+
+    pub fn errors(&self) -> impl Iterator<Item = &BindingProblem> {
+        self.problems
+            .iter()
+            .filter(|p| p.severity == Severity::Error)
+    }
+
+    pub fn warnings(&self) -> impl Iterator<Item = &BindingProblem> {
+        self.problems
+            .iter()
+            .filter(|p| p.severity == Severity::Warning)
+    }
+}
+
+/// What the file on disk looks like before the bindings are decoded one by
+/// one.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawConfig {
+    #[serde(rename = "$schema", default)]
+    schema: Option<String>,
+    #[serde(default = "default_version")]
+    version: u32,
+    #[serde(default)]
+    cycle: CycleConfig,
+    #[serde(default)]
+    gesture: GestureConfig,
+    #[serde(default)]
+    hud: HudConfig,
+    #[serde(default = "default_binding_values")]
+    bindings: Vec<Value>,
+}
+
+/// The old `config.toml` shape. Its fields use the same names and defaults as
+/// version 0.5, so an upgrade behaves as before until `config import` runs.
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct LegacyConfig {
+    order: Order,
+    workspace: WorkspaceScope,
+    include_minimized: bool,
+    mru_session_ms: u64,
+    gesture: GestureConfig,
+    hud: HudConfig,
+    #[serde(rename = "hotkey")]
+    hotkeys: Vec<LegacyHotkey>,
+    #[serde(rename = "swipe")]
+    swipes: Vec<LegacySwipe>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyHotkey {
+    keys: String,
+    action: Step,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacySwipe {
+    fingers: u32,
+    #[serde(default)]
+    modifiers: Vec<Modifier>,
+    direction: SwipeDirection,
+    action: Step,
+}
+
+impl Default for LegacyConfig {
+    fn default() -> Self {
+        Self {
+            order: Order::default(),
+            workspace: WorkspaceScope::default(),
+            include_minimized: true,
+            mru_session_ms: 1000,
+            gesture: GestureConfig::default(),
+            hud: HudConfig::default(),
+            hotkeys: vec![
+                LegacyHotkey {
+                    keys: "Super+Alt+N".into(),
+                    action: Step::Next,
+                },
+                LegacyHotkey {
+                    keys: "Super+Alt+P".into(),
+                    action: Step::Prev,
+                },
+            ],
+            swipes: vec![
+                LegacySwipe {
+                    fingers: 3,
+                    modifiers: vec![Modifier::Ctrl],
+                    direction: SwipeDirection::Left,
+                    action: Step::Next,
+                },
+                LegacySwipe {
+                    fingers: 3,
+                    modifiers: vec![Modifier::Ctrl],
+                    direction: SwipeDirection::Right,
+                    action: Step::Prev,
+                },
+                LegacySwipe {
+                    fingers: 3,
+                    modifiers: vec![Modifier::Alt],
+                    direction: SwipeDirection::Up,
+                    action: Step::Next,
+                },
+                LegacySwipe {
+                    fingers: 3,
+                    modifiers: vec![Modifier::Alt],
+                    direction: SwipeDirection::Down,
+                    action: Step::Prev,
+                },
+            ],
+        }
+    }
+}
+
+impl LegacyConfig {
+    fn into_parts(self) -> (CycleConfig, GestureConfig, HudConfig, Vec<(usize, Binding)>) {
+        let mut candidates = Vec::new();
+        for hotkey in self.hotkeys {
+            let index = candidates.len();
+            candidates.push((
+                index,
+                Binding {
+                    name: None,
+                    enabled: true,
+                    trigger: Trigger::Hotkey { keys: hotkey.keys },
+                    when: None,
+                    repeat: None,
+                    actions: vec![hotkey.action.into()],
+                },
+            ));
+        }
+        for swipe in self.swipes {
+            let index = candidates.len();
+            candidates.push((
+                index,
+                Binding {
+                    name: None,
+                    enabled: true,
+                    trigger: Trigger::Swipe {
+                        fingers: swipe.fingers,
+                        modifiers: swipe.modifiers,
+                        direction: swipe.direction,
+                    },
+                    when: None,
+                    repeat: None,
+                    actions: vec![swipe.action.into()],
+                },
+            ));
+        }
+        (
+            CycleConfig {
+                order: self.order,
+                workspace: self.workspace,
+                include_minimized: self.include_minimized,
+                mru_session_ms: self.mru_session_ms,
+            },
+            self.gesture,
+            self.hud,
+            candidates,
+        )
+    }
+}
+
 impl Config {
+    /// Loads `path`, or the default config when it does not exist. If only the
+    /// old `config.toml` exists next to it, that file is read in memory and is
+    /// reported as [`Source::LegacyToml`] so callers can suggest
+    /// `touchpad-snap config import`.
+    ///
+    /// Only problems with the file as a whole (syntax, unknown top-level
+    /// fields, an unsupported version, invalid gesture numbers) are errors.
+    /// Problems inside a binding are collected in the returned config's
+    /// [`LoadReport`]; the other bindings still load.
+    pub fn load_report(path: &Path) -> Result<Config> {
+        // An explicit `--config something.toml` still means the legacy file.
+        if path.extension().and_then(|ext| ext.to_str()) == Some("toml") && path.exists() {
+            let mut cfg = load_legacy(path)?;
+            cfg.report.source = Source::LegacyToml(path.to_path_buf());
+            return Ok(cfg);
+        }
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                let raw: RawConfig = serde_json::from_str(&text)
+                    .with_context(|| format!("parsing {}", path.display()))?;
+                if raw.version != VERSION {
+                    bail!(
+                        "{}: unsupported config version {} (this build reads version {})",
+                        path.display(),
+                        raw.version,
+                        VERSION
+                    );
+                }
+                check_gesture(&raw.gesture)
+                    .with_context(|| format!("checking {}", path.display()))?;
+                let mut report = LoadReport {
+                    source: Source::Json(path.to_path_buf()),
+                    problems: Vec::new(),
+                };
+                let candidates = decode_bindings(raw.bindings, &mut report);
+                Ok(Config {
+                    schema: raw.schema.unwrap_or_else(|| SCHEMA_URL.into()),
+                    version: raw.version,
+                    cycle: raw.cycle,
+                    gesture: raw.gesture,
+                    hud: raw.hud,
+                    bindings: compile_bindings(candidates, &mut report),
+                    report,
+                })
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let legacy = legacy_path(path);
+                if legacy.exists() {
+                    let mut cfg = load_legacy(&legacy)?;
+                    cfg.report.source = Source::LegacyToml(legacy);
+                    Ok(cfg)
+                } else {
+                    Ok(Config::default())
+                }
+            }
+            Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+        }
+    }
+
+    /// The problems found the last time this config was loaded or validated.
+    pub fn validate_report(&self) -> &LoadReport {
+        &self.report
+    }
+
+    pub fn report(&self) -> &LoadReport {
+        &self.report
+    }
+
     pub fn cycle_options(&self) -> CycleOptions {
         CycleOptions {
-            order: self.order,
-            workspace: self.workspace,
-            include_minimized: self.include_minimized,
-            mru_session_ms: self.mru_session_ms,
+            order: self.cycle.order,
+            workspace: self.cycle.workspace,
+            include_minimized: self.cycle.include_minimized,
+            mru_session_ms: self.cycle.mru_session_ms,
             ..CycleOptions::default()
         }
     }
 
-    /// Checks everything that serde cannot, and returns the parsed hotkeys in
-    /// binding order.
-    pub fn validate(&self) -> Result<Vec<Hotkey>> {
-        let mut parsed = Vec::with_capacity(self.hotkeys.len());
-        for b in &self.hotkeys {
-            let h = Hotkey::parse(&b.keys).map_err(anyhow::Error::msg)?;
-            if parsed.contains(&h) {
-                bail!("hotkey `{}` is bound twice", b.keys);
-            }
-            parsed.push(h);
-        }
-        for s in &self.swipes {
-            if !(3..=5).contains(&s.fingers) {
-                bail!(
-                    "swipe with {} fingers: only 3 to 5 fingers can be used (one and two are pointer motion and scrolling)",
-                    s.fingers
-                );
-            }
-        }
-        if self.gesture.threshold <= 0.0 || self.gesture.repeat_step < 0.0 {
-            bail!("gesture.threshold must be > 0 and gesture.repeat_step >= 0");
-        }
-        Ok(parsed)
+    /// The enabled hotkeys, in binding order. Their indices are what the
+    /// platform backends send back in [`crate::platform::Event::Hotkey`].
+    pub fn hotkeys(&self) -> Vec<Hotkey> {
+        self.bindings
+            .iter()
+            .filter(|b| b.enabled)
+            .filter_map(|b| match &b.trigger {
+                Trigger::Hotkey { keys } => Hotkey::parse(keys).ok(),
+                Trigger::Swipe { .. } => None,
+            })
+            .collect()
+    }
+
+    /// The enabled binding behind hotkey `index` from [`Config::hotkeys`].
+    pub fn hotkey_binding(&self, index: usize) -> Option<&Binding> {
+        self.bindings
+            .iter()
+            .filter(|b| b.enabled && matches!(&b.trigger, Trigger::Hotkey { .. }))
+            .nth(index)
     }
 
     /// The distinct swipe claims, sorted.
     pub fn claims(&self) -> Vec<Claim> {
-        let mut c: Vec<Claim> = self
-            .swipes
+        let mut claims: Vec<Claim> = self
+            .bindings
             .iter()
-            .map(|s| Claim {
-                fingers: s.fingers,
-                mods: mods_of(&s.modifiers),
+            .filter(|b| b.enabled)
+            .filter_map(|b| match &b.trigger {
+                Trigger::Swipe {
+                    fingers, modifiers, ..
+                } => Some(Claim {
+                    fingers: *fingers,
+                    mods: mods_of(modifiers),
+                }),
+                Trigger::Hotkey { .. } => None,
             })
             .collect();
-        c.sort();
-        c.dedup();
-        c
+        claims.sort();
+        claims.dedup();
+        claims
     }
 
-    /// The action bound to a recognised swipe, if any.
-    pub fn swipe_action(&self, claim: Claim, direction: SwipeDirection) -> Option<Step> {
-        self.swipes
+    /// The enabled bindings for a recognised swipe, with the index needed to
+    /// remember which non-repeat ones already fired during this gesture.
+    pub fn swipe_bindings_indexed(
+        &self,
+        claim: Claim,
+        direction: SwipeDirection,
+    ) -> Vec<(usize, &Binding)> {
+        self.bindings
             .iter()
-            .find(|s| {
-                s.fingers == claim.fingers
-                    && mods_of(&s.modifiers) == claim.mods
-                    && s.direction == direction
+            .enumerate()
+            .filter(|(_, b)| {
+                b.enabled
+                    && match &b.trigger {
+                        Trigger::Swipe {
+                            fingers,
+                            modifiers,
+                            direction: bound,
+                        } => {
+                            *fingers == claim.fingers
+                                && mods_of(modifiers) == claim.mods
+                                && *bound == direction
+                        }
+                        Trigger::Hotkey { .. } => false,
+                    }
             })
-            .map(|s| s.action)
+            .collect()
     }
+
+    /// The enabled bindings for a recognised swipe.
+    pub fn swipe_bindings(&self, claim: Claim, direction: SwipeDirection) -> Vec<&Binding> {
+        self.swipe_bindings_indexed(claim, direction)
+            .into_iter()
+            .map(|(_, binding)| binding)
+            .collect()
+    }
+}
+
+fn check_gesture(gesture: &GestureConfig) -> Result<()> {
+    if gesture.threshold <= 0.0 || gesture.repeat_step < 0.0 {
+        bail!("gesture.threshold must be > 0 and gesture.repeat_step >= 0");
+    }
+    Ok(())
+}
+
+struct DecodeIssue {
+    severity: Severity,
+    message: String,
+}
+
+impl DecodeIssue {
+    fn error(message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Error,
+            message: message.into(),
+        }
+    }
+
+    fn warning(message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Warning,
+            message: message.into(),
+        }
+    }
+}
+
+/// Decodes each binding on its own. The returned candidates keep their file
+/// index so later validation can report the right place.
+fn decode_bindings(values: Vec<Value>, report: &mut LoadReport) -> Vec<(usize, Binding)> {
+    let mut candidates = Vec::new();
+    for (index, value) in values.into_iter().enumerate() {
+        let name = value.get("name").and_then(Value::as_str).map(str::to_owned);
+        match decode_binding(&value) {
+            Ok(binding) => candidates.push((index, binding)),
+            Err(issue) => report.problems.push(BindingProblem {
+                index,
+                name,
+                severity: issue.severity,
+                message: issue.message,
+            }),
+        }
+    }
+    candidates
+}
+
+fn decode_binding(value: &Value) -> Result<Binding, DecodeIssue> {
+    match serde_json::from_value::<Binding>(value.clone()) {
+        Ok(binding) if binding.when.as_ref().is_some_and(|when| !when.is_null()) => {
+            Err(DecodeIssue::warning(
+                "`when` conditions are not supported yet (issue #37); the binding was skipped",
+            ))
+        }
+        Ok(binding) => Ok(binding),
+        Err(e) => match unsupported_reason(value) {
+            Some(message) => Err(DecodeIssue::warning(message)),
+            None => Err(DecodeIssue::error(format!("{e}"))),
+        },
+    }
+}
+
+/// Whether a binding that failed to decode uses a feature this build does not
+/// implement, rather than containing a typo.
+fn unsupported_reason(value: &Value) -> Option<String> {
+    if value.get("when").is_some_and(|when| !when.is_null()) {
+        return Some(
+            "`when` conditions are not supported yet (issue #37); the binding was skipped".into(),
+        );
+    }
+    if let Some(kind) = value
+        .get("trigger")
+        .and_then(|trigger| trigger.get("type"))
+        .and_then(Value::as_str)
+        && !matches!(kind, "swipe" | "hotkey")
+    {
+        return Some(format!(
+            "trigger type `{kind}` is not supported by this build; the binding was skipped"
+        ));
+    }
+    if let Some(actions) = value.get("actions").and_then(Value::as_array) {
+        for action in actions {
+            if let Some(kind) = action.get("type").and_then(Value::as_str)
+                && !matches!(kind, "window.next" | "window.prev" | "delay")
+            {
+                return Some(format!(
+                    "action type `{kind}` is not supported by this build; the binding was skipped"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Checks what serde cannot, one binding at a time. A bad binding is reported
+/// and dropped; the rest stay.
+fn compile_bindings(candidates: Vec<(usize, Binding)>, report: &mut LoadReport) -> Vec<Binding> {
+    let mut bindings = Vec::new();
+    let mut hotkeys: Vec<Hotkey> = Vec::new();
+    for (index, binding) in candidates {
+        if binding.enabled {
+            match check_binding(&binding, &hotkeys) {
+                Ok(Some(hotkey)) => hotkeys.push(hotkey),
+                Ok(None) => {}
+                Err(message) => {
+                    report.problems.push(BindingProblem {
+                        index,
+                        name: binding.name.clone(),
+                        severity: Severity::Error,
+                        message,
+                    });
+                    continue;
+                }
+            }
+        }
+        bindings.push(binding);
+    }
+    bindings
+}
+
+fn check_binding(binding: &Binding, hotkeys: &[Hotkey]) -> Result<Option<Hotkey>, String> {
+    match &binding.trigger {
+        Trigger::Swipe { fingers, .. } => {
+            if !(3..=5).contains(fingers) {
+                return Err(format!(
+                    "swipe with {fingers} fingers: only 3 to 5 fingers can be used \
+                     (one and two are pointer motion and scrolling)"
+                ));
+            }
+        }
+        Trigger::Hotkey { keys } => {
+            let hotkey = Hotkey::parse(keys)?;
+            if hotkeys.contains(&hotkey) {
+                return Err(format!("hotkey `{keys}` is bound twice"));
+            }
+            return Ok(Some(hotkey));
+        }
+    }
+    Ok(None)
+}
+
+/// The old TOML file next to `path` (`config.json` → `config.toml`).
+pub fn legacy_path(path: &Path) -> PathBuf {
+    path.with_file_name("config.toml")
+}
+
+/// Reads an old `config.toml` and converts it to the version 2 model.
+pub fn load_legacy(path: &Path) -> Result<Config> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let old: LegacyConfig =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    check_gesture(&old.gesture).with_context(|| format!("checking {}", path.display()))?;
+    let (cycle, gesture, hud, candidates) = old.into_parts();
+    let mut report = LoadReport {
+        source: Source::LegacyToml(path.to_path_buf()),
+        problems: Vec::new(),
+    };
+    let bindings = compile_bindings(candidates, &mut report);
+    Ok(Config {
+        schema: SCHEMA_URL.into(),
+        version: VERSION,
+        cycle,
+        gesture,
+        hud,
+        bindings,
+        report,
+    })
 }
 
 pub fn default_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("touchpad-snap")
-        .join("config.toml")
+        .join("config.json")
 }
 
-/// Loads `path`, or the defaults if it does not exist.
+/// Loads `path` (or its legacy TOML, or the defaults).
 pub fn load(path: &Path) -> Result<Config> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => {
-            let cfg: Config =
-                toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-            cfg.validate()
-                .with_context(|| format!("checking {}", path.display()))?;
-            Ok(cfg)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-    }
+    Config::load_report(path)
 }
 
-/// Creates `path` from [`TEMPLATE`] when it does not exist, creating its
+/// Pretty JSON for `cfg`, with a trailing newline.
+pub fn to_json(cfg: &Config) -> String {
+    let mut text = serde_json::to_string_pretty(cfg).expect("the config serializes");
+    text.push('\n');
+    text
+}
+
+/// The file written by `touchpad-snap config init`.
+pub fn default_json() -> String {
+    to_json(&Config::default())
+}
+
+/// Creates `path` from [`default_json`] when it does not exist, creating its
 /// directory too. Returns whether it wrote the file. The tray's "Open config
 /// file" item uses this so the item always has something to open.
 pub fn ensure(path: &Path) -> Result<bool> {
@@ -222,147 +852,222 @@ pub fn ensure(path: &Path) -> Result<bool> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
-    std::fs::write(path, TEMPLATE).with_context(|| format!("writing {}", path.display()))?;
+    std::fs::write(path, default_json()).with_context(|| format!("writing {}", path.display()))?;
     Ok(true)
 }
 
-/// The commented starter file written by `touchpad-snap config init`.
-pub const TEMPLATE: &str = r#"# touchpad-snap configuration.
-# Every setting is optional; what is shown here are the defaults.
-# A running daemon picks up changes within about two seconds.
+/// Writes `cfg` as pretty JSON.
+pub fn write(path: &Path, cfg: &Config) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    std::fs::write(path, to_json(cfg)).with_context(|| format!("writing {}", path.display()))
+}
 
-# How the windows of the focused app are ordered when cycling:
-#   "stable"   fixed order (creation order); next/prev walk every window
-#   "position" left to right on screen, then top to bottom
-#   "mru"      most recently used, like Alt+Tab: a single press toggles
-#              between the two most recent windows; pressing again while
-#              holding the modifiers (or while a swipe goes on) digs into
-#              older ones, and releasing settles on the window reached
-order = "stable"
+/// The JSON Schema for the config file, generated from the Rust types.
+pub fn schema_value() -> Value {
+    let mut schema =
+        serde_json::to_value(schemars::schema_for!(Config)).expect("the schema serializes");
+    if let Some(object) = schema.as_object_mut() {
+        object.insert("$id".into(), Value::String(SCHEMA_URL.into()));
+        object.insert(
+            "title".into(),
+            Value::String("touchpad-snap configuration".into()),
+        );
+    }
+    schema
+}
 
-# "all": windows on every workspace (jumping may switch workspace)
-# "current": only windows on the active workspace
-workspace = "all"
-
-include_minimized = true
-
-# With order = "mru", where it cannot be told whether keys are still held
-# (`touchpad-snap next` run by another shortcut tool, a hotkey without
-# modifiers): jumps closer together than this count as one session.
-mru_session_ms = 1000
-
-[gesture]
-# Finger travel before a swipe counts. GNOME's full workspace swipe is 400.
-threshold = 120.0
-# While the fingers stay down, every further `repeat_step` of travel jumps
-# again (moving back jumps back). 0 = one jump per swipe.
-repeat_step = 220.0
-
-[hud]
-# After each jump, briefly show the window title and "App · 2 / 5" in the
-# middle of the window's screen. On Windows only the daemon shows it.
-enabled = true
-duration_ms = 700
-
-# Global hotkeys. Modifiers: Super (Win), Ctrl, Alt, Shift.
-# Keys: A-Z, 0-9, F1-F24, Left, Right, Up, Down, Tab, Space, Return, Escape,
-# Home, End, PageUp, PageDown, grave, minus, equal, bracketleft, bracketright,
-# semicolon, apostrophe, comma, period, slash, backslash.
-# Set `hotkey = []` (instead of the tables below) to bind none.
-[[hotkey]]
-keys = "Super+Alt+N"
-action = "next"
-
-[[hotkey]]
-keys = "Super+Alt+P"
-action = "prev"
-
-# Touchpad swipes, held together with modifier keys: on GNOME via the shell
-# extension, on Windows from a Precision Touchpad's raw HID input, and on other
-# desktops from libinput when touchpad-snap is built with --features libinput.
-# On GNOME a claimed swipe is taken away from the shell, so Ctrl or Alt + three
-# fingers no longer switch workspace or open the overview, while plain three
-# fingers still do. Windows and libinput cannot intercept a gesture: turn the
-# built-in (compositor) three/four-finger gestures off, or use modifiers the
-# desktop does not use.
-#
-# Each [[swipe]] is one combination: `fingers` (3 to 5), `modifiers` (any of
-# "ctrl", "alt", "shift", "super"; at least one is wise), `direction`
-# ("left", "right", "up", "down") and `action` ("next" or "prev"). Change,
-# remove or add tables freely; as soon as the file has one [[swipe]], only
-# the ones in the file apply. Set `swipe = []` to bind none.
-# Avoid Super alone: releasing it opens the Activities overview (or Start).
-[[swipe]]
-fingers = 3
-modifiers = ["ctrl"]
-direction = "left"
-action = "next"
-
-[[swipe]]
-fingers = 3
-modifiers = ["ctrl"]
-direction = "right"
-action = "prev"
-
-[[swipe]]
-fingers = 3
-modifiers = ["alt"]
-direction = "up"
-action = "next"
-
-[[swipe]]
-fingers = 3
-modifiers = ["alt"]
-direction = "down"
-action = "prev"
-"#;
+/// Pretty JSON Schema, with a trailing newline.
+pub fn schema_json() -> String {
+    let mut text = serde_json::to_string_pretty(&schema_value()).expect("the schema serializes");
+    text.push('\n');
+    text
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn binding(value: Value) -> Binding {
+        decode_binding(&value).unwrap_or_else(|issue| panic!("{}", issue.message))
+    }
+
+    fn json(text: &str) -> Config {
+        let path = write_temp(text);
+        let cfg = Config::load_report(&path).unwrap();
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        cfg
+    }
+
     #[test]
-    fn template_equals_defaults() {
-        let cfg: Config = toml::from_str(TEMPLATE).unwrap();
-        assert_eq!(cfg, Config::default());
-        cfg.validate().unwrap();
+    fn defaults_match_the_documented_shape() {
+        let cfg = Config::default();
+        let value: Value = serde_json::from_str(&to_json(&cfg)).unwrap();
+        assert_eq!(value["$schema"], SCHEMA_URL);
+        assert_eq!(value["version"], VERSION);
+        assert_eq!(value["cycle"]["order"], "stable");
+        assert_eq!(value["gesture"]["threshold"], 120.0);
+        assert_eq!(value["hud"]["duration_ms"], 700);
+        assert_eq!(value["bindings"].as_array().unwrap().len(), 6);
+        assert!(cfg.validate_report().problems.is_empty());
+        assert_eq!(cfg.hotkeys().len(), 2);
+        assert_eq!(cfg.claims().len(), 2);
+    }
+
+    #[test]
+    fn template_round_trips() {
+        let text = default_json();
+        let path = write_temp(&text);
+        let cfg: Config = Config::load_report(&path).unwrap();
+        assert_eq!(to_json(&cfg), text);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    fn write_temp(text: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("touchpad-snap-temp-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, text).unwrap();
+        path
     }
 
     #[test]
     fn partial_file_keeps_other_defaults() {
-        let cfg: Config = toml::from_str("order = \"mru\"\nhotkey = []\n").unwrap();
-        assert_eq!(cfg.order, Order::Mru);
-        assert!(cfg.hotkeys.is_empty());
-        assert_eq!(cfg.swipes, Config::default().swipes);
+        let cfg = json(r#"{"cycle":{"order":"mru"},"bindings":[]}"#);
+        assert_eq!(cfg.cycle.order, Order::Mru);
+        assert!(cfg.bindings.is_empty());
+        assert_eq!(cfg.gesture, GestureConfig::default());
     }
 
     #[test]
-    fn unknown_keys_are_errors() {
-        assert!(toml::from_str::<Config>("ordr = \"mru\"").is_err());
+    fn missing_bindings_keep_the_defaults() {
+        let cfg = json(r#"{"cycle":{"order":"mru"}}"#);
+        assert_eq!(cfg.bindings, Config::default().bindings);
     }
 
     #[test]
-    fn validate_catches_bad_values() {
-        let mut cfg = Config::default();
-        cfg.hotkeys.push(HotkeyBinding {
-            keys: "super+alt+n".into(),
-            action: Step::Prev,
-        });
-        assert!(cfg.validate().unwrap_err().to_string().contains("twice"));
-
-        let mut cfg = Config::default();
-        cfg.swipes[0].fingers = 2;
-        assert!(cfg.validate().is_err());
+    fn unknown_top_level_keys_are_errors() {
+        assert!(Config::load_report(&write_temp(r#"{"ordr":"mru"}"#)).is_err());
+        assert!(Config::load_report(&write_temp(r#"{"cycle":{"ordr":"mru"}}"#)).is_err());
     }
 
     #[test]
-    fn ensure_writes_the_template_only_once() {
-        let dir = std::env::temp_dir().join(format!("touchpad-snap-ensure-{}", std::process::id()));
-        let path = dir.join("nested").join("config.toml");
-        assert!(ensure(&path).unwrap());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), TEMPLATE);
-        assert!(!ensure(&path).unwrap());
-        let _ = std::fs::remove_dir_all(dir);
+    fn one_bad_binding_does_not_drop_the_others() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"actons":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+L"},"actions":[{"type":"window.prev"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.bindings.len(), 2);
+        assert_eq!(cfg.hotkeys().len(), 2);
+        assert_eq!(cfg.report().problems.len(), 1);
+        assert!(cfg.report().has_errors());
+        assert_eq!(cfg.report().problems[0].index, 1);
+        assert_eq!(cfg.report().problems[0].severity, Severity::Error);
+        assert!(cfg.report().problems[0].message.contains("actons"));
+    }
+
+    #[test]
+    fn unknown_fields_inside_trigger_and_action_are_errors() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J","oops":1},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"actions":[{"type":"delay","ms":100,"oops":1}]}
+                ]
+            }"#,
+        );
+        assert!(cfg.bindings.is_empty());
+        assert_eq!(cfg.report().errors().count(), 2);
+    }
+
+    #[test]
+    fn unsupported_bindings_are_warnings_and_skipped() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"when":{"app":"Firefox"},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"tap","fingers":3},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"actions":[{"type":"keys","keys":"Alt+Tab"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+L"},"actions":[{"type":"window.next"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.bindings.len(), 1);
+        assert_eq!(cfg.report().problems.len(), 3);
+        assert!(!cfg.report().has_errors());
+        assert!(
+            cfg.report()
+                .warnings()
+                .all(|p| p.severity == Severity::Warning)
+        );
+    }
+
+    #[test]
+    fn delay_chain_parses_and_decides_repeat() {
+        let swipe = binding(serde_json::json!({
+            "trigger": {"type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "down"},
+            "actions": [{"type": "delay", "ms": 100}]
+        }));
+        assert!(!swipe.repeats());
+        let cycle = binding(serde_json::json!({
+            "trigger": {"type": "hotkey", "keys": "Ctrl+Alt+J"},
+            "actions": [{"type": "delay", "ms": 100}, {"type": "window.next"}]
+        }));
+        assert!(cycle.repeats());
+        let explicit = binding(serde_json::json!({
+            "trigger": {"type": "hotkey", "keys": "Ctrl+Alt+J"},
+            "repeat": false,
+            "actions": [{"type": "window.next"}]
+        }));
+        assert!(!explicit.repeats());
+    }
+
+    #[test]
+    fn validation_is_per_binding() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"hotkey","keys":"Super+Alt+N"},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"super+alt+n"},"actions":[{"type":"window.prev"}]},
+                    {"trigger":{"type":"swipe","fingers":2,"direction":"left"},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"actions":[{"type":"window.prev"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.bindings.len(), 2);
+        assert_eq!(cfg.report().errors().count(), 2);
+        assert!(cfg.report().errors().any(|p| p.message.contains("twice")));
+        assert!(cfg.report().errors().any(|p| p.message.contains("3 to 5")));
+    }
+
+    #[test]
+    fn disabled_bindings_are_kept_but_not_registered() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"name":"old","enabled":false,"trigger":{"type":"hotkey","keys":"Super+Alt+N"},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"actions":[{"type":"window.prev"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.bindings.len(), 2);
+        assert_eq!(cfg.hotkeys().len(), 1);
+        assert_eq!(
+            cfg.hotkey_binding(0).unwrap().trigger,
+            Trigger::Hotkey {
+                keys: "Ctrl+Alt+J".into()
+            }
+        );
     }
 
     #[test]
@@ -371,13 +1076,76 @@ mod tests {
         let claims = cfg.claims();
         let claim = |mods| Claim { fingers: 3, mods };
         assert_eq!(claims, vec![claim(Mods::CTRL), claim(Mods::ALT)]);
-        let bound = |mods, direction| cfg.swipe_action(claim(mods), direction);
-        assert_eq!(bound(Mods::CTRL, SwipeDirection::Left), Some(Step::Next));
-        assert_eq!(bound(Mods::CTRL, SwipeDirection::Right), Some(Step::Prev));
-        assert_eq!(bound(Mods::ALT, SwipeDirection::Up), Some(Step::Next));
-        assert_eq!(bound(Mods::ALT, SwipeDirection::Down), Some(Step::Prev));
+        let bound = |mods, direction| {
+            cfg.swipe_bindings(claim(mods), direction)
+                .into_iter()
+                .map(|b| b.actions.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            bound(Mods::CTRL, SwipeDirection::Left),
+            vec![vec![Action::Next]]
+        );
+        assert_eq!(
+            bound(Mods::CTRL, SwipeDirection::Right),
+            vec![vec![Action::Prev]]
+        );
+        assert_eq!(
+            bound(Mods::ALT, SwipeDirection::Up),
+            vec![vec![Action::Next]]
+        );
+        assert_eq!(
+            bound(Mods::ALT, SwipeDirection::Down),
+            vec![vec![Action::Prev]]
+        );
         // Each modifier has one axis: the other one is claimed but unbound.
-        assert_eq!(bound(Mods::CTRL, SwipeDirection::Up), None);
-        assert_eq!(bound(Mods::ALT, SwipeDirection::Left), None);
+        assert!(bound(Mods::CTRL, SwipeDirection::Up).is_empty());
+        assert!(bound(Mods::ALT, SwipeDirection::Left).is_empty());
+    }
+
+    #[test]
+    fn legacy_toml_is_read_in_memory_until_imported() {
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        let legacy = dir.join("config.toml");
+        std::fs::write(
+            &legacy,
+            "order = \"mru\"\n[[hotkey]]\nkeys = \"Ctrl+Alt+J\"\naction = \"prev\"\n",
+        )
+        .unwrap();
+
+        let cfg = Config::load_report(&path).unwrap();
+        assert_eq!(cfg.cycle.order, Order::Mru);
+        assert_eq!(cfg.report().source, Source::LegacyToml(legacy.clone()));
+        assert_eq!(cfg.hotkeys().len(), 1);
+        assert!(!path.exists());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ensure_writes_the_defaults_only_once() {
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-ensure-{}", std::process::id()));
+        let path = dir.join("nested").join("config.json");
+        assert!(ensure(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), default_json());
+        assert!(!ensure(&path).unwrap());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn committed_schema_is_current() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("schema/config.schema.json");
+        let committed: Value = serde_json::from_str(
+            &std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("reading {}: {e}", path.display())),
+        )
+        .unwrap();
+        assert_eq!(
+            committed,
+            schema_value(),
+            "schema/config.schema.json is stale; run `touchpad-snap config schema > schema/config.schema.json`"
+        );
     }
 }

@@ -1,0 +1,403 @@
+{
+  "$defs": {
+    "Action": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Focus the next window of the focused app.",
+          "properties": {
+            "type": {
+              "const": "window.next",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Focus the previous window of the focused app.",
+          "properties": {
+            "type": {
+              "const": "window.prev",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Wait before the next action in the chain.",
+          "properties": {
+            "ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "delay",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "ms"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Binding": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "description": "Run in order.",
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "name": {
+          "description": "What the binding is for; shown by `config check`, the tray and logs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repeat": {
+          "description": "Fire again every further `gesture.repeat_step`. Defaults to true when\nthe chain contains a window cycle action, false otherwise.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "trigger": {
+          "$ref": "#/$defs/Trigger"
+        },
+        "when": {
+          "description": "Future `when` conditions (issue #37). Present but non-null means the\nbinding is skipped, not that this build knows what it means."
+        }
+      },
+      "required": [
+        "trigger",
+        "actions"
+      ],
+      "type": "object"
+    },
+    "CycleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "include_minimized": {
+          "default": true,
+          "type": "boolean"
+        },
+        "mru_session_ms": {
+          "default": 1000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "order": {
+          "$ref": "#/$defs/Order",
+          "default": "stable"
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceScope",
+          "default": "all"
+        }
+      },
+      "type": "object"
+    },
+    "GestureConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "repeat_step": {
+          "default": 220.0,
+          "description": "Further travel per extra step while the fingers stay down; 0 = one\nstep per swipe.",
+          "format": "double",
+          "type": "number"
+        },
+        "threshold": {
+          "default": 120.0,
+          "description": "Finger travel before a swipe counts (GNOME's full workspace swipe is 400).",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "HudConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "default": 700,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "description": "Show the window title and \"App · 2 / 5\" after each jump (on Windows,\nfrom the daemon only).",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Modifier": {
+      "description": "A modifier as written in the config file.",
+      "enum": [
+        "shift",
+        "ctrl",
+        "alt",
+        "super"
+      ],
+      "type": "string"
+    },
+    "Order": {
+      "description": "How the windows of one app are ordered while cycling.",
+      "oneOf": [
+        {
+          "const": "stable",
+          "description": "Fixed order (window creation order on GNOME): next/prev walk the\nwhole list and always come back round to where they started.",
+          "type": "string"
+        },
+        {
+          "const": "position",
+          "description": "Left to right on screen, then top to bottom.",
+          "type": "string"
+        },
+        {
+          "const": "mru",
+          "description": "Most recently used first. A single jump toggles between the two most\nrecent windows; repeats within one [`Session`] keep digging into older\nwindows, like pressing Tab again while holding Alt.",
+          "type": "string"
+        }
+      ]
+    },
+    "SwipeDirection": {
+      "enum": [
+        "left",
+        "right",
+        "up",
+        "down"
+      ],
+      "type": "string"
+    },
+    "Trigger": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "direction": {
+              "$ref": "#/$defs/SwipeDirection"
+            },
+            "fingers": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "modifiers": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Modifier"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "swipe",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "fingers",
+            "direction"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "keys": {
+              "type": "string"
+            },
+            "type": {
+              "const": "hotkey",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "keys"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WorkspaceScope": {
+      "description": "Which windows are candidates.",
+      "oneOf": [
+        {
+          "const": "all",
+          "description": "Windows on every workspace; jumping may switch workspace.",
+          "type": "string"
+        },
+        {
+          "const": "current",
+          "description": "Only windows on the active workspace (and sticky ones).",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/hjosugi/touchpad-snap/main/schema/config.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "default": "https://raw.githubusercontent.com/hjosugi/touchpad-snap/main/schema/config.schema.json",
+      "type": "string"
+    },
+    "bindings": {
+      "default": [
+        {
+          "actions": [
+            {
+              "type": "window.next"
+            }
+          ],
+          "enabled": true,
+          "name": "Next window of this app",
+          "trigger": {
+            "keys": "Super+Alt+N",
+            "type": "hotkey"
+          }
+        },
+        {
+          "actions": [
+            {
+              "type": "window.prev"
+            }
+          ],
+          "enabled": true,
+          "name": "Previous window of this app",
+          "trigger": {
+            "keys": "Super+Alt+P",
+            "type": "hotkey"
+          }
+        },
+        {
+          "actions": [
+            {
+              "type": "window.next"
+            }
+          ],
+          "enabled": true,
+          "name": "Next window (Ctrl + swipe left)",
+          "trigger": {
+            "direction": "left",
+            "fingers": 3,
+            "modifiers": [
+              "ctrl"
+            ],
+            "type": "swipe"
+          }
+        },
+        {
+          "actions": [
+            {
+              "type": "window.prev"
+            }
+          ],
+          "enabled": true,
+          "name": "Previous window (Ctrl + swipe right)",
+          "trigger": {
+            "direction": "right",
+            "fingers": 3,
+            "modifiers": [
+              "ctrl"
+            ],
+            "type": "swipe"
+          }
+        },
+        {
+          "actions": [
+            {
+              "type": "window.next"
+            }
+          ],
+          "enabled": true,
+          "name": "Next window (Alt + swipe up)",
+          "trigger": {
+            "direction": "up",
+            "fingers": 3,
+            "modifiers": [
+              "alt"
+            ],
+            "type": "swipe"
+          }
+        },
+        {
+          "actions": [
+            {
+              "type": "window.prev"
+            }
+          ],
+          "enabled": true,
+          "name": "Previous window (Alt + swipe down)",
+          "trigger": {
+            "direction": "down",
+            "fingers": 3,
+            "modifiers": [
+              "alt"
+            ],
+            "type": "swipe"
+          }
+        }
+      ],
+      "items": {
+        "$ref": "#/$defs/Binding"
+      },
+      "type": "array"
+    },
+    "cycle": {
+      "$ref": "#/$defs/CycleConfig",
+      "default": {
+        "include_minimized": true,
+        "mru_session_ms": 1000,
+        "order": "stable",
+        "workspace": "all"
+      }
+    },
+    "gesture": {
+      "$ref": "#/$defs/GestureConfig",
+      "default": {
+        "repeat_step": 220.0,
+        "threshold": 120.0
+      }
+    },
+    "hud": {
+      "$ref": "#/$defs/HudConfig",
+      "default": {
+        "duration_ms": 700,
+        "enabled": true
+      }
+    },
+    "version": {
+      "default": 2,
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "title": "touchpad-snap configuration",
+  "type": "object"
+}

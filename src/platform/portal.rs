@@ -36,8 +36,7 @@ use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue, Value};
 use zbus::{MatchRule, Message};
 
 use super::Event;
-use crate::config::Config;
-use crate::cycle::Step;
+use crate::config::{Action, Config};
 use crate::hotkey::{Hotkey, Mods};
 
 pub const BUS_NAME: &str = "org.freedesktop.portal.Desktop";
@@ -429,10 +428,10 @@ fn bind_shortcuts(
 }
 
 fn description(cfg: &Config, index: usize) -> &'static str {
-    match cfg.hotkeys.get(index).map(|b| b.action) {
-        Some(Step::Next) => "touchpad-snap: focus the next window of this app",
-        Some(Step::Prev) => "touchpad-snap: focus the previous window of this app",
-        None => "touchpad-snap: switch windows of this app",
+    match cfg.hotkey_binding(index).and_then(|b| b.actions.first()) {
+        Some(Action::Next) => "touchpad-snap: focus the next window of this app",
+        Some(Action::Prev) => "touchpad-snap: focus the previous window of this app",
+        _ => "touchpad-snap: switch windows of this app",
     }
 }
 
@@ -553,17 +552,15 @@ pub fn run_hotkeys_with(
             None => {}
         }
         if let Some(new) = changed {
-            match new.validate() {
-                Ok(parsed) => {
-                    hotkeys = parsed;
-                    #[cfg(feature = "libinput")]
-                    gestures.set_claims(new.claims());
-                    eprintln!(
-                        "touchpad-snap: config reloaded; GlobalShortcuts bindings change after a restart"
-                    );
-                }
-                Err(e) => eprintln!("touchpad-snap: ignoring an invalid config: {e:#}"),
-            }
+            let claims = new.claims();
+            hotkeys = new.hotkeys();
+            #[cfg(feature = "libinput")]
+            gestures.set_claims(claims);
+            #[cfg(not(feature = "libinput"))]
+            let _ = claims;
+            eprintln!(
+                "touchpad-snap: config reloaded; GlobalShortcuts bindings change after a restart"
+            );
         }
     }
     Ok(())

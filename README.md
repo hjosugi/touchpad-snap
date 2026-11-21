@@ -118,8 +118,13 @@ The flake exports a NixOS module and a Home Manager module, each as
 services.touchpad-snap = {
   enable = true;
   settings = {
-    order = "mru";
-    hotkey = [ { keys = "Super+Alt+N"; action = "next"; } ];
+    cycle = { order = "mru"; };
+    bindings = [
+      {
+        trigger = { type = "hotkey"; keys = "Super+Alt+N"; };
+        actions = [ { type = "window.next"; } ];
+      }
+    ];
   };
 };
 ```
@@ -129,9 +134,9 @@ This:
 - installs the `touchpad-snap` package and runs `touchpad-snap daemon` as a
   systemd **user** service, bound to `graphical-session.target` with
   `Restart=on-failure`;
-- renders `settings` (the normal TOML schema) to
-  `/etc/touchpad-snap/config.toml` and starts the daemon with
-  `--config /etc/touchpad-snap/config.toml`;
+- renders `settings` (the `config.json` schema) to
+  `/etc/touchpad-snap/config.json` and starts the daemon with
+  `--config /etc/touchpad-snap/config.json`;
 - installs the GNOME Shell extension and adds `touchpad-snap@hjosugi.github.io`
   to the **system default** of `org.gnome.shell.enabled-extensions` through
   `programs.dconf.profiles.user.databases`.
@@ -180,16 +185,21 @@ Outside NixOS: `nix run github:hjosugi/touchpad-snap -- doctor`.
   services.touchpad-snap = {
     enable = true;
     settings = {
-      order = "mru";
-      hotkey = [ { keys = "Super+Alt+N"; action = "next"; } ];
+      cycle = { order = "mru"; };
+      bindings = [
+        {
+          trigger = { type = "hotkey"; keys = "Super+Alt+N"; };
+          actions = [ { type = "window.next"; } ];
+        }
+      ];
     };
   };
 }
 ```
 
 The option names match the NixOS module. Home Manager renders the config to
-`$XDG_CONFIG_HOME/touchpad-snap/config.toml` (usually
-`~/.config/touchpad-snap/config.toml`), which is the path the daemon reads by
+`$XDG_CONFIG_HOME/touchpad-snap/config.json` (usually
+`~/.config/touchpad-snap/config.json`), which is the path the daemon reads by
 default, so the user service runs plain `touchpad-snap daemon`.
 `gnome.enable` uses Home Manager's `programs.gnome-shell.extensions`, which
 also writes `org/gnome/shell/enabled-extensions`. That list is managed as a
@@ -198,9 +208,11 @@ too, rather than expecting the module to append to the existing list.
 
 Historically the program was called **window-jump**, and the binary copies
 `~/.config/window-jump/config.toml` to
-`~/.config/touchpad-snap/config.toml` on first run. Both modules write the
-new file themselves (and NixOS passes an explicit `--config`), so that
-automatic copy does not happen; move any old settings into `settings`.
+`~/.config/touchpad-snap/config.toml` on first run. That TOML file is still
+read in memory, but run `touchpad-snap config import` once to write the new
+`config.json`. Both modules write the new file themselves (and NixOS passes an
+explicit `--config`), so that automatic copy does not happen; move any old
+settings into `settings`.
 
 ### Windows 10 / 11
 
@@ -215,7 +227,7 @@ automatic copy does not happen; move any old settings into `settings`.
 3. Touchpad (optional): swipes need a **Windows Precision Touchpad** (most
    modern laptops have one). Turn off the built-in **Three-finger gestures** and
    **Four-finger gestures** under **Settings → Bluetooth & devices → Touchpad**
-   (set them to *Nothing*), then use the same `[[swipe]]` bindings as on GNOME:
+   (set them to *Nothing*), then use the same `swipe` bindings as on GNOME:
    with the default config, hold `Ctrl` and swipe three fingers left or right,
    or hold `Alt` and swipe them up or down.
    Windows' own gestures still fire if they stay enabled; raw input cannot
@@ -229,8 +241,8 @@ Task Manager needed to stop the daemon.
 Windows are grouped by executable (`notepad.exe`, `Code.exe`…); UWP apps are
 looked up behind their ApplicationFrameHost frame.
 
-Windows on other virtual desktops are included when `workspace = "all"` (the
-default) and skipped when it is `"current"`. The current desktop is `ws 0`;
+Windows on other virtual desktops are included when `cycle.workspace` is
+`"all"` (the default) and skipped when it is `"current"`. The current desktop is `ws 0`;
 other desktops get positive numbers. Jumping to such a window is best effort:
 Windows has no documented API to switch desktops, so touchpad-snap sends
 `Win+Ctrl+Left/Right` (at most eight steps each way) and reports an error if
@@ -284,7 +296,7 @@ same; every name changed with it. After installing touchpad-snap as above:
 | `touchpad-snap list [--json]` | Show windows grouped by app. |
 | `touchpad-snap activate <id>` | Focus one window by id. |
 | `touchpad-snap doctor` | Check config, backend and window list. |
-| `touchpad-snap config init\|path\|check` | Write / locate / validate the config file. |
+| `touchpad-snap config init\|import\|schema\|path\|check` | Write / import / print the schema of / locate / validate the config file. |
 | `touchpad-snap autostart enable\|disable [--systemd]` | Start the daemon at login (XDG entry by default, systemd user unit with `--systemd`). |
 
 ### Without the daemon
@@ -424,7 +436,7 @@ if that trade-off is not acceptable.
 
 Then run the daemon as usual. On Sway, Hyprland and niri the hotkeys still come
 from the compositor config; on KDE and other portal desktops from
-GlobalShortcuts. The daemon serves the configured `[[swipe]]` bindings from the
+GlobalShortcuts. The daemon serves the configured `swipe` bindings from the
 touchpad. On GNOME keep using the extension: it can claim swipes, so the shell
 does not also act on them.
 
@@ -437,63 +449,104 @@ gesture off. This is the same limitation as Windows Precision Touchpad input.
 
 ## Configuration
 
-`touchpad-snap config init` writes a commented file to
-`~/.config/touchpad-snap/config.toml` (`%APPDATA%\touchpad-snap\config.toml` on
-Windows). Everything is optional; these are the defaults:
+`touchpad-snap config init` writes the default JSON file to
+`~/.config/touchpad-snap/config.json`
+(`%APPDATA%\touchpad-snap\config.json` on Windows). Everything is optional;
+these are the defaults, with the bindings spelled out. Omit a field to keep its
+default; an explicit `"bindings": []` turns all bindings off.
 
-```toml
-order = "stable"          # "stable" | "position" | "mru"
-workspace = "all"         # "all" | "current"
-include_minimized = true
-mru_session_ms = 1000     # order = "mru", for `touchpad-snap next` from other tools: repeats closer than this are one session
-
-[gesture]
-threshold = 120.0         # finger travel before a swipe counts (GNOME's full workspace swipe is 400)
-repeat_step = 220.0       # further travel per extra jump while the fingers stay down; 0 = one jump per swipe
-
-[hud]                     # the overlay after a jump
-enabled = true
-duration_ms = 700
-
-[[hotkey]]
-keys = "Super+Alt+N"      # modifiers: Super (Win), Ctrl, Alt, Shift
-action = "next"
-
-[[hotkey]]
-keys = "Super+Alt+P"
-action = "prev"
-
-[[swipe]]                 # GNOME; Windows and libinput builds elsewhere
-fingers = 3               # 3–5
-modifiers = ["ctrl"]
-direction = "left"        # left | right | up | down
-action = "next"
-
-[[swipe]]
-fingers = 3
-modifiers = ["ctrl"]
-direction = "right"
-action = "prev"
-
-[[swipe]]
-fingers = 3
-modifiers = ["alt"]       # any of ctrl, alt, shift, super
-direction = "up"
-action = "next"
-
-[[swipe]]
-fingers = 3
-modifiers = ["alt"]
-direction = "down"
-action = "prev"
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/hjosugi/touchpad-snap/main/schema/config.schema.json",
+  "version": 2,
+  "cycle": {
+    "order": "stable",
+    "workspace": "all",
+    "include_minimized": true,
+    "mru_session_ms": 1000
+  },
+  "gesture": { "threshold": 120, "repeat_step": 220 },
+  "hud": { "enabled": true, "duration_ms": 700 },
+  "bindings": [
+    {
+      "name": "Next window of this app",
+      "trigger": { "type": "hotkey", "keys": "Super+Alt+N" },
+      "actions": [ { "type": "window.next" } ]
+    },
+    {
+      "name": "Previous window of this app",
+      "trigger": { "type": "hotkey", "keys": "Super+Alt+P" },
+      "actions": [ { "type": "window.prev" } ]
+    },
+    {
+      "name": "Next window (Ctrl + swipe left)",
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "left" },
+      "actions": [ { "type": "window.next" } ]
+    },
+    {
+      "name": "Previous window (Ctrl + swipe right)",
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "right" },
+      "actions": [ { "type": "window.prev" } ]
+    },
+    {
+      "name": "Next window (Alt + swipe up)",
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "up" },
+      "actions": [ { "type": "window.next" } ]
+    },
+    {
+      "name": "Previous window (Alt + swipe down)",
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "down" },
+      "actions": [ { "type": "window.prev" } ]
+    }
+  ]
+}
 ```
 
-Each `[[swipe]]` is one combination of fingers, modifiers and direction, so
-any of them can be changed, removed or added; once the file has a `[[swipe]]`
-(or `[[hotkey]]`), only the ones in the file apply.
-`hotkey = []` / `swipe = []` turn them off. The daemon picks up changes to the
-file within about two seconds; an invalid edit is reported in its log and the
-previous config stays in effect.
+- `trigger` is either a hotkey, `{ "type": "hotkey", "keys": "Super+Alt+N" }`
+  (modifiers: Super (Win), Ctrl, Alt, Shift; the key comes last), or a swipe,
+  `{ "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "left" }`
+  (`fingers` 3–5; `direction` left, right, up or down; modifiers any of
+  `ctrl`, `alt`, `shift`, `super`).
+- `actions` is a chain run in order. Today these are `window.next`,
+  `window.prev` and `delay` (`{ "type": "delay", "ms": 100 }`). Keyboard
+  actions, `exec` and window/workspace/app actions are future releases; a
+  binding that uses one is skipped with a warning.
+- `name` is optional and is only used in logs and `config check`.
+  `enabled: false` keeps a binding in the file without registering it.
+- `repeat` says whether a swipe binding fires again every further
+  `gesture.repeat_step` while the fingers stay down. When omitted it is true
+  for chains containing `window.next` / `window.prev`, false otherwise.
+- `when` is reserved for future conditional bindings. It is parsed, but a
+  non-null `when` makes this build skip the binding with a warning.
+- `cycle`, `gesture` and `hud` work as before: `cycle.order` is `stable`,
+  `position` or `mru`; `cycle.workspace` is `all` or `current`;
+  `gesture.threshold` is the finger travel before a swipe counts (GNOME's full
+  workspace swipe is 400); `gesture.repeat_step` is the further travel per
+  extra jump (0 = one jump per swipe); `hud` controls the overlay after a jump.
+
+The file is strict inside objects it knows: a typo or an unknown field is an
+error naming the JSON path. Bindings are decoded one by one, though: one bad
+binding is reported and skipped, and the others still load. `config check`
+lists every `bindings[i]` problem, and exits non-zero only for malformed
+bindings; an unknown trigger/action type or a non-null `when` (from a newer
+build) is a warning, is skipped, and does not fail the check. The daemon does
+the same and keeps running with the valid bindings. `config schema` prints the
+JSON Schema generated from the program's types; the committed
+`schema/config.schema.json` is what the `$schema` line points at, so editors
+can validate and complete the file.
+
+Editing the file while the daemon runs: changes are picked up within about two
+seconds. A broken edit is reported in the daemon log and the previous config
+stays in effect. Removing the file returns to the built-in defaults.
+
+### Upgrading from `config.toml`
+
+A `config.toml` next to `config.json` is still read in memory when
+`config.json` does not exist (and an explicit `--config something.toml` is
+read as TOML too). `touchpad-snap doctor` and `config check` say when that
+happens. Run `touchpad-snap config import` to convert it and write
+`config.json` (`--force` overwrites an existing JSON file). `config init`
+writes the JSON defaults; `config path` prints the JSON path.
 
 Tips:
 

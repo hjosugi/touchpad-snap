@@ -81,8 +81,13 @@ flake は NixOS 用と Home Manager 用のモジュールを、それぞれ `def
 services.touchpad-snap = {
   enable = true;
   settings = {
-    order = "mru";
-    hotkey = [ { keys = "Super+Alt+N"; action = "next"; } ];
+    cycle = { order = "mru"; };
+    bindings = [
+      {
+        trigger = { type = "hotkey"; keys = "Super+Alt+N"; };
+        actions = [ { type = "window.next"; } ];
+      }
+    ];
   };
 };
 ```
@@ -92,9 +97,9 @@ services.touchpad-snap = {
 - `touchpad-snap` パッケージを入れ、`touchpad-snap daemon` を
   **ユーザー** systemd サービスとして `graphical-session.target` に結び付け、
   `Restart=on-failure` で動かします。
-- `settings`（通常の TOML スキーマ）を
-  `/etc/touchpad-snap/config.toml` に書き出し、daemon を
-  `--config /etc/touchpad-snap/config.toml` 付きで起動します。
+- `settings`（`config.json` スキーマ）を
+  `/etc/touchpad-snap/config.json` に書き出し、daemon を
+  `--config /etc/touchpad-snap/config.json` 付きで起動します。
 - GNOME Shell 拡張を入れ、`programs.dconf.profiles.user.databases` 経由で
   `org.gnome.shell.enabled-extensions` の**システム既定値**に
   `touchpad-snap@hjosugi.github.io` を追加します。
@@ -142,16 +147,21 @@ environment.systemPackages = [
   services.touchpad-snap = {
     enable = true;
     settings = {
-      order = "mru";
-      hotkey = [ { keys = "Super+Alt+N"; action = "next"; } ];
+      cycle = { order = "mru"; };
+      bindings = [
+        {
+          trigger = { type = "hotkey"; keys = "Super+Alt+N"; };
+          actions = [ { type = "window.next"; } ];
+        }
+      ];
     };
   };
 }
 ```
 
 オプション名は NixOS モジュールと同じです。設定は
-`$XDG_CONFIG_HOME/touchpad-snap/config.toml`（通常は
-`~/.config/touchpad-snap/config.toml`）に書き出されます。これは daemon が
+`$XDG_CONFIG_HOME/touchpad-snap/config.json`（通常は
+`~/.config/touchpad-snap/config.json`）に書き出されます。これは daemon が
 既定で読むパスなので、ユーザーサービスは `touchpad-snap daemon` をそのまま
 実行します。`gnome.enable` は Home Manager の
 `programs.gnome-shell.extensions` を使い、これも
@@ -161,9 +171,11 @@ environment.systemPackages = [
 
 以前の名前は **window-jump** で、バイナリは初回起動時に
 `~/.config/window-jump/config.toml` を
-`~/.config/touchpad-snap/config.toml` へコピーします。どちらのモジュールも
-新しいファイルを自分で書く（NixOS は明示的に `--config` を渡す）ため、
-この自動コピーは起きません。古い設定は `settings` に移してください。
+`~/.config/touchpad-snap/config.toml` へコピーします。この TOML はまだ
+メモリ上で読まれますが、`touchpad-snap config import` を一度実行して新しい
+`config.json` を書き出してください。どちらのモジュールも新しいファイルを
+自分で書く（NixOS は明示的に `--config` を渡す）ため、この自動コピーは
+起きません。古い設定は `settings` に移してください。
 
 ### Windows 10 / 11
 
@@ -173,13 +185,13 @@ environment.systemPackages = [
    .\touchpad-snap.exe autostart enable   # ログイン時に touchpad-snapw.exe（コンソール窓なし）を起動
    .\touchpad-snapw.exe                    # 今すぐ起動
    ```
-3. タッチパッド（任意）: スワイプには **Windows Precision Touchpad** が必要です（最近のノート PC はほぼ対応）。**設定 → Bluetooth とデバイス → タッチパッド** で **3 本指のジェスチャー** と **4 本指のジェスチャー** をオフ（*何もしない*）にしてから、GNOME と同じ `[[swipe]]` 設定を使います。既定では `Ctrl` を押しながら 3 本指で左右に、または `Alt` を押しながら 3 本指で上下にスワイプします。Windows 標準のジェスチャーを有効にしたままだと、そちらも同時に反応します（生の HID 入力からは横取りできません）。
+3. タッチパッド（任意）: スワイプには **Windows Precision Touchpad** が必要です（最近のノート PC はほぼ対応）。**設定 → Bluetooth とデバイス → タッチパッド** で **3 本指のジェスチャー** と **4 本指のジェスチャー** をオフ（*何もしない*）にしてから、GNOME と同じ `swipe` 設定を使います。既定では `Ctrl` を押しながら 3 本指で左右に、または `Alt` を押しながら 3 本指で上下にスワイプします。Windows 標準のジェスチャーを有効にしたままだと、そちらも同時に反応します（生の HID 入力からは横取りできません）。
 
 `touchpad-snapw.exe` はタスクトレイ（通知領域）にアイコンを表示します。メニューには登録できたホットキーの数（他のアプリに取られて登録できなかったものはその名前）と、**Reload config**（設定の再読み込み）、**Open config file**（設定ファイルを開く）、**Start at login**（ログイン時に起動、現在の状態にチェック）、**Quit**（終了）が並びます。終了するためにタスク マネージャーを開く必要はありません。
 
 ウィンドウは実行ファイル（`notepad.exe`、`Code.exe` など）単位でまとめます。UWP アプリは ApplicationFrameHost の枠の裏にある本体のプロセスで判定します。
 
-別の仮想デスクトップのウィンドウも、`workspace = "all"`（既定）なら対象に含まれ、`"current"` なら除外されます。いまのデスクトップが `ws 0`、ほかのデスクトップが正の番号です。別デスクトップのウィンドウへのジャンプはベストエフォートです。デスクトップを切り替える公開 API がないため、`Win+Ctrl+左/右` を最大 8 回ずつ送り、届かなければエラーを表示します。中断された UWP ウィンドウは表示されません。
+別の仮想デスクトップのウィンドウも、`cycle.workspace` が `"all"`（既定）なら対象に含まれ、`"current"` なら除外されます。いまのデスクトップが `ws 0`、ほかのデスクトップが正の番号です。別デスクトップのウィンドウへのジャンプはベストエフォートです。デスクトップを切り替える公開 API がないため、`Win+Ctrl+左/右` を最大 8 回ずつ送り、届かなければエラーを表示します。中断された UWP ウィンドウは表示されません。
 
 手動テスト: `Win+Ctrl+D` で 2 つ目のデスクトップを作り、そこで 2 つ目の Notepad を開き（またはタスク ビューで移動し）、`Win+Ctrl+左` で戻ってから `touchpad-snap list`（2 つ目の Notepad が正の `ws`）と、1 つ目の Notepad での `touchpad-snap next` を確認します。
 
@@ -215,7 +227,7 @@ touchpad-snap は、バージョン 0.5 より前は **window-jump** という�
 | `touchpad-snap list [--json]` | アプリごとにウィンドウを一覧表示。 |
 | `touchpad-snap activate <id>` | ID を指定して 1 枚フォーカス。 |
 | `touchpad-snap doctor` | 設定・バックエンド・ウィンドウ一覧をまとめて確認。 |
-| `touchpad-snap config init\|path\|check` | 設定ファイルの作成 / 場所 / 検証。 |
+| `touchpad-snap config init\|import\|schema\|path\|check` | 設定ファイルの作成 / 取り込み / スキーマ表示 / 場所 / 検証。 |
 | `touchpad-snap autostart enable\|disable [--systemd]` | ログイン時の daemon 自動起動（既定は XDG、`--systemd` で systemd ユーザーサービス）。 |
 
 ### daemon を使わない場合
@@ -301,63 +313,111 @@ sudo usermod -aG input "$USER"
 
 ログアウトしてログインし直すと反映されます。`touchpad-snap doctor` の `gestures` 行に、フィーチャーが組み込まれているか、タッチパッドが見つかったか、`/dev/input` を読めるかが表示されます。`input` グループに入るとキーボードを含むすべての入力デバイスを読めるようになる点に注意してください。それが許容できない場合は、対象を絞った udev ルールを使ってください。
 
-あとは通常どおり daemon を動かします。Sway・Hyprland・niri ではホットキーは従来どおりコンポジタ設定から、KDE などのポータル対応デスクトップでは GlobalShortcuts から登録します。daemon は設定した `[[swipe]]` をタッチパッドから処理します。GNOME では拡張を使い続けてください。拡張はスワイプを横取りできるので、シェル側でも同じ操作が起きません。
+あとは通常どおり daemon を動かします。Sway・Hyprland・niri ではホットキーは従来どおりコンポジタ設定から、KDE などのポータル対応デスクトップでは GlobalShortcuts から登録します。daemon は設定した `swipe` をタッチパッドから処理します。GNOME では拡張を使い続けてください。拡張はスワイプを横取りできるので、シェル側でも同じ操作が起きません。
 
 libinput はコンポジタが同じジェスチャーを見るのを止められません。touchpad-snap は横取りしないため、コンポジタ側でもワークスペース切り替えやウィンドウ移動など、その指に割り当てられた動作が同時に起きる可能性があります。コンポジタが使っていない修飾キー＋指の本数（既定の `Ctrl`＋3 本指はたいてい安全です）を使うか、コンポジタ側のジェスチャーをオフにしてください。Windows Precision Touchpad と同じ制約です。
 
 ## 設定
 
-`touchpad-snap config init` でコメント付きのファイルを `~/.config/touchpad-snap/config.toml`（Windows は `%APPDATA%\touchpad-snap\config.toml`）に作ります。項目はすべて省略可能で、既定値は次の通りです。
+`touchpad-snap config init` で既定の JSON ファイルを
+`~/.config/touchpad-snap/config.json`（Windows は
+`%APPDATA%\touchpad-snap\config.json`）に作ります。項目はすべて省略可能で、
+省略した項目は既定値になります（`"bindings": []` を明示すると全バインディング
+を無効にできます）。既定値は次の通りです（バインディングも省略せずに書いて
+います）。
 
-```toml
-order = "stable"          # "stable" | "position" | "mru"
-workspace = "all"         # "all" | "current"
-include_minimized = true
-mru_session_ms = 1000     # order = "mru" で他のツールから touchpad-snap next を呼ぶとき、これより短い間隔の連打を 1 回の巡回とみなす
-
-[gesture]
-threshold = 120.0         # スワイプとみなすまでの指の移動量（GNOME のワークスペース 1 枚分が 400）
-repeat_step = 220.0       # 指を離さずに動かしたとき、さらにこの量ごとに 1 枚進む。0 で 1 スワイプ 1 回
-
-[hud]                     # 切り替え後の表示
-enabled = true
-duration_ms = 700
-
-[[hotkey]]
-keys = "Super+Alt+N"      # 修飾キー: Super (Win), Ctrl, Alt, Shift
-action = "next"
-
-[[hotkey]]
-keys = "Super+Alt+P"
-action = "prev"
-
-[[swipe]]                 # GNOME / Windows（Precision Touchpad）/ libinput ビルド
-fingers = 3               # 3〜5
-modifiers = ["ctrl"]
-direction = "left"        # left | right | up | down
-action = "next"
-
-[[swipe]]
-fingers = 3
-modifiers = ["ctrl"]
-direction = "right"
-action = "prev"
-
-[[swipe]]
-fingers = 3
-modifiers = ["alt"]       # ctrl / alt / shift / super を組み合わせられる
-direction = "up"
-action = "next"
-
-[[swipe]]
-fingers = 3
-modifiers = ["alt"]
-direction = "down"
-action = "prev"
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/hjosugi/touchpad-snap/main/schema/config.schema.json",
+  "version": 2,
+  "cycle": {
+    "order": "stable",
+    "workspace": "all",
+    "include_minimized": true,
+    "mru_session_ms": 1000
+  },
+  "gesture": { "threshold": 120, "repeat_step": 220 },
+  "hud": { "enabled": true, "duration_ms": 700 },
+  "bindings": [
+    {
+      "name": "Next window of this app",
+      "trigger": { "type": "hotkey", "keys": "Super+Alt+N" },
+      "actions": [ { "type": "window.next" } ]
+    },
+    {
+      "name": "Previous window of this app",
+      "trigger": { "type": "hotkey", "keys": "Super+Alt+P" },
+      "actions": [ { "type": "window.prev" } ]
+    },
+    {
+      "name": "Next window (Ctrl + swipe left)",
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "left" },
+      "actions": [ { "type": "window.next" } ]
+    },
+    {
+      "name": "Previous window (Ctrl + swipe right)",
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "right" },
+      "actions": [ { "type": "window.prev" } ]
+    },
+    {
+      "name": "Next window (Alt + swipe up)",
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "up" },
+      "actions": [ { "type": "window.next" } ]
+    },
+    {
+      "name": "Previous window (Alt + swipe down)",
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "down" },
+      "actions": [ { "type": "window.prev" } ]
+    }
+  ]
+}
 ```
 
-`[[swipe]]` 1 つが「指の本数・修飾キー・方向」の組み合わせ 1 つです。書き換えるのも、消すのも、足すのも自由です。ファイルに `[[swipe]]`（または `[[hotkey]]`）を 1 つでも書くと、ファイルに書いたものだけが有効になります。
-`hotkey = []` / `swipe = []` で無効にできます。daemon はファイルの変更を 2 秒ほどで取り込みます。書き間違えた場合はログに出して、それまでの設定のまま動き続けます。
+- `trigger` はホットキー `{ "type": "hotkey", "keys": "Super+Alt+N" }`
+  （修飾キーは Super (Win)、Ctrl、Alt、Shift。キーは最後）か、スワイプ
+  `{ "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "left" }`
+  （`fingers` は 3〜5、`direction` は left / right / up / down、modifiers は
+  `ctrl` / `alt` / `shift` / `super` の組み合わせ）です。
+- `actions` は順番に実行するチェーンです。現在使えるのは `window.next`、
+  `window.prev`、`delay`（`{ "type": "delay", "ms": 100 }`）です。キー送信、
+  `exec`、ウィンドウ・ワークスペース・アプリ操作は今後のリリースです。それらを
+  使ったバインディングは警告を出して読み飛ばします。
+- `name` は任意で、ログと `config check` にだけ使います。
+  `enabled: false` にすると、バインディングをファイルに残したまま登録しません。
+- `repeat` は、指を離さずに動かしたとき `gesture.repeat_step` ごとに
+  スワイプを再度発火するかです。省略時は `window.next` / `window.prev` を
+  含むチェーンなら true、それ以外は false です。
+- `when` は将来の条件付きバインディング用です。読み込みはしますが、null
+  以外の `when` があるバインディングは警告を出してこのビルドでは読み飛ばします。
+- `cycle`、`gesture`、`hud` は従来どおりです。`cycle.order` は `stable`、
+  `position`、`mru`。`cycle.workspace` は `all` か `current`。
+  `gesture.threshold` はスワイプとみなすまでの指の移動量（GNOME の
+  ワークスペース 1 枚分が 400）。`gesture.repeat_step` は追加で 1 枚進む
+  ごとの移動量（0 で 1 スワイプ 1 回）。`hud` は切り替え後の表示です。
+
+ファイル内の既知のオブジェクトは厳格です。綴り間違いや未知のフィールドは
+JSON パス付きのエラーになります。ただしバインディングは 1 つずつ読むため、
+壊れたバインディングは報告して読み飛ばし、ほかはそのまま読み込みます。
+`config check` は `bindings[i]` ごとの問題を列挙し、壊れたバインディングが
+あるときだけ非ゼロで終了します。未知の trigger / action 種別や null 以外の
+`when`（新しいビルドの機能）は警告扱いで読み飛ばし、終了コードは 0 のまま
+です。daemon も同じ方針で、有効なバインディングだけで動き続けます。
+`config schema` は Rust の型から生成した JSON Schema を表示します。リポジトリ
+の `schema/config.schema.json` が `$schema` の指す先で、エディタの検証・補完に
+使えます。
+
+daemon 実行中にファイルを編集すると、2 秒ほどで取り込みます。壊れた編集は
+daemon のログに出して、それまでの設定のまま動き続けます。ファイルを削除すると
+組み込みの既定値に戻ります。
+
+### `config.toml` からの移行
+
+`config.json` が無いときは、隣にある `config.toml` をメモリ上で読み込みます
+（`--config something.toml` と明示した場合も TOML として読みます）。
+`touchpad-snap doctor` と `config check` はその状態を表示します。
+`touchpad-snap config import` で変換して `config.json` を書き出します
+（`--force` で既存の JSON を上書き）。`config init` は JSON の既定値を書き、
+`config path` は JSON のパスを表示します。
 
 ヒント:
 

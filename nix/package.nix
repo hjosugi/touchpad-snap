@@ -15,6 +15,7 @@ rustPlatform.buildRustPackage {
       ../src
       ../examples
       ../contrib
+      ../schema
     ];
   };
 

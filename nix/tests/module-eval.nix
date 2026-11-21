@@ -19,11 +19,20 @@ let
         services.touchpad-snap = {
           enable = true;
           settings = {
-            order = "mru";
-            hotkey = [
+            cycle = {
+              order = "mru";
+            };
+            bindings = [
               {
-                keys = "Super+Alt+N";
-                action = "next";
+                trigger = {
+                  type = "hotkey";
+                  keys = "Super+Alt+N";
+                };
+                actions = [
+                  {
+                    type = "window.next";
+                  }
+                ];
               }
             ];
           };
@@ -34,7 +43,7 @@ let
 
   cfg = evaluated.config;
 
-  configFile = cfg.environment.etc."touchpad-snap/config.toml".source;
+  configFile = cfg.environment.etc."touchpad-snap/config.json".source;
   execStart = cfg.systemd.user.services.touchpad-snap.serviceConfig.ExecStart;
 
   package = self.packages.${system}.touchpad-snap;
@@ -52,13 +61,13 @@ assert nixpkgs.lib.assertMsg (builtins.elem extension cfg.environment.systemPack
 assert nixpkgs.lib.assertMsg (builtins.elem extension.extensionUuid enabledExtensions)
   "services.touchpad-snap did not add the extension to dconf enabled-extensions";
 assert nixpkgs.lib.assertMsg (
-  execStart == "${package}/bin/touchpad-snap daemon --config /etc/touchpad-snap/config.toml"
+  execStart == "${package}/bin/touchpad-snap daemon --config /etc/touchpad-snap/config.json"
 ) "unexpected ExecStart: ${execStart}";
-pkgs.runCommand "touchpad-snap-module-eval" { nativeBuildInputs = [ pkgs.gnugrep ]; } ''
-  grep -qx 'order = "mru"' ${configFile}
-  grep -qx 'keys = "Super+Alt+N"' ${configFile}
-  grep -qx 'action = "next"' ${configFile}
-  # Exactly one [[hotkey]] table, rendered by pkgs.formats.toml.
-  test "$(grep -c '^\[\[hotkey\]\]$' ${configFile})" = 1
+pkgs.runCommand "touchpad-snap-module-eval" { nativeBuildInputs = [ pkgs.jq ]; } ''
+  jq -e '.cycle.order == "mru"' ${configFile}
+  jq -e '.bindings | length == 1' ${configFile}
+  jq -e '.bindings[0].trigger.type == "hotkey"' ${configFile}
+  jq -e '.bindings[0].trigger.keys == "Super+Alt+N"' ${configFile}
+  jq -e '.bindings[0].actions[0].type == "window.next"' ${configFile}
   touch $out
 ''

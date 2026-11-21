@@ -138,8 +138,9 @@ try {
 
     # The daemon, with its own config (never the user's): a hotkey typed on
     # the keyboard goes through RegisterHotKey, jumps, and shows the overlay.
-    $cfg = Join-Path $work 'config.toml'
-    Set-Content -Path $cfg -Encoding ascii -Value "[[hotkey]]`nkeys = `"Ctrl+Alt+N`"`naction = `"next`"`n"
+    $cfg = Join-Path $work 'config.json'
+    Set-Content -Path $cfg -Encoding ascii `
+        -Value '{ "bindings": [ { "trigger": { "type": "hotkey", "keys": "Ctrl+Alt+N" }, "actions": [ { "type": "window.next" } ] } ] }'
     $log = Join-Path $work 'daemon.log'
     $daemon = Start-Process -FilePath $Bin -ArgumentList @('--config', $cfg, 'daemon', '--verbose') `
         -RedirectStandardError $log -RedirectStandardOutput (Join-Path $work 'daemon.out') -PassThru
@@ -171,7 +172,7 @@ try {
     $procs += Start-Process notepad -PassThru
     WaitFor 'third Notepad window' { (Notepads).Count -ge 3 }
     $n = Notepads
-    Set-Content -Path $cfg -Encoding ascii -Value "order = `"mru`"`n[[hotkey]]`nkeys = `"Ctrl+Alt+N`"`naction = `"next`"`n"
+    Set-Content -Path $cfg -Encoding ascii -Value '{ "cycle": { "order": "mru" } }'
     WaitFor 'daemon to load order = mru' { Select-String -Path $log -Pattern 'reloaded' -Quiet }
     foreach ($i in 2, 1, 0) {
         & $Bin activate $n[$i].id
