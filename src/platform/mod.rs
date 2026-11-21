@@ -7,6 +7,8 @@
 
 use std::path::Path;
 
+#[cfg(target_os = "linux")]
+use anyhow::Context;
 use anyhow::Result;
 
 use crate::config::{Claim, Config};
@@ -16,6 +18,8 @@ use crate::model::Snapshot;
 
 #[cfg(target_os = "linux")]
 pub mod gnome;
+#[cfg(target_os = "linux")]
+pub mod portal;
 #[cfg(windows)]
 pub mod windows;
 #[cfg(windows)]
@@ -64,27 +68,13 @@ pub enum Event {
     },
 }
 
-/// Whether `XDG_CURRENT_DESKTOP` names GNOME. GNOME wins even when a
-/// compositor's socket variable leaked in from a nested session.
-#[cfg(target_os = "linux")]
-fn is_gnome_desktop() -> bool {
-    desktop_is_gnome(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref())
-}
-
-#[cfg(target_os = "linux")]
-fn desktop_is_gnome(desktop: Option<&str>) -> bool {
-    desktop.is_some_and(|desktop| {
-        desktop
-            .split([':', ';'])
-            .any(|part| part.trim().eq_ignore_ascii_case("GNOME"))
-    })
-}
-
 /// Connects to the backend for the running desktop.
 pub fn connect() -> Result<Box<dyn Backend>> {
     #[cfg(target_os = "linux")]
     {
-        if is_gnome_desktop() {
+        if is_gnome(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref())
+            || gnome::Gnome::extension_available()
+        {
             return Ok(Box::new(gnome::Gnome::connect()?));
         }
         match wlroots::Wlroots::connect() {
@@ -119,6 +109,59 @@ pub fn connect() -> Result<Box<dyn Backend>> {
 /// changed and the platform has to register its hotkeys and swipes again.
 pub type Handler<'a> = dyn FnMut(&dyn Backend, Event) -> Option<Config> + 'a;
 
+/// Environment variable choosing where Linux hotkeys come from. `portal`
+/// selects the XDG GlobalShortcuts portal; unset keeps GNOME's extension
+/// grabs when running GNOME, and tries the portal elsewhere.
+#[cfg(target_os = "linux")]
+pub const HOTKEY_SOURCE_ENV: &str = "WINDOW_JUMP_HOTKEYS";
+
+/// Where global hotkeys are registered on Linux.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeySource {
+    /// The window-jump GNOME Shell extension (`SetAccelerators`).
+    Gnome,
+    /// `org.freedesktop.portal.GlobalShortcuts`.
+    Portal,
+}
+
+/// Chooses the hotkey source from [`HOTKEY_SOURCE_ENV`] and the desktop name
+/// (`XDG_CURRENT_DESKTOP`). Pure so the decision is unit-tested.
+#[cfg(target_os = "linux")]
+pub fn hotkey_source(requested: Option<&str>, desktop: Option<&str>) -> HotkeySource {
+    match requested.map(str::trim) {
+        Some("portal") | Some("globalshortcuts") => HotkeySource::Portal,
+        Some("extension") | Some("gnome") => HotkeySource::Gnome,
+        _ if is_gnome(desktop) => HotkeySource::Gnome,
+        _ => HotkeySource::Portal,
+    }
+}
+
+/// Whether `XDG_CURRENT_DESKTOP` names GNOME (possibly as one of several
+/// desktops, e.g. `ubuntu:GNOME` or `GNOME:sway`).
+#[cfg(target_os = "linux")]
+pub fn is_gnome(desktop: Option<&str>) -> bool {
+    desktop.is_some_and(|desktop| {
+        desktop
+            .split([':', ';'])
+            .any(|part| part.trim().eq_ignore_ascii_case("gnome"))
+    })
+}
+
+/// Holds the daemon's session-bus name so a second daemon refuses to start.
+#[cfg(target_os = "linux")]
+pub(crate) fn claim_daemon_name(conn: &zbus::blocking::Connection) -> Result<()> {
+    use zbus::fdo::RequestNameFlags;
+    const DAEMON_NAME: &str = "org.hjosugi.WindowJump.Daemon";
+    match conn.request_name_with_flags(DAEMON_NAME, RequestNameFlags::DoNotQueue.into()) {
+        Err(zbus::Error::NameTaken) => {
+            anyhow::bail!("another window-jump daemon is already running")
+        }
+        Err(e) => Err(e).context("claiming the daemon bus name"),
+        Ok(_) => Ok(()),
+    }
+}
+
 /// Registers the configured hotkeys and swipes, then calls `handle` for every
 /// event until the process is stopped. `cfg` must have passed
 /// [`Config::validate`], which also produced `hotkeys`. `config_path` is the
@@ -127,28 +170,54 @@ pub fn run_daemon(
     cfg: &Config,
     hotkeys: &[Hotkey],
     config_path: &Path,
+    verbose: bool,
     handle: &mut Handler,
 ) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         let _ = config_path;
-        if is_gnome_desktop() {
-            return gnome::run_daemon(cfg, hotkeys, handle);
+        let requested = std::env::var(HOTKEY_SOURCE_ENV).ok();
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
+        // A running extension means GNOME even when XDG_CURRENT_DESKTOP is
+        // unset (headless sessions, odd launchers).
+        let gnome = is_gnome(desktop.as_deref()) || gnome::Gnome::extension_available();
+        let source = hotkey_source(
+            requested.as_deref(),
+            if gnome {
+                Some("GNOME")
+            } else {
+                desktop.as_deref()
+            },
+        );
+        if gnome {
+            return match source {
+                HotkeySource::Gnome => gnome::run_daemon(cfg, hotkeys, verbose, handle),
+                // The extension still serves swipes and the HUD; only the
+                // hotkey grabs move to the portal.
+                HotkeySource::Portal => {
+                    gnome::run_daemon_with_portal(cfg, hotkeys, verbose, handle)
+                }
+            };
         }
+        // Hotkeys are normally bound in the compositor config; the daemon is
+        // optional there, so say how rather than grabbing keys behind its back.
         if wlroots::detect_from_env().is_ok() || wlroots::desktop_hint_from_env().is_some() {
             return wlroots::run_daemon();
         }
-        gnome::run_daemon(cfg, hotkeys, handle)
+        match source {
+            HotkeySource::Portal => portal::run_hotkeys_with(cfg, hotkeys, verbose, handle),
+            HotkeySource::Gnome => gnome::run_daemon(cfg, hotkeys, verbose, handle),
+        }
     }
     #[cfg(windows)]
     {
-        windows::run_daemon(cfg, hotkeys, config_path, handle)
+        windows::run_daemon(cfg, hotkeys, config_path, verbose, handle)
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let _ = (cfg, hotkeys, config_path, handle);
+        let _ = (cfg, hotkeys, config_path, verbose, handle);
         anyhow::bail!(
-            "window-jump supports GNOME (Linux), Sway/Hyprland/niri (Linux) and Windows only, for now"
+            "window-jump supports GNOME, Sway/Hyprland/niri (Linux) and Windows only, for now"
         )
     }
 }
@@ -159,11 +228,42 @@ mod tests {
 
     #[test]
     fn gnome_is_recognised_among_other_desktop_components() {
-        assert!(desktop_is_gnome(Some("ubuntu:GNOME")));
-        assert!(desktop_is_gnome(Some("GNOME")));
-        assert!(desktop_is_gnome(Some("GNOME:sway")));
-        assert!(!desktop_is_gnome(Some("sway")));
-        assert!(!desktop_is_gnome(Some("Hyprland")));
-        assert!(!desktop_is_gnome(None));
+        assert!(is_gnome(Some("ubuntu:GNOME")));
+        assert!(is_gnome(Some("GNOME")));
+        assert!(is_gnome(Some("GNOME:sway")));
+        assert!(!is_gnome(Some("sway")));
+        assert!(!is_gnome(Some("Hyprland")));
+        assert!(!is_gnome(None));
+    }
+
+    #[test]
+    fn portal_is_opt_in_on_gnome_and_the_default_elsewhere() {
+        assert_eq!(hotkey_source(None, Some("GNOME")), HotkeySource::Gnome);
+        assert_eq!(
+            hotkey_source(None, Some("ubuntu:GNOME")),
+            HotkeySource::Gnome
+        );
+        assert_eq!(hotkey_source(None, Some("KDE")), HotkeySource::Portal);
+        assert_eq!(hotkey_source(None, None), HotkeySource::Portal);
+    }
+
+    #[test]
+    fn the_environment_can_override_the_desktop_default() {
+        assert_eq!(
+            hotkey_source(Some("portal"), Some("GNOME")),
+            HotkeySource::Portal
+        );
+        assert_eq!(
+            hotkey_source(Some(" portal "), Some("GNOME")),
+            HotkeySource::Portal
+        );
+        assert_eq!(
+            hotkey_source(Some("extension"), Some("KDE")),
+            HotkeySource::Gnome
+        );
+        assert_eq!(
+            hotkey_source(Some("nonsense"), Some("GNOME")),
+            HotkeySource::Gnome
+        );
     }
 }

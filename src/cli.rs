@@ -329,6 +329,9 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    println!("portal   {}", platform::portal::doctor());
+
     if problems > 0 {
         bail!("{problems} problem(s) found");
     }

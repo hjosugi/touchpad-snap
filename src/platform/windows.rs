@@ -622,8 +622,10 @@ pub fn run_daemon(
     cfg: &Config,
     hotkeys: &[Hotkey],
     config_path: &Path,
+    verbose: bool,
     handle: &mut super::Handler,
 ) -> Result<()> {
+    let _ = verbose;
     // One daemon per session: a second would fail every RegisterHotKey anyway.
     let name = wide("Local\\window-jump-daemon");
     unsafe {

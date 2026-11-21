@@ -16,7 +16,6 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail};
 use zbus::blocking::{Connection, MessageIterator, Proxy};
-use zbus::fdo::RequestNameFlags;
 use zbus::message::Type as MessageType;
 use zbus::{MatchRule, Message};
 
@@ -34,9 +33,6 @@ pub const INTERFACE: &str = "org.hjosugi.WindowJump1";
 /// without the overlay (1) or with MRU sessions going by time (2).
 pub const PROTOCOL_VERSION: u32 = 3;
 pub const EXTENSION_UUID: &str = "window-jump@hjosugi.github.io";
-
-/// Held by the running daemon so a second one refuses to start.
-const DAEMON_NAME: &str = "org.hjosugi.WindowJump.Daemon";
 
 pub struct Gnome {
     conn: Connection,
@@ -61,10 +57,19 @@ impl Gnome {
             .map_err(explain)
     }
 
+    /// Whether the extension currently owns its bus name and answers.
+    pub fn extension_available() -> bool {
+        Gnome::connect()
+            .and_then(|gnome| gnome.protocol_version())
+            .is_ok()
+    }
+
     /// Pushes hotkeys and swipe claims to the extension. It keeps them only
     /// while this connection is alive. Returns the extension's protocol
-    /// version.
-    fn register(&self, cfg: &Config, hotkeys: &[Hotkey]) -> Result<u32> {
+    /// version. With `portal` the hotkeys are left to the GlobalShortcuts
+    /// portal; the extension only gets the swipe claims (and any old grabs
+    /// are cleared).
+    fn register(&self, cfg: &Config, hotkeys: &[Hotkey], portal: bool) -> Result<u32> {
         let version = self.protocol_version()?;
         if version < PROTOCOL_VERSION {
             let missing = if version < 2 {
@@ -82,19 +87,29 @@ impl Gnome {
             );
         }
 
-        let bindings: Vec<(String, String)> = hotkeys
-            .iter()
-            .enumerate()
-            .map(|(i, h)| (h.to_gnome(), format!("hotkey:{i}")))
-            .collect();
-        let failed: Vec<String> = self
-            .proxy
-            .call("SetAccelerators", &(bindings,))
-            .map_err(explain)?;
-        for accel in &failed {
-            eprintln!(
-                "window-jump: could not grab {accel}: GNOME or another app already uses it (check Settings → Keyboard → Shortcuts)"
-            );
+        let mut failed: Vec<String> = Vec::new();
+        if portal {
+            // Move any previous extension grabs out of the portal's way.
+            let empty: Vec<(String, String)> = Vec::new();
+            let _: Vec<String> = self
+                .proxy
+                .call("SetAccelerators", &(empty,))
+                .map_err(explain)?;
+        } else {
+            let bindings: Vec<(String, String)> = hotkeys
+                .iter()
+                .enumerate()
+                .map(|(i, h)| (h.to_gnome(), format!("hotkey:{i}")))
+                .collect();
+            failed = self
+                .proxy
+                .call("SetAccelerators", &(bindings,))
+                .map_err(explain)?;
+            for accel in &failed {
+                eprintln!(
+                    "window-jump: could not grab {accel}: GNOME or another app already uses it (check Settings → Keyboard → Shortcuts)"
+                );
+            }
         }
 
         let claims: Vec<(u32, u32)> = cfg.claims().iter().map(|c| (c.fingers, c.mods.0)).collect();
@@ -102,11 +117,18 @@ impl Gnome {
             .call_method("SetSwipeClaims", &(claims,))
             .map_err(explain)?;
 
-        eprintln!(
-            "window-jump: registered {} hotkey(s) and {} swipe claim(s) with GNOME Shell",
-            hotkeys.len() - failed.len(),
-            cfg.claims().len()
-        );
+        if portal {
+            eprintln!(
+                "window-jump: registered {} swipe claim(s) with GNOME Shell (hotkeys through the portal)",
+                cfg.claims().len()
+            );
+        } else {
+            eprintln!(
+                "window-jump: registered {} hotkey(s) and {} swipe claim(s) with GNOME Shell",
+                hotkeys.len() - failed.len(),
+                cfg.claims().len()
+            );
+        }
         Ok(version)
     }
 }
@@ -164,22 +186,43 @@ fn explain(e: zbus::Error) -> anyhow::Error {
 
 enum Incoming {
     Signal(Message),
+    /// An `Activated`/`Deactivated` signal from the GlobalShortcuts portal.
+    Portal(Message),
     /// The extension's bus name got a new owner (true) or lost it (false).
     Owner(bool),
 }
 
-pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler) -> Result<()> {
+pub fn run_daemon(
+    cfg: &Config,
+    hotkeys: &[Hotkey],
+    verbose: bool,
+    handle: &mut super::Handler,
+) -> Result<()> {
+    run_daemon_with(cfg, hotkeys, verbose, false, handle)
+}
+
+/// Like [`run_daemon`], but the hotkeys go through the XDG GlobalShortcuts
+/// portal; the extension still provides swipes and the HUD.
+pub fn run_daemon_with_portal(
+    cfg: &Config,
+    hotkeys: &[Hotkey],
+    verbose: bool,
+    handle: &mut super::Handler,
+) -> Result<()> {
+    run_daemon_with(cfg, hotkeys, verbose, true, handle)
+}
+
+fn run_daemon_with(
+    cfg: &Config,
+    hotkeys: &[Hotkey],
+    verbose: bool,
+    use_portal: bool,
+    handle: &mut super::Handler,
+) -> Result<()> {
     let mut cfg = cfg.clone();
     let mut hotkeys = hotkeys.to_vec();
     let gnome = Gnome::connect()?;
-    match gnome
-        .conn
-        .request_name_with_flags(DAEMON_NAME, RequestNameFlags::DoNotQueue.into())
-    {
-        Err(zbus::Error::NameTaken) => bail!("another window-jump daemon is already running"),
-        Err(e) => return Err(e).context("claiming the daemon bus name"),
-        Ok(_) => {}
-    }
+    super::claim_daemon_name(&gnome.conn)?;
 
     // Subscribe before the first registration so no owner change slips by.
     let signals = MessageIterator::for_match_rule(
@@ -212,10 +255,13 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
             }
         }
     });
+    let owner_tx = tx.clone();
     std::thread::spawn(move || {
         for msg in owners.flatten() {
             if let Ok((_, _, new_owner)) = msg.body().deserialize::<(String, String, String)>()
-                && tx.send(Incoming::Owner(!new_owner.is_empty())).is_err()
+                && owner_tx
+                    .send(Incoming::Owner(!new_owner.is_empty()))
+                    .is_err()
             {
                 break;
             }
@@ -224,13 +270,37 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
 
     // The extension's protocol version, once registered: from 3 on it reports
     // when a hotkey's modifiers are released.
-    let mut version = match gnome.register(&cfg, &hotkeys) {
+    let mut version = match gnome.register(&cfg, &hotkeys, use_portal) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("window-jump: waiting for the GNOME Shell extension: {e:#}");
             0
         }
     };
+
+    // Portal hotkeys, when requested. Registering after the swipes means they
+    // keep working while the desktop's confirmation dialog is open. A user who
+    // declines keeps a usable daemon (swipes, HUD, config reload) without
+    // global hotkeys.
+    let mut portal_session = String::new();
+    if use_portal {
+        let shortcuts =
+            super::portal::Shortcuts::register_on(gnome.conn.clone(), &cfg, &hotkeys, verbose)?;
+        if let Some(shortcuts) = shortcuts {
+            portal_session = shortcuts.session_handle().as_str().to_string();
+            let portal_signals = shortcuts.signals()?;
+            let portal_tx = tx.clone();
+            std::thread::spawn(move || {
+                for msg in portal_signals.flatten() {
+                    if portal_tx.send(Incoming::Portal(msg)).is_err() {
+                        break;
+                    }
+                }
+            });
+        } else {
+            eprintln!("window-jump: running without global hotkeys");
+        }
+    }
 
     let mut last_tick = Instant::now();
     loop {
@@ -251,7 +321,7 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
             Some(Incoming::Owner(true)) => {
                 // The shell restarted or the extension was re-enabled; it has
                 // forgotten our hotkeys and claims.
-                match gnome.register(&cfg, &hotkeys) {
+                match gnome.register(&cfg, &hotkeys, use_portal) {
                     Ok(v) => version = v,
                     Err(e) => {
                         eprintln!("window-jump: registering with the GNOME extension failed: {e:#}")
@@ -268,6 +338,11 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
                     changed = changed.or(handle(&gnome, event));
                 }
             }
+            Some(Incoming::Portal(msg)) => {
+                if let Some(event) = super::portal::parse_signal(&msg, &portal_session, &hotkeys) {
+                    changed = changed.or(handle(&gnome, event));
+                }
+            }
             None => {}
         }
         if let Some(new) = changed {
@@ -275,11 +350,16 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
                 Ok(parsed) => {
                     cfg = new;
                     hotkeys = parsed;
-                    match gnome.register(&cfg, &hotkeys) {
+                    match gnome.register(&cfg, &hotkeys, use_portal) {
                         Ok(v) => version = v,
                         Err(e) => eprintln!(
                             "window-jump: registering with the GNOME extension failed: {e:#}"
                         ),
+                    }
+                    if use_portal {
+                        eprintln!(
+                            "window-jump: config reloaded; GlobalShortcuts bindings change after a restart"
+                        );
                     }
                 }
                 Err(e) => eprintln!("window-jump: ignoring an invalid config: {e:#}"),
