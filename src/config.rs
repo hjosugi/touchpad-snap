@@ -37,7 +37,8 @@ pub struct GestureConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HudConfig {
-    /// Show the app, window title and "2 / 5" after each jump (GNOME).
+    /// Show the window title and "App · 2 / 5" after each jump (on Windows,
+    /// from the daemon only).
     pub enabled: bool,
     pub duration_ms: u64,
 }
@@ -235,8 +236,8 @@ threshold = 120.0
 repeat_step = 220.0
 
 [hud]
-# After each jump, briefly show the app, the window title and "2 / 5" in the
-# middle of the window's screen (GNOME; Windows has no overlay yet).
+# After each jump, briefly show the window title and "App · 2 / 5" in the
+# middle of the window's screen. On Windows only the daemon shows it.
 enabled = true
 duration_ms = 700
 

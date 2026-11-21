@@ -16,6 +16,8 @@ use crate::model::Snapshot;
 pub mod gnome;
 #[cfg(windows)]
 pub mod windows;
+#[cfg(windows)]
+mod windows_hud;
 
 pub trait Backend {
     fn snapshot(&self) -> Result<Snapshot>;
@@ -56,7 +58,7 @@ pub fn connect() -> Result<Box<dyn Backend>> {
     }
     #[cfg(windows)]
     {
-        Ok(Box::new(windows::Win32))
+        Ok(Box::new(windows::Win32::new()))
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {

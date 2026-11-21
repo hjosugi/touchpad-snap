@@ -20,19 +20,35 @@ use windows_sys::Win32::System::Threading::{
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumChildWindows, EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW,
-    GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
+    BringWindowToTop, DispatchMessageW, EnumChildWindows, EnumWindows, GW_OWNER, GWL_EXSTYLE,
+    GetClassNameW, GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
     GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
-    IsWindowVisible, MSG, SW_RESTORE, SetForegroundWindow, SetTimer, ShowWindow, WM_HOTKEY,
-    WM_TIMER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    IsWindowVisible, MSG, SW_RESTORE, SetForegroundWindow, SetTimer, ShowWindow, TranslateMessage,
+    WM_HOTKEY, WM_TIMER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
+use super::windows_hud::HudWindow;
 use super::{Backend, Event};
 use crate::config::Config;
 use crate::hotkey::Hotkey;
 use crate::model::{Snapshot, Window};
 
-pub struct Win32;
+pub struct Win32 {
+    /// The overlay; only the daemon has one (see windows_hud.rs).
+    hud: Option<HudWindow>,
+}
+
+impl Win32 {
+    pub fn new() -> Self {
+        Self { hud: None }
+    }
+}
+
+impl Default for Win32 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Backend for Win32 {
     fn snapshot(&self) -> Result<Snapshot> {
@@ -113,6 +129,28 @@ impl Backend for Win32 {
                 bail!("Windows refused to bring window {id:#x} to the foreground");
             }
         }
+        Ok(())
+    }
+
+    fn show_hud(&self, id: u64, index: usize, total: usize, duration_ms: u64) -> Result<()> {
+        let Some(hud) = &self.hud else {
+            return Ok(());
+        };
+        let hwnd = id as usize as HWND;
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+        let name = app_name(&app_executable(hwnd, pid).unwrap_or_default());
+        let detail = if total > 0 {
+            format!("{name} · {index} / {total}")
+        } else {
+            name
+        };
+        hud.show(
+            hwnd,
+            &window_text(hwnd),
+            &detail,
+            duration_ms.min(u32::MAX as u64) as u32,
+        );
         Ok(())
     }
 
@@ -244,10 +282,21 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
     // Timer messages posted to this thread drive Event::Tick.
     unsafe { SetTimer(null_mut(), 0, super::TICK.as_millis() as u32, None) };
 
-    let backend = Win32;
+    let backend = Win32 {
+        hud: HudWindow::new(),
+    };
     let mut msg: MSG = unsafe { std::mem::zeroed() };
-    // Hotkeys registered with a null HWND are posted to this thread's queue.
+    // Hotkeys registered with a null HWND, and the tick timer, are posted to
+    // this thread's queue with a null HWND; the overlay's own messages carry
+    // its window and are dispatched to it.
     while unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } > 0 {
+        if !msg.hwnd.is_null() {
+            unsafe {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            continue;
+        }
         let changed = match msg.message {
             WM_HOTKEY => match msg.wParam as usize {
                 0 => None,
