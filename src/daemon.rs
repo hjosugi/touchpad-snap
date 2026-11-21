@@ -80,6 +80,17 @@ impl ConfigWatch {
             return None;
         }
         self.seen = now;
+        self.load()
+    }
+
+    /// Re-reads the file even if it did not change; the tray's
+    /// "Reload config" item.
+    fn reload(&mut self) -> Option<Config> {
+        self.seen = std::fs::read(&self.path).ok();
+        self.load()
+    }
+
+    fn load(&self) -> Option<Config> {
         match config::load(&self.path) {
             Ok(cfg) => {
                 eprintln!("window-jump: reloaded {}", self.path.display());
@@ -140,11 +151,11 @@ impl Handler {
         match event {
             Event::Tick => {
                 let cfg = self.watch.as_mut()?.poll()?;
-                self.recognizer =
-                    SwipeRecognizer::new(cfg.gesture.threshold, cfg.gesture.repeat_step);
-                self.claim = None;
-                self.cfg = cfg.clone();
-                return Some(cfg);
+                return self.adopt(cfg);
+            }
+            Event::Reload => {
+                let cfg = self.watch.as_mut()?.reload()?;
+                return self.adopt(cfg);
             }
             Event::Hotkey { index, tracked } => {
                 let session = match (tracked, self.held) {
@@ -217,6 +228,15 @@ impl Handler {
         None
     }
 
+    /// Takes over a reloaded config and resets gesture state that belonged to
+    /// the old one.
+    fn adopt(&mut self, cfg: Config) -> Option<Config> {
+        self.recognizer = SwipeRecognizer::new(cfg.gesture.threshold, cfg.gesture.repeat_step);
+        self.claim = None;
+        self.cfg = cfg.clone();
+        Some(cfg)
+    }
+
     fn run(&self, backend: &dyn Backend, step: Step, session: Session) {
         match jump(backend, &self.cfg, step, session, &self.state_path) {
             Ok(pick) => {
@@ -231,9 +251,9 @@ impl Handler {
 
 pub fn run(cfg: Config, config_path: PathBuf, verbose: bool) -> Result<()> {
     let hotkeys = cfg.validate()?;
-    let mut handler =
-        Handler::new(cfg.clone(), session::default_path(), verbose).watch_config(config_path);
-    platform::run_daemon(&cfg, &hotkeys, &mut |backend, event| {
+    let mut handler = Handler::new(cfg.clone(), session::default_path(), verbose)
+        .watch_config(config_path.clone());
+    platform::run_daemon(&cfg, &hotkeys, &config_path, &mut |backend, event| {
         handler.handle(backend, event)
     })
 }
@@ -452,6 +472,11 @@ mod tests {
 
         // Unchanged: nothing to do.
         assert_eq!(h.handle(&fake, Event::Tick), None);
+        // ...but an explicit reload still re-reads it.
+        assert_eq!(
+            h.handle(&fake, Event::Reload).map(|c| c.hotkeys.len()),
+            Some(0)
+        );
 
         // A new binding is picked up and handed to the platform.
         std::fs::write(

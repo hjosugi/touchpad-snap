@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Tests
+
+- A NixOS VM test boots a full GNOME session and swipes on a virtual
+  (uinput) touchpad: Ctrl + three fingers must jump to the app's other window
+  without switching workspace, plain three fingers must still switch it.
+  Runs in CI. (#26)
+
+## [0.3.0] - 2026-11-21
+
+### Added
+
+- Windows: windows on other virtual desktops are listed and can be jumped to;
+  `workspace = "current"` still excludes them. Windows has no documented API to
+  switch desktops, so activation sends `Win+Ctrl+Left/Right` as a best effort
+  and reports an error when the window cannot be reached. (#1)
+- Windows: native Precision Touchpad swipes through raw HID input, so the same
+  `[[swipe]]` bindings as on GNOME work. Windows' own three/four-finger
+  gestures must be turned off first. (#2)
+- Windows: a notification-area icon for `window-jumpw.exe` with the hotkey
+  status, *Reload config*, *Open config file*, *Start at login* and *Quit*. (#3)
+
 ### Changed
 
 - `order = "mru"` works like Alt+Tab: presses while the hotkey's modifiers
@@ -13,13 +34,6 @@
   (`window-jump next` from another shortcut tool, hotkeys without
   modifiers). Extension protocol 3 adds the `AcceleratorReleased` signal; with
   an older extension sessions go by time as before. (#6)
-
-### Tests
-
-- A NixOS VM test boots a full GNOME session and swipes on a virtual
-  (uinput) touchpad: Ctrl + three fingers must jump to the app's other window
-  without switching workspace, plain three fingers must still switch it.
-  Runs in CI. (#26)
 
 ## [0.2.0] - 2026-11-21
 

@@ -207,6 +207,20 @@ pub fn load(path: &Path) -> Result<Config> {
     }
 }
 
+/// Creates `path` from [`TEMPLATE`] when it does not exist, creating its
+/// directory too. Returns whether it wrote the file. The tray's "Open config
+/// file" item uses this so the item always has something to open.
+pub fn ensure(path: &Path) -> Result<bool> {
+    if path.exists() {
+        return Ok(false);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    std::fs::write(path, TEMPLATE).with_context(|| format!("writing {}", path.display()))?;
+    Ok(true)
+}
+
 /// The commented starter file written by `window-jump config init`.
 pub const TEMPLATE: &str = r#"# window-jump configuration.
 # Every setting is optional; what is shown here are the defaults.
@@ -258,10 +272,12 @@ action = "next"
 keys = "Super+Alt+P"
 action = "prev"
 
-# Touchpad swipes, held together with modifier keys (GNOME, via the shell
-# extension). A claimed swipe is taken away from GNOME, so Ctrl + three
-# fingers no longer switches workspace while plain three fingers still does.
-# Avoid Super alone: releasing it opens the Activities overview.
+# Touchpad swipes, held together with modifier keys: on GNOME via the shell
+# extension, on Windows from a Precision Touchpad's raw HID input. On GNOME a
+# claimed swipe is taken away from the shell, so Ctrl + three fingers no
+# longer switches workspace while plain three fingers still does. On Windows,
+# turn the built-in three/four-finger gestures off first.
+# Avoid Super alone: releasing it opens the Activities overview (or Start).
 # Set `swipe = []` to bind none.
 [[swipe]]
 fingers = 3
@@ -312,6 +328,16 @@ mod tests {
         let mut cfg = Config::default();
         cfg.swipes[0].fingers = 2;
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn ensure_writes_the_template_only_once() {
+        let dir = std::env::temp_dir().join(format!("window-jump-ensure-{}", std::process::id()));
+        let path = dir.join("nested").join("config.toml");
+        assert!(ensure(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), TEMPLATE);
+        assert!(!ensure(&path).unwrap());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

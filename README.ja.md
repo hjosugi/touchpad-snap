@@ -6,7 +6,7 @@
 
 - **ショートカット**: 既定は `Super+Alt+N`（次）/ `Super+Alt+P`（前）。設定で変更できます。
 - **GNOME のスワイプ**: `Ctrl` を押しながら 3 本指でスワイプ。登録した組み合わせ（指の本数＋修飾キー）だけを GNOME から横取りするので、修飾キーなしの 3 本指スワイプは今まで通りワークスペース切り替えに使えます。指を離さずに動かし続けると何枚も進み、戻すと戻ります。
-- **Windows のスワイプ**: Windows の設定でタッチパッドのジェスチャーにショートカットを割り当てます（後述）。
+- **Windows のスワイプ**: Windows Precision Touchpad なら、GNOME と同じ「修飾キー＋3 本指スワイプ」が使えます。ただし Windows 標準の 3 / 4 本指ジェスチャーは先にオフにする必要があります（後述）。
 - **切り替え先の表示**: 切り替えるたびに、ウィンドウのタイトルと「アプリ · 2 / 5」（GNOME ではアプリのアイコンも）を画面中央に一瞬表示します。スワイプで何枚も進むときに今どこにいるかが分かります。Windows では daemon 経由のときに表示されます。
 - **並び順**: `stable`（固定順で全ウィンドウを巡回）、`position`（画面の左から右）、`mru`（Alt+Tab と同じ動き。1 回押すと直近 2 枚を往復し、修飾キーを押したまま続けて押すと古い方へ進み、離したところで確定する）。
 - **他のツールからも使える**: `window-jump next` / `window-jump prev` は普通のコマンドなので、GNOME のカスタムショートカット、AutoHotkey、keyd、マウスのユーティリティなどにも割り当てられます。
@@ -20,8 +20,8 @@ window-jump next / daemon                   window-jump next / daemon
         │  D-Bus（セッションバス）                  │  Win32
         ▼                                           ▼
 window-jump@hjosugi.github.io               EnumWindows, SetForegroundWindow,
-（GNOME Shell 拡張。コンポジタ内で動く）    RegisterHotKey
- ・ウィンドウ一覧 / アクティブ化
+（GNOME Shell 拡張。コンポジタ内で動く）    RegisterHotKey, Raw Input
+ ・ウィンドウ一覧 / アクティブ化             （Precision Touchpad）
  ・daemon のホットキーを登録
  ・修飾キー＋スワイプを横取り
 ```
@@ -73,9 +73,15 @@ environment.systemPackages = [
    .\window-jump.exe autostart enable   # ログイン時に window-jumpw.exe（コンソール窓なし）を起動
    .\window-jumpw.exe                    # 今すぐ起動
    ```
-3. タッチパッド: **設定 → Bluetooth とデバイス → タッチパッド → 高度なジェスチャー** で、たとえば「3 本指で左にスワイプ」を **カスタム ショートカット** にして `Win+Alt+N` を、右に `Win+Alt+P` を割り当てます。
+3. タッチパッド（任意）: スワイプには **Windows Precision Touchpad** が必要です（最近のノート PC はほぼ対応）。**設定 → Bluetooth とデバイス → タッチパッド** で **3 本指のジェスチャー** と **4 本指のジェスチャー** をオフ（*何もしない*）にしてから、GNOME と同じ `[[swipe]]` 設定を使います。既定では `Ctrl` を押しながら 3 本指で左右にスワイプします。Windows 標準のジェスチャーを有効にしたままだと、そちらも同時に反応します（生の HID 入力からは横取りできません）。
 
-ウィンドウは実行ファイル（`notepad.exe`、`Code.exe` など）単位でまとめます。UWP アプリは ApplicationFrameHost の枠の裏にある本体のプロセスで判定します。別の仮想デスクトップのウィンドウはまだ対象外です。
+`window-jumpw.exe` はタスクトレイ（通知領域）にアイコンを表示します。メニューには登録できたホットキーの数（他のアプリに取られて登録できなかったものはその名前）と、**Reload config**（設定の再読み込み）、**Open config file**（設定ファイルを開く）、**Start at login**（ログイン時に起動、現在の状態にチェック）、**Quit**（終了）が並びます。終了するためにタスク マネージャーを開く必要はありません。
+
+ウィンドウは実行ファイル（`notepad.exe`、`Code.exe` など）単位でまとめます。UWP アプリは ApplicationFrameHost の枠の裏にある本体のプロセスで判定します。
+
+別の仮想デスクトップのウィンドウも、`workspace = "all"`（既定）なら対象に含まれ、`"current"` なら除外されます。いまのデスクトップが `ws 0`、ほかのデスクトップが正の番号です。別デスクトップのウィンドウへのジャンプはベストエフォートです。デスクトップを切り替える公開 API がないため、`Win+Ctrl+左/右` を最大 8 回ずつ送り、届かなければエラーを表示します。中断された UWP ウィンドウは表示されません。
+
+手動テスト: `Win+Ctrl+D` で 2 つ目のデスクトップを作り、そこで 2 つ目の Notepad を開き（またはタスク ビューで移動し）、`Win+Ctrl+左` で戻ってから `window-jump list`（2 つ目の Notepad が正の `ws`）と、1 つ目の Notepad での `window-jump next` を確認します。
 
 ### ソースから
 
@@ -127,7 +133,7 @@ action = "next"
 keys = "Super+Alt+P"
 action = "prev"
 
-[[swipe]]                 # GNOME のみ
+[[swipe]]                 # GNOME / Windows（Precision Touchpad）
 fingers = 3               # 3〜5
 modifiers = ["ctrl"]
 direction = "left"        # left | right | up | down
@@ -144,7 +150,8 @@ action = "prev"
 
 ヒント:
 
-- スワイプの修飾キーに `Super` 単体は避けてください。離したときに GNOME のアクティビティ画面が開きます。`Ctrl`、`Ctrl+Alt`、`Shift` なら問題ありません。
+- スワイプの修飾キーに `Super` 単体は避けてください。離したときに GNOME のアクティビティ画面（Windows ではスタートメニュー）が開くことがあります。`Ctrl`、`Ctrl+Alt`、`Shift` なら問題ありません。
+- Windows では先に標準の 3 / 4 本指ジェスチャーをオフにしてください。Precision Touchpad は同じ指の動きを生の HID 入力として報告しますが、Windows のシェルも独立してジェスチャーを処理するため、横取りはできません。
 - ホットキーが登録できない場合（GNOME や他のアプリが使用中）は daemon の起動時に表示されます。`window-jump daemon -v` で全イベントをログに出せます。
 
 ## 開発
@@ -156,6 +163,8 @@ cargo build --all-targets && ./test/e2e/gnome.sh
                                # 使い捨ての headless GNOME Shell での e2e テスト:
                                # 本物のウィンドウと、仮想キーボードで押したホットキー
 pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe   # Windows 上で
+pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe -VirtualDesktops
+                               # 2 つ目の仮想デスクトップ上のウィンドウも確認
 nix build .#checks.x86_64-linux.vm-touchpad -L
                                # VM 内の本物の GNOME セッションで、仮想タッチパッドから
                                # スワイプする（KVM が必要）

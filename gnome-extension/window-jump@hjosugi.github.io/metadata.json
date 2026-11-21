@@ -4,5 +4,5 @@
   "description": "Bridge for the window-jump program: switch between windows of the same app with hotkeys and modifier + touchpad swipes. Exposes the window list, global hotkeys and swipe gestures on the session bus, which Wayland offers no other way to reach. Needs the window-jump binary (https://github.com/hjosugi/window-jump).",
   "shell-version": ["46", "47", "48", "49", "50", "51"],
   "url": "https://github.com/hjosugi/window-jump",
-  "version-name": "0.2.0"
+  "version-name": "0.3.0"
 }
