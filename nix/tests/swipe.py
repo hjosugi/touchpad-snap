@@ -1,15 +1,25 @@
-"""Plays a touchpad swipe through uinput, the way a real touchpad would.
+"""A virtual touchpad (and keyboard) for the VM test, driven like hardware.
 
-    swipe [--ctrl] [--fingers 3] [--dx -20] [--dy 0]
+    swipe serve              create the devices and play what is sent
+    swipe send [--ctrl] [--fingers 3] [--dx -40] [--dy 0]
 
-Creates a multitouch touchpad (and, with --ctrl, a keyboard holding Left
-Ctrl for the duration), moves the fingers by --dx/--dy millimetres, lifts
-them and removes the devices. libinput turns the contacts into a swipe
-gesture, so everything above it (mutter, GNOME Shell, the window-jump
-extension) sees what it would see from hardware. Needs root (/dev/uinput).
+`serve` runs as a system service from boot, so the devices are there when
+the GNOME session starts, as a built-in touchpad would be (a touchpad
+plugged in moments before a swipe is not what is being tested). It creates a
+uinput multitouch touchpad and a keyboard, waits until the compositor has
+opened them, writes DIR/ready, then plays every command written to the FIFO
+DIR/cmd and appends its number to DIR/done (DIR: --dir, /run/swipe).
+
+`send` writes one command and waits until it has been played: fingers down,
+moved by --dx/--dy millimetres, lifted; with --ctrl, Left Ctrl is held
+around the swipe. libinput turns the contacts into a swipe gesture, so
+mutter, GNOME Shell and the window-jump extension see what they would see
+from hardware. Both need root (/dev/uinput, DIR).
 """
 
 import argparse
+import glob
+import os
 import time
 
 from evdev import AbsInfo, UInput
@@ -23,8 +33,10 @@ TOOLS = {
     3: e.BTN_TOOL_TRIPLETAP,
     4: e.BTN_TOOL_QUADTAP,
 }
-# Time for the compositor to pick up a new device.
-SETTLE_S = 2.0
+# Distinct ids: libinput pairs an external touchpad with a keyboard of the
+# same vendor/product for disable-while-typing.
+VENDOR = 0x1D6B
+OPEN_TIMEOUT_S = 300.0
 
 
 def touchpad():
@@ -44,13 +56,47 @@ def touchpad():
     return UInput(
         caps,
         name="window-jump test touchpad",
+        vendor=VENDOR,
+        product=0x0001,
         input_props=[e.INPUT_PROP_POINTER, e.INPUT_PROP_BUTTONPAD],
     )
 
 
 def keyboard():
     keys = list(range(e.KEY_ESC, e.KEY_KPDOT + 1))
-    return UInput({e.EV_KEY: keys}, name="window-jump test keyboard")
+    return UInput(
+        {e.EV_KEY: keys},
+        name="window-jump test keyboard",
+        vendor=VENDOR,
+        product=0x0002,
+    )
+
+
+def opened_by_shell(path):
+    for fd in glob.glob("/proc/[0-9]*/fd/*"):
+        pid = fd.split("/")[2]
+        try:
+            if os.readlink(fd) != path:
+                continue
+            with open(f"/proc/{pid}/comm") as comm:
+                if "gnome-shell" in comm.read():
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+def wait_until_opened(dev):
+    """Waits until GNOME Shell (through logind) holds the device's event
+    node open: events written before that are lost. (logind itself opens
+    keyboards to watch for power keys; that does not count.)"""
+    path = dev.device.path
+    deadline = time.time() + OPEN_TIMEOUT_S
+    while time.time() < deadline:
+        if opened_by_shell(path):
+            return
+        time.sleep(0.5)
+    raise SystemExit(f"nobody opened {path} within {OPEN_TIMEOUT_S} s")
 
 
 def swipe(pad, fingers, dx_mm, dy_mm, steps=40, step_s=0.012):
@@ -63,7 +109,7 @@ def swipe(pad, fingers, dx_mm, dy_mm, steps=40, step_s=0.012):
         for i in range(fingers)
     ]
 
-    def frame(k):
+    for k in range(steps + 1):
         first = None
         for i, (x, y) in enumerate(start):
             px = int(x + dx_mm * RES * k / steps)
@@ -82,8 +128,6 @@ def swipe(pad, fingers, dx_mm, dy_mm, steps=40, step_s=0.012):
         pad.syn()
         time.sleep(step_s)
 
-    for k in range(steps + 1):
-        frame(k)
     for i in range(fingers):
         pad.write(e.EV_ABS, e.ABS_MT_SLOT, i)
         pad.write(e.EV_ABS, e.ABS_MT_TRACKING_ID, -1)
@@ -92,32 +136,79 @@ def swipe(pad, fingers, dx_mm, dy_mm, steps=40, step_s=0.012):
     pad.syn()
 
 
+def play(pad, kbd, line):
+    ctrl, fingers, dx, dy = line.split()
+    if ctrl == "ctrl":
+        kbd.write(e.EV_KEY, e.KEY_LEFTCTRL, 1)
+        kbd.syn()
+        time.sleep(0.2)
+    swipe(pad, int(fingers), float(dx), float(dy))
+    time.sleep(0.3)
+    if ctrl == "ctrl":
+        kbd.write(e.EV_KEY, e.KEY_LEFTCTRL, 0)
+        kbd.syn()
+
+
+def serve(path):
+    os.makedirs(path, exist_ok=True)
+    fifo = os.path.join(path, "cmd")
+    if not os.path.exists(fifo):
+        os.mkfifo(fifo)
+    pad, kbd = touchpad(), keyboard()
+    wait_until_opened(pad)
+    wait_until_opened(kbd)
+    # Opened is not quite configured yet.
+    time.sleep(1.0)
+    open(os.path.join(path, "ready"), "w").close()
+    played = 0
+    while True:
+        with open(fifo) as commands:
+            for line in commands:
+                play(pad, kbd, line)
+                played += 1
+                with open(os.path.join(path, "done"), "a") as done:
+                    done.write(f"{played}\n")
+
+
+def count_done(path):
+    try:
+        with open(os.path.join(path, "done")) as done:
+            return len(done.readlines())
+    except FileNotFoundError:
+        return 0
+
+
+def send(path, args):
+    deadline = time.time() + OPEN_TIMEOUT_S
+    while not os.path.exists(os.path.join(path, "ready")):
+        if time.time() > deadline:
+            raise SystemExit("the touchpad service never got ready")
+        time.sleep(0.2)
+    before = count_done(path)
+    with open(os.path.join(path, "cmd"), "w") as cmd:
+        mode = "ctrl" if args.ctrl else "plain"
+        cmd.write(f"{mode} {args.fingers} {args.dx} {args.dy}\n")
+    while count_done(path) <= before:
+        time.sleep(0.1)
+    # Let the compositor and the daemon finish with it.
+    time.sleep(0.5)
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--ctrl", action="store_true", help="hold Left Ctrl")
-    p.add_argument("--fingers", type=int, default=3, choices=sorted(TOOLS))
-    p.add_argument("--dx", type=float, default=-40.0, help="millimetres")
-    p.add_argument("--dy", type=float, default=0.0, help="millimetres")
+    p.add_argument("--dir", default="/run/swipe")
+    sub = p.add_subparsers(dest="command", required=True)
+    sub.add_parser("serve")
+    s = sub.add_parser("send")
+    s.add_argument("--ctrl", action="store_true", help="hold Left Ctrl")
+    s.add_argument("--fingers", type=int, default=3, choices=sorted(TOOLS))
+    s.add_argument("--dx", type=float, default=-40.0, help="millimetres")
+    s.add_argument("--dy", type=float, default=0.0, help="millimetres")
     args = p.parse_args()
-
-    pad = touchpad()
-    kbd = keyboard() if args.ctrl else None
-    try:
-        time.sleep(SETTLE_S)
-        if kbd:
-            kbd.write(e.EV_KEY, e.KEY_LEFTCTRL, 1)
-            kbd.syn()
-            time.sleep(0.2)
-        swipe(pad, args.fingers, args.dx, args.dy)
-        time.sleep(0.3)
-        if kbd:
-            kbd.write(e.EV_KEY, e.KEY_LEFTCTRL, 0)
-            kbd.syn()
-        time.sleep(0.5)
-    finally:
-        pad.close()
-        if kbd:
-            kbd.close()
+    if args.command == "serve":
+        serve(args.dir)
+    else:
+        send(args.dir, args)
 
 
 if __name__ == "__main__":
