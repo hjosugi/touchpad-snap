@@ -1,6 +1,18 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-11-21
+
+### Added
+
+- Windows: windows on other virtual desktops are listed and can be jumped to;
+  `workspace = "current"` still excludes them. Windows has no documented API to
+  switch desktops, so activation sends `Win+Ctrl+Left/Right` as a best effort
+  and reports an error when the window cannot be reached. (#1)
+- Windows: native Precision Touchpad swipes through raw HID input, so the same
+  `[[swipe]]` bindings as on GNOME work. Windows' own three/four-finger
+  gestures must be turned off first. (#2)
+- Windows: a notification-area icon for `window-jumpw.exe` with the hotkey
+  status, *Reload config*, *Open config file*, *Start at login* and *Quit*. (#3)
 
 ### Changed
 
