@@ -125,12 +125,7 @@ pkgs.testers.runNixOSTest {
         return next((w["id"] for w in snapshot()["windows"] if w["focused"]), 0)
 
 
-    def wait_for(what, pred, timeout=60):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if pred():
-                return
-            time.sleep(0.5)
+    def diagnose():
         machine.screenshot("timeout")
         print("--- windows ---")
         print(machine.execute(as_alice("window-jump list --json"))[1])
@@ -142,6 +137,15 @@ pkgs.testers.runNixOSTest {
         print(machine.execute("grep -E 'uint32|double' /tmp/signals.log | awk '{print $2}' | paste -d' ' - - - - - | tail -n 25")[1])
         print("--- the last gestures libinput reported ---")
         print(machine.execute("grep -E 'GESTURE|KEYBOARD_KEY' /tmp/libinput.log | tail -n 40")[1])
+
+
+    def wait_for(what, pred, timeout=60):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if pred():
+                return
+            time.sleep(0.5)
+        diagnose()
         raise Exception(f"timed out waiting for: {what}")
 
 
@@ -158,14 +162,18 @@ pkgs.testers.runNixOSTest {
 
 
     def focus_on(wid):
-        # A window opened moments ago can still take focus after an
-        # activation went through; insist until focus stays put.
-        for _ in range(5):
+        # A window opened moments ago takes focus when it is mapped, which
+        # can be before or after an activation went through; insist until
+        # focus is there and stays.
+        for _ in range(10):
             machine.succeed(as_alice(f"window-jump activate {wid}"))
-            wait_for(f"window {wid} focused", lambda: focused() == wid)
             time.sleep(2)
+            if focused() != wid:
+                continue
+            time.sleep(1)
             if focused() == wid:
                 return
+        diagnose()
         raise Exception(f"window {wid} does not keep focus")
 
 
