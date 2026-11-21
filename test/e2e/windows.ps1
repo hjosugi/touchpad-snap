@@ -160,8 +160,12 @@ try {
         Write-Host "DIAGNOSTIC cdb: $cdb"
         if ($cdb) {
             $out = Join-Path $work 'cdb.txt'
-            $cmds = 'sxe -c ".ecxr;kp 40;q" av; sxe -c ".ecxr;kp 40;q" c000041d; sxe -c "kp 40;q" c0000409; g'
-            $dbg = Start-Process -FilePath $cdb.FullName -ArgumentList @('-G', '-y', (Split-Path $Bin), '-c', "`"$cmds`"", $Bin, '--config', $cfg, 'daemon') `
+            $script = Join-Path $work 'cdb-script.txt'
+            Set-Content -Path $script -Encoding ascii -Value @(
+                'sxe -c ".lastevent;.ecxr;kp 40;q" *',
+                'g'
+            )
+            $dbg = Start-Process -FilePath $cdb.FullName -ArgumentList @('-G', '-y', (Split-Path $Bin), '-cf', $script, $Bin, '--config', $cfg, 'daemon') `
                 -RedirectStandardOutput $out -PassThru
             if (-not $dbg.WaitForExit(30000)) { Stop-Process -Id $dbg.Id -Force }
             Write-Host 'DIAGNOSTIC cdb output:'
