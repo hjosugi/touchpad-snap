@@ -3,8 +3,13 @@
 # checks that window-jump groups the Notepads and cycles between them only.
 #
 #   pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe
+#
+# Add -VirtualDesktops to also cover a window on a second virtual desktop.
+# That part is opt-in because it needs a desktop session where Win+Ctrl+D
+# works (and assumes the test starts on a single desktop).
 param(
-    [Parameter(Mandatory = $true)][string]$Bin
+    [Parameter(Mandatory = $true)][string]$Bin,
+    [switch]$VirtualDesktops
 )
 
 $ErrorActionPreference = 'Stop'
@@ -188,6 +193,45 @@ try {
     $sent = [Win]::Chord(0x11, 0x12, 0x4E)
     WaitFor 'next press -> back to the first Notepad' { (Focused) -eq $n[0].id }
     Ok 'daemon: held modifiers keep digging past the timeout, release commits'
+    if ($VirtualDesktops) {
+        # A second desktop, with one Notepad on it. Win+Ctrl+D switches to the
+        # new desktop, so the Notepad starts there.
+        $sent = [Win]::Chord(0x5B, 0x11, 0x44)  # Win, Ctrl, D
+        if ($sent -ne 6) { Fail "SendInput accepted only $sent of 6 events for Win+Ctrl+D" }
+        Start-Sleep -Seconds 2
+        $second = Start-Process notepad -PassThru
+        $procs += $second
+        WaitFor 'Notepad on the second desktop' {
+            @(Snapshot | Where-Object { $_.pid -eq $second.Id }).Count -ge 1
+        }
+        $far = Snapshot | Where-Object { $_.pid -eq $second.Id } | Select-Object -First 1
+        if (-not $far) { Fail 'the Notepad on the second desktop is not listed' }
+
+        # Back on the first desktop its windows are ws 0 and the far one is
+        # reported on another workspace.
+        $sent = [Win]::Chord(0x5B, 0x11, 0x25)  # Win, Ctrl, Left
+        if ($sent -ne 6) { Fail "SendInput accepted only $sent of 6 events for Win+Ctrl+Left" }
+        Start-Sleep -Seconds 2
+        foreach ($w in $n) {
+            $now = Snapshot | Where-Object { $_.id -eq $w.id } | Select-Object -First 1
+            if ($now.workspace -ne 0) { Fail "a first-desktop Notepad is at ws $($now.workspace)" }
+        }
+        $far = Snapshot | Where-Object { $_.id -eq $far.id } | Select-Object -First 1
+        if ($far.workspace -le 0) {
+            Fail "the Notepad on the second desktop is at ws $($far.workspace), not another desktop"
+        }
+        Ok "second desktop: Notepad $($far.id) listed at ws $($far.workspace)"
+
+        # Activating it must switch desktops and focus it.
+        & $Bin activate $far.id
+        if ($LASTEXITCODE -ne 0) { Fail 'activate on another desktop failed' }
+        WaitFor 'activation switched to the second desktop' { (Focused) -eq $far.id }
+        Ok 'activate switched to the window on the second desktop'
+
+        # Leave the machine on the first desktop again.
+        [Win]::Chord(0x5B, 0x11, 0x25) | Out-Null
+        Start-Sleep -Seconds 2
+    }
 
     Write-Host 'ALL PASSED'
 }
