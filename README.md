@@ -15,6 +15,9 @@ compositor where Wayland allows nothing else.
   moving to step through several windows; move back to step back.
 - **Swipes on Windows**: map a touchpad gesture to the hotkey in Windows
   Settings (see below).
+- **Overlay (GNOME)**: after each jump the app icon, window title and
+  "2 / 5" show briefly in the middle of the screen, so you can follow where
+  you are while scrubbing.
 - **Orders**: `stable` (fixed order, walks every window), `position` (left to
   right on screen) or `mru` (toggle between the two most recent windows; quick
   repeats dig deeper, like Alt+Tab).
@@ -145,6 +148,10 @@ mru_session_ms = 1000     # order = "mru": repeats closer than this continue one
 [gesture]
 threshold = 120.0         # finger travel before a swipe counts (GNOME's full workspace swipe is 400)
 repeat_step = 220.0       # further travel per extra jump while the fingers stay down; 0 = one jump per swipe
+
+[hud]                     # the overlay after a jump (GNOME)
+enabled = true
+duration_ms = 700
 
 [[hotkey]]
 keys = "Super+Alt+N"      # modifiers: Super (Win), Ctrl, Alt, Shift

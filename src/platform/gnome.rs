@@ -29,7 +29,9 @@ use crate::model::Snapshot;
 pub const BUS_NAME: &str = "org.hjosugi.WindowJump";
 pub const OBJECT_PATH: &str = "/org/hjosugi/WindowJump";
 pub const INTERFACE: &str = "org.hjosugi.WindowJump1";
-pub const PROTOCOL_VERSION: u32 = 1;
+/// The extension protocol this binary speaks. Version 2 added ShowHud; a
+/// version 1 extension still works, without the overlay.
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const EXTENSION_UUID: &str = "window-jump@hjosugi.github.io";
 
 /// Held by the running daemon so a second one refuses to start.
@@ -62,9 +64,14 @@ impl Gnome {
     /// while this connection is alive.
     fn register(&self, cfg: &Config, hotkeys: &[Hotkey]) -> Result<()> {
         let version = self.protocol_version()?;
-        if version != PROTOCOL_VERSION {
+        if version < PROTOCOL_VERSION {
             eprintln!(
-                "window-jump: the GNOME extension speaks protocol {version}, this binary {PROTOCOL_VERSION}; update whichever is older"
+                "window-jump: the GNOME extension is older (protocol {version}, this binary {PROTOCOL_VERSION}); \
+                 everything works except the overlay after a jump. Update the extension and log in again."
+            );
+        } else if version > PROTOCOL_VERSION {
+            eprintln!(
+                "window-jump: the GNOME extension is newer (protocol {version}, this binary {PROTOCOL_VERSION}); update window-jump"
             );
         }
 
@@ -109,6 +116,21 @@ impl Backend for Gnome {
             bail!("window {id} is gone");
         }
         Ok(())
+    }
+
+    fn show_hud(&self, id: u64, index: usize, total: usize, duration_ms: u64) -> Result<()> {
+        let args = (
+            id,
+            index as u32,
+            total as u32,
+            duration_ms.min(u32::MAX as u64) as u32,
+        );
+        match self.proxy.call::<_, _, bool>("ShowHud", &args) {
+            Ok(_) => Ok(()),
+            // A protocol 1 extension: no overlay, and nothing to complain about.
+            Err(e) if e.to_string().contains("UnknownMethod") => Ok(()),
+            Err(e) => Err(explain(e)),
+        }
     }
 
     fn describe(&self) -> String {

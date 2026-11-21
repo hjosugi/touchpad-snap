@@ -24,7 +24,9 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
+import Pango from 'gi://Pango';
 import Shell from 'gi://Shell';
+import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -34,7 +36,7 @@ import {Phase, SwipeClaimer, modsFromState} from './lib.js';
 const BUS_NAME = 'org.hjosugi.WindowJump';
 const OBJECT_PATH = '/org/hjosugi/WindowJump';
 const INTERFACE = 'org.hjosugi.WindowJump1';
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 
 const IFACE_XML = `
 <node>
@@ -44,6 +46,13 @@ const IFACE_XML = `
     </method>
     <method name="Activate">
       <arg type="t" direction="in" name="id"/>
+      <arg type="b" direction="out" name="ok"/>
+    </method>
+    <method name="ShowHud">
+      <arg type="t" direction="in" name="id"/>
+      <arg type="u" direction="in" name="index"/>
+      <arg type="u" direction="in" name="total"/>
+      <arg type="u" direction="in" name="duration_ms"/>
       <arg type="b" direction="out" name="ok"/>
     </method>
     <method name="SetAccelerators">
@@ -79,9 +88,93 @@ const PHASES = new Map([
     [Clutter.TouchpadGesturePhase.CANCEL, Phase.CANCEL],
 ]);
 
+// A short-lived overlay naming the window just jumped to: app icon, window
+// title, and its place in the cycle ("Text Editor · 2 / 3"). Centred on the
+// window's monitor, never reactive, replaced by the next one.
+class Hud {
+    constructor(tracker) {
+        this._tracker = tracker;
+        this._actor = null;
+        this._timeoutId = 0;
+    }
+
+    show(window, index, total, durationMs) {
+        this.destroy();
+
+        const app = this._tracker.get_window_app(window);
+        const box = new St.BoxLayout({
+            style_class: 'window-jump-hud',
+            reactive: false,
+            opacity: 0,
+        });
+        // St.BoxLayout grew `orientation` in GNOME 48 and deprecated `vertical`.
+        if ('orientation' in box)
+            box.orientation = Clutter.Orientation.VERTICAL;
+        else
+            box.vertical = true;
+
+        const icon = app?.create_icon_texture(64);
+        if (icon) {
+            icon.x_align = Clutter.ActorAlign.CENTER;
+            box.add_child(icon);
+        }
+
+        const title = new St.Label({
+            style_class: 'window-jump-hud-title',
+            text: window.get_title() || app?.get_name() || '',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        box.add_child(title);
+
+        const name = app?.get_name() ?? window.get_wm_class() ?? '';
+        box.add_child(new St.Label({
+            style_class: 'window-jump-hud-detail',
+            text: total > 0 ? `${name} · ${index} / ${total}` : name,
+            x_align: Clutter.ActorAlign.CENTER,
+        }));
+
+        Main.uiGroup.add_child(box);
+        this._actor = box;
+
+        const monitors = Main.layoutManager.monitors;
+        const monitor = monitors[window.get_monitor()] ?? Main.layoutManager.primaryMonitor;
+        const [, width] = box.get_preferred_width(-1);
+        const [, height] = box.get_preferred_height(width);
+        box.set_position(
+            Math.floor(monitor.x + (monitor.width - width) / 2),
+            Math.floor(monitor.y + (monitor.height - height) / 2));
+
+        box.ease({opacity: 255, duration: 80, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.max(durationMs, 100), () => {
+            this._timeoutId = 0;
+            box.ease({
+                opacity: 0,
+                duration: 150,
+                mode: Clutter.AnimationMode.EASE_IN_QUAD,
+                onComplete: () => {
+                    if (this._actor === box)
+                        this.destroy();
+                },
+            });
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    destroy() {
+        if (this._timeoutId) {
+            GLib.Source.remove(this._timeoutId);
+            this._timeoutId = 0;
+        }
+        this._actor?.destroy();
+        this._actor = null;
+    }
+}
+
 class WindowJumpService {
     constructor() {
         this._tracker = Shell.WindowTracker.get_default();
+        this._hud = new Hud(this._tracker);
         this._claimer = new SwipeClaimer();
         // Meta keybinding action id -> action name chosen by the daemon.
         this._accels = new Map();
@@ -124,6 +217,7 @@ class WindowJumpService {
 
     stop() {
         this._release();
+        this._hud.destroy();
 
         if (this._capturedId) {
             global.stage.disconnect(this._capturedId);
@@ -168,6 +262,14 @@ class WindowJumpService {
         } else {
             Main.activateWindow(window, time);
         }
+        return true;
+    }
+
+    ShowHud(id, index, total, durationMs) {
+        const window = global.display.list_all_windows().find(w => w.get_id() === id);
+        if (!window)
+            return false;
+        this._hud.show(window, index, total, durationMs);
         return true;
     }
 

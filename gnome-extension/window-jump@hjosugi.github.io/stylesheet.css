@@ -1,0 +1,20 @@
+/* The overlay shown after a jump (Hud in extension.js). */
+.window-jump-hud {
+  background-color: rgba(36, 36, 36, 0.92);
+  color: #ffffff;
+  border-radius: 18px;
+  padding: 18px 28px;
+  spacing: 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+
+.window-jump-hud-title {
+  font-weight: bold;
+  font-size: 13pt;
+  max-width: 640px;
+}
+
+.window-jump-hud-detail {
+  font-size: 10pt;
+  color: rgba(255, 255, 255, 0.75);
+}

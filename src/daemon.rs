@@ -25,8 +25,28 @@ pub fn jump(backend: &dyn Backend, cfg: &Config, step: Step, state_path: &Path) 
     if let Pick::Jump(id) = pick {
         backend.activate(id)?;
         session::save(state_path, &state);
+        if cfg.hud.enabled
+            && let Some((index, total)) = place_in_cycle(&snapshot, id, cfg)
+            && let Err(e) = backend.show_hud(id, index, total, cfg.hud.duration_ms)
+        {
+            // The jump itself worked; the overlay is decoration.
+            eprintln!("window-jump: could not show the overlay: {e:#}");
+        }
     }
     Ok(pick)
+}
+
+/// 1-based position of `id` among its app's windows in cycling order, and
+/// how many there are.
+fn place_in_cycle(
+    snapshot: &crate::model::Snapshot,
+    id: u64,
+    cfg: &Config,
+) -> Option<(usize, usize)> {
+    let target = snapshot.get(id)?;
+    let list = cycle::candidates(snapshot, target, &cfg.cycle_options());
+    let index = list.iter().position(|w| w.id == id)? + 1;
+    Some((index, list.len()))
 }
 
 /// Watches the config file by content: the daemon reads it on every tick
@@ -188,6 +208,7 @@ mod tests {
     struct Fake {
         snap: RefCell<Snapshot>,
         activated: RefCell<Vec<u64>>,
+        huds: RefCell<Vec<(u64, usize, usize)>>,
     }
 
     impl Fake {
@@ -207,6 +228,7 @@ mod tests {
                     windows,
                 }),
                 activated: RefCell::new(vec![]),
+                huds: RefCell::new(vec![]),
             }
         }
     }
@@ -220,6 +242,10 @@ mod tests {
                 w.focused = w.id == id;
             }
             self.activated.borrow_mut().push(id);
+            Ok(())
+        }
+        fn show_hud(&self, id: u64, index: usize, total: usize, _ms: u64) -> Result<()> {
+            self.huds.borrow_mut().push((id, index, total));
             Ok(())
         }
         fn describe(&self) -> String {
@@ -245,9 +271,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("window-jump-test-{}", std::process::id()));
         let mut h = Handler::new(Config::default(), dir.join("state.json"), false);
 
-        // Default hotkey 0 is "next".
+        // Default hotkey 0 is "next", and the overlay names the target.
         h.handle(&fake, Event::Hotkey(0));
         assert_eq!(*fake.activated.borrow(), vec![2]);
+        assert_eq!(*fake.huds.borrow(), vec![(2, 2, 3)]);
         // Unknown index: ignored.
         h.handle(&fake, Event::Hotkey(99));
         assert_eq!(fake.activated.borrow().len(), 1);
@@ -278,6 +305,18 @@ mod tests {
             },
         );
         assert_eq!(fake.activated.borrow().len(), 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn overlay_can_be_turned_off() {
+        let fake = Fake::new();
+        let dir = std::env::temp_dir().join(format!("window-jump-hud-{}", std::process::id()));
+        let mut cfg = Config::default();
+        cfg.hud.enabled = false;
+        jump(&fake, &cfg, Step::Prev, &dir.join("state.json")).unwrap();
+        assert_eq!(*fake.activated.borrow(), vec![3]);
+        assert!(fake.huds.borrow().is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 

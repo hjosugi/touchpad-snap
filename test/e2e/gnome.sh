@@ -15,9 +15,9 @@ ok "extension loaded and owns org.hjosugi.WindowJump"
 
 version=$(gdbus call --session --dest org.hjosugi.WindowJump --object-path /org/hjosugi/WindowJump \
     --method org.freedesktop.DBus.Properties.Get org.hjosugi.WindowJump1 ProtocolVersion)
-[[ $version == "(<uint32 1>,)" ]] || fail "unexpected protocol version: $version"
+[[ $version == "(<uint32 2>,)" ]] || fail "unexpected protocol version: $version"
 [[ $(list_json | jq '.windows | length') == 0 ]] || fail "expected no windows initially"
-ok "protocol 1, empty list at startup"
+ok "protocol 2, empty list at startup"
 
 e2e_open_clients
 # A window gets its size a moment after it is mapped.
@@ -68,6 +68,13 @@ ok "single-window app: next is a no-op"
 
 [[ $(call Activate "uint64 999999999") == "(false,)" ]] || fail "Activate on unknown id must return false"
 ok "unknown id rejected"
+
+# The overlay after a jump (the CLI jumps above already asked for it).
+[[ $(call ShowHud "uint64 ${editors[0]}" "uint32 1" "uint32 2" "uint32 300") == "(true,)" ]] \
+    || fail "ShowHud on a live window must return true"
+[[ $(call ShowHud "uint64 999999999" "uint32 1" "uint32 1" "uint32 300") == "(false,)" ]] \
+    || fail "ShowHud on an unknown id must return false"
+ok "ShowHud"
 
 # Hotkeys: a free accelerator is grabbed, one the shell owns is reported back.
 grab=$(call SetAccelerators "[('<Super><Alt>n', 'hotkey:0'), ('<Alt>Tab', 'hotkey:1')]")
@@ -144,7 +151,7 @@ ok "second daemon refused"
 
 doctor=$(wj doctor 2>&1) || fail "doctor reported problems: $doctor"
 echo "$doctor"
-grep -q "protocol 1" <<<"$doctor" || fail "doctor does not see the extension"
+grep -q "protocol 2" <<<"$doctor" || fail "doctor does not see the extension"
 ok "doctor"
 
 # When the daemon goes away, the extension lets go of its keys at once.
@@ -152,5 +159,12 @@ kill "$daemon_pid"
 regrab() { [[ $(call SetAccelerators "[('<Super><Alt>n', 'probe')]") == "(@as [],)" ]]; }
 wait_for "Super+Alt+N released after the daemon exited" 15 regrab
 ok "daemon exit releases its hotkeys"
+
+# Nothing the extension did along the way may have thrown.
+if grep -E "JS ERROR|JS WARNING" "$e2e_shell_log" | grep -q "window-jump@"; then
+    grep -E -A5 "JS ERROR|JS WARNING" "$e2e_shell_log" | grep -B2 -A5 "window-jump@" >&2
+    fail "the extension logged JavaScript errors"
+fi
+ok "no JavaScript errors from the extension"
 
 echo "ALL PASSED"
