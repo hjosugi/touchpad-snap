@@ -1,10 +1,10 @@
-//! `window-jumpw`: the daemon without a console window.
+//! `touchpad-snapw`: the daemon without a console window.
 //!
 //! On Windows a console program always opens a console window, which is not
 //! what a login item should do; this binary uses the GUI subsystem instead and
-//! runs `window-jump daemon` (or whatever arguments it is given). Errors have
+//! runs `touchpad-snap daemon` (or whatever arguments it is given). Errors have
 //! nowhere to print, so they are shown in a message box. On other platforms it
-//! is the same as `window-jump daemon`.
+//! is the same as `touchpad-snap daemon`.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 use std::process::ExitCode;
@@ -15,10 +15,10 @@ fn main() -> ExitCode {
         args.truncate(1);
         args.push("daemon".into());
     }
-    let code = window_jump::cli::run(args);
+    let code = touchpad_snap::cli::run(args);
     #[cfg(windows)]
     if code != ExitCode::SUCCESS {
-        message_box("window-jump stopped. Run `window-jump daemon` in a terminal to see why.");
+        message_box("touchpad-snap stopped. Run `touchpad-snap daemon` in a terminal to see why.");
     }
     code
 }
@@ -35,7 +35,7 @@ fn message_box(text: &str) {
         MessageBoxW(
             std::ptr::null_mut(),
             wide(text).as_ptr(),
-            wide("window-jump").as_ptr(),
+            wide("touchpad-snap").as_ptr(),
             MB_OK | MB_ICONERROR,
         );
     }

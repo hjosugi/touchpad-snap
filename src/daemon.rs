@@ -37,7 +37,7 @@ pub fn jump(
             && let Err(e) = backend.show_hud(id, index, total, cfg.hud.duration_ms)
         {
             // The jump itself worked; the overlay is decoration.
-            eprintln!("window-jump: could not show the overlay: {e:#}");
+            eprintln!("touchpad-snap: could not show the overlay: {e:#}");
         }
     }
     Ok(pick)
@@ -93,11 +93,11 @@ impl ConfigWatch {
     fn load(&self) -> Option<Config> {
         match config::load(&self.path) {
             Ok(cfg) => {
-                eprintln!("window-jump: reloaded {}", self.path.display());
+                eprintln!("touchpad-snap: reloaded {}", self.path.display());
                 Some(cfg)
             }
             Err(e) => {
-                eprintln!("window-jump: keeping the previous config: {e:#}");
+                eprintln!("touchpad-snap: keeping the previous config: {e:#}");
                 None
             }
         }
@@ -168,7 +168,7 @@ impl Handler {
                     let step = binding.action;
                     if self.verbose {
                         eprintln!(
-                            "window-jump: hotkey {} → {step:?} ({})",
+                            "touchpad-snap: hotkey {} → {step:?} ({})",
                             binding.keys,
                             match session {
                                 Session::ByTime => "session by time",
@@ -182,7 +182,7 @@ impl Handler {
             }
             Event::Released => {
                 if self.held && self.verbose {
-                    eprintln!("window-jump: hotkey modifiers released");
+                    eprintln!("touchpad-snap: hotkey modifiers released");
                 }
                 self.held = false;
             }
@@ -203,7 +203,7 @@ impl Handler {
                         if let Some(step) = self.cfg.swipe_action(claim, direction) {
                             if self.verbose {
                                 eprintln!(
-                                    "window-jump: swipe {direction:?} with {} fingers → {step:?}",
+                                    "touchpad-snap: swipe {direction:?} with {} fingers → {step:?}",
                                     claim.fingers
                                 );
                             }
@@ -241,10 +241,10 @@ impl Handler {
         match jump(backend, &self.cfg, step, session, &self.state_path) {
             Ok(pick) => {
                 if self.verbose {
-                    eprintln!("window-jump: {pick:?}");
+                    eprintln!("touchpad-snap: {pick:?}");
                 }
             }
-            Err(e) => eprintln!("window-jump: {e:#}"),
+            Err(e) => eprintln!("touchpad-snap: {e:#}"),
         }
     }
 }
@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn hotkeys_and_swipes_jump() {
         let fake = Fake::new();
-        let dir = std::env::temp_dir().join(format!("window-jump-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-test-{}", std::process::id()));
         let mut h = Handler::new(Config::default(), dir.join("state.json"), false);
 
         // Default hotkey 0 is "next", and the overlay names the target.
@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn alt_swipes_up_and_down_jump() {
         let fake = Fake::new();
-        let dir = std::env::temp_dir().join(format!("window-jump-alt-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-alt-{}", std::process::id()));
         let mut h = Handler::new(Config::default(), dir.join("state.json"), false);
         let alt = |phase, dy| Event::Swipe {
             phase,
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn held_hotkeys_and_swipes_are_sessions() {
         let fake = Fake::new();
-        let dir = std::env::temp_dir().join(format!("window-jump-held-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-held-{}", std::process::id()));
         let cfg = Config {
             order: crate::cycle::Order::Mru,
             ..Config::default()
@@ -470,7 +470,7 @@ mod tests {
     #[test]
     fn untracked_hotkeys_go_by_time() {
         let fake = Fake::new();
-        let dir = std::env::temp_dir().join(format!("window-jump-bytime-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-bytime-{}", std::process::id()));
         let cfg = Config {
             order: crate::cycle::Order::Mru,
             ..Config::default()
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn overlay_can_be_turned_off() {
         let fake = Fake::new();
-        let dir = std::env::temp_dir().join(format!("window-jump-hud-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-hud-{}", std::process::id()));
         let mut cfg = Config::default();
         cfg.hud.enabled = false;
         jump(
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn reloads_the_config_file_when_it_changes() {
         let fake = Fake::new();
-        let dir = std::env::temp_dir().join(format!("window-jump-reload-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-reload-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
         std::fs::write(&path, "hotkey = []\n").unwrap();

@@ -14,7 +14,7 @@
 # overview and switch workspace.
 {
   pkgs,
-  window-jump,
+  touchpad-snap,
   extension,
 }:
 
@@ -25,13 +25,13 @@ let
     flakeIgnore = [ "E501" ];
   } (builtins.readFile ./swipe.py);
   # One jump per swipe, whatever distance libinput reports.
-  config = pkgs.writeText "window-jump.toml" ''
+  config = pkgs.writeText "touchpad-snap.toml" ''
     [gesture]
     repeat_step = 0.0
   '';
 in
 pkgs.testers.runNixOSTest {
-  name = "window-jump-touchpad";
+  name = "touchpad-snap-touchpad";
 
   nodes.machine = {
     virtualisation.memorySize = 3072;
@@ -60,7 +60,7 @@ pkgs.testers.runNixOSTest {
     };
 
     environment.systemPackages = [
-      window-jump
+      touchpad-snap
       extension
       swipe
       pkgs.gnome-text-editor
@@ -93,12 +93,12 @@ pkgs.testers.runNixOSTest {
       environment.PATH = pkgs.lib.mkForce null;
     };
 
-    systemd.user.services.window-jump = {
-      description = "window-jump daemon";
+    systemd.user.services.touchpad-snap = {
+      description = "touchpad-snap daemon";
       wantedBy = [ "graphical-session.target" ];
       partOf = [ "graphical-session.target" ];
       after = [ "graphical-session.target" ];
-      serviceConfig.ExecStart = "${window-jump}/bin/window-jump --config ${config} daemon --verbose";
+      serviceConfig.ExecStart = "${touchpad-snap}/bin/touchpad-snap --config ${config} daemon --verbose";
     };
   };
 
@@ -114,7 +114,7 @@ pkgs.testers.runNixOSTest {
 
 
     def snapshot():
-        return json.loads(machine.succeed(as_alice("window-jump list --json")))
+        return json.loads(machine.succeed(as_alice("touchpad-snap list --json")))
 
 
     def editors():
@@ -128,11 +128,11 @@ pkgs.testers.runNixOSTest {
     def diagnose():
         machine.screenshot("timeout")
         print("--- windows ---")
-        print(machine.execute(as_alice("window-jump list --json"))[1])
+        print(machine.execute(as_alice("touchpad-snap list --json"))[1])
         print(machine.execute("tail -n 20 /tmp/editor*.log")[1])
         print("--- shell state ---")
         print(shell_state())
-        print(machine.execute("journalctl -b --no-pager | grep -E 'window-jump|gnome-shell|JS ' | tail -n 80")[1])
+        print(machine.execute("journalctl -b --no-pager | grep -E 'touchpad-snap|gnome-shell|JS ' | tail -n 80")[1])
         print("--- the last signals from the extension (phase, fingers, mods, dx, dy) ---")
         print(machine.execute("grep -E 'uint32|double' /tmp/signals.log | awk '{print $2}' | paste -d' ' - - - - - | tail -n 25")[1])
         print("--- the last gestures libinput reported ---")
@@ -166,7 +166,7 @@ pkgs.testers.runNixOSTest {
         # can be before or after an activation went through; insist until
         # focus is there and stays.
         for _ in range(10):
-            machine.succeed(as_alice(f"window-jump activate {wid}"))
+            machine.succeed(as_alice(f"touchpad-snap activate {wid}"))
             time.sleep(2)
             if focused() != wid:
                 continue
@@ -178,7 +178,7 @@ pkgs.testers.runNixOSTest {
 
 
     def daemon_log():
-        return machine.succeed("journalctl -b --no-pager _SYSTEMD_USER_UNIT=window-jump.service")
+        return machine.succeed("journalctl -b --no-pager _SYSTEMD_USER_UNIT=touchpad-snap.service")
 
 
     start_all()
@@ -192,7 +192,7 @@ pkgs.testers.runNixOSTest {
         wait_for("daemon registration", lambda: "registered 2 hotkey(s) and 2 swipe claim(s)" in daemon_log(), 180)
         # What the extension sends the daemon and what libinput makes of the
         # virtual devices, shown if something times out.
-        machine.succeed(as_alice('dbus-monitor --session "type=signal,interface=org.hjosugi.WindowJump1" >/tmp/signals.log 2>&1 &'))
+        machine.succeed(as_alice('dbus-monitor --session "type=signal,interface=io.github.hjosugi.TouchpadSnap1" >/tmp/signals.log 2>&1 &'))
         machine.succeed("libinput debug-events --show-keycodes >/tmp/libinput.log 2>&1 &")
 
     with subtest("two windows of one app"):

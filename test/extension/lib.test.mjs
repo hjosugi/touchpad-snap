@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
 import {Mods, Phase, SwipeClaimer, modsFromState} from
-    '../../gnome-extension/window-jump@hjosugi.github.io/lib.js';
+    '../../gnome-extension/touchpad-snap@hjosugi.github.io/lib.js';
 
 // Clutter.ModifierType values.
 const M = {

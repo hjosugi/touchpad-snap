@@ -1,13 +1,13 @@
-//! GNOME Shell (Wayland and X11) through the window-jump shell extension.
+//! GNOME Shell (Wayland and X11) through the touchpad-snap shell extension.
 //!
 //! Wayland gives clients no way to list or focus other clients' windows, grab
 //! global keys or see touchpad gestures meant for the shell. The extension
 //! (gnome-extension/ in this repository) runs inside the compositor and
 //! offers all of that on the session bus:
 //!
-//!   bus name   org.hjosugi.WindowJump
-//!   object     /org/hjosugi/WindowJump
-//!   interface  org.hjosugi.WindowJump1
+//!   bus name   io.github.hjosugi.TouchpadSnap
+//!   object     /io/github/hjosugi/TouchpadSnap
+//!   interface  io.github.hjosugi.TouchpadSnap1
 //!
 //! See gnome-extension/README.md for the protocol.
 
@@ -26,17 +26,17 @@ use crate::gesture::Phase;
 use crate::hotkey::{Hotkey, Mods};
 use crate::model::Snapshot;
 
-pub const BUS_NAME: &str = "org.hjosugi.WindowJump";
-pub const OBJECT_PATH: &str = "/org/hjosugi/WindowJump";
-pub const INTERFACE: &str = "org.hjosugi.WindowJump1";
+pub const BUS_NAME: &str = "io.github.hjosugi.TouchpadSnap";
+pub const OBJECT_PATH: &str = "/io/github/hjosugi/TouchpadSnap";
+pub const INTERFACE: &str = "io.github.hjosugi.TouchpadSnap1";
 /// The extension protocol this binary speaks. Version 2 added ShowHud,
 /// version 3 the AcceleratorReleased signal. Older extensions still work,
 /// without the overlay (1) or with MRU sessions going by time (2).
 pub const PROTOCOL_VERSION: u32 = 3;
-pub const EXTENSION_UUID: &str = "window-jump@hjosugi.github.io";
+pub const EXTENSION_UUID: &str = "touchpad-snap@hjosugi.github.io";
 
 /// Held by the running daemon so a second one refuses to start.
-const DAEMON_NAME: &str = "org.hjosugi.WindowJump.Daemon";
+const DAEMON_NAME: &str = "io.github.hjosugi.TouchpadSnap.Daemon";
 
 pub struct Gnome {
     conn: Connection,
@@ -73,12 +73,12 @@ impl Gnome {
                 "hotkey sessions that end when the modifiers are released (they go by time instead)"
             };
             eprintln!(
-                "window-jump: the GNOME extension is older (protocol {version}, this binary {PROTOCOL_VERSION}); \
+                "touchpad-snap: the GNOME extension is older (protocol {version}, this binary {PROTOCOL_VERSION}); \
                  everything works except {missing}. Update the extension and log in again."
             );
         } else if version > PROTOCOL_VERSION {
             eprintln!(
-                "window-jump: the GNOME extension is newer (protocol {version}, this binary {PROTOCOL_VERSION}); update window-jump"
+                "touchpad-snap: the GNOME extension is newer (protocol {version}, this binary {PROTOCOL_VERSION}); update touchpad-snap"
             );
         }
 
@@ -93,7 +93,7 @@ impl Gnome {
             .map_err(explain)?;
         for accel in &failed {
             eprintln!(
-                "window-jump: could not grab {accel}: GNOME or another app already uses it (check Settings → Keyboard → Shortcuts)"
+                "touchpad-snap: could not grab {accel}: GNOME or another app already uses it (check Settings → Keyboard → Shortcuts)"
             );
         }
 
@@ -103,7 +103,7 @@ impl Gnome {
             .map_err(explain)?;
 
         eprintln!(
-            "window-jump: registered {} hotkey(s) and {} swipe claim(s) with GNOME Shell",
+            "touchpad-snap: registered {} hotkey(s) and {} swipe claim(s) with GNOME Shell",
             hotkeys.len() - failed.len(),
             cfg.claims().len()
         );
@@ -153,7 +153,7 @@ fn explain(e: zbus::Error) -> anyhow::Error {
     let text = e.to_string();
     if text.contains("ServiceUnknown") || text.contains("NameHasNoOwner") {
         anyhow!(
-            "the window-jump GNOME Shell extension is not running.\n  \
+            "the touchpad-snap GNOME Shell extension is not running.\n  \
              Enable it with: gnome-extensions enable {EXTENSION_UUID}\n  \
              (After installing it for the first time, log out and back in: GNOME on Wayland only discovers new extensions at login.)"
         )
@@ -176,7 +176,7 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
         .conn
         .request_name_with_flags(DAEMON_NAME, RequestNameFlags::DoNotQueue.into())
     {
-        Err(zbus::Error::NameTaken) => bail!("another window-jump daemon is already running"),
+        Err(zbus::Error::NameTaken) => bail!("another touchpad-snap daemon is already running"),
         Err(e) => return Err(e).context("claiming the daemon bus name"),
         Ok(_) => {}
     }
@@ -227,7 +227,7 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
     let mut version = match gnome.register(&cfg, &hotkeys) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("window-jump: waiting for the GNOME Shell extension: {e:#}");
+            eprintln!("touchpad-snap: waiting for the GNOME Shell extension: {e:#}");
             0
         }
     };
@@ -254,14 +254,16 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
                 match gnome.register(&cfg, &hotkeys) {
                     Ok(v) => version = v,
                     Err(e) => {
-                        eprintln!("window-jump: registering with the GNOME extension failed: {e:#}")
+                        eprintln!(
+                            "touchpad-snap: registering with the GNOME extension failed: {e:#}"
+                        )
                     }
                 }
                 // A release still pending from the old shell will never come.
                 changed = changed.or(handle(&gnome, Event::Released));
             }
             Some(Incoming::Owner(false)) => {
-                eprintln!("window-jump: the GNOME extension went away; waiting for it to return");
+                eprintln!("touchpad-snap: the GNOME extension went away; waiting for it to return");
             }
             Some(Incoming::Signal(msg)) => {
                 if let Some(event) = parse_signal(&msg, version, &hotkeys) {
@@ -278,11 +280,11 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
                     match gnome.register(&cfg, &hotkeys) {
                         Ok(v) => version = v,
                         Err(e) => eprintln!(
-                            "window-jump: registering with the GNOME extension failed: {e:#}"
+                            "touchpad-snap: registering with the GNOME extension failed: {e:#}"
                         ),
                     }
                 }
-                Err(e) => eprintln!("window-jump: ignoring an invalid config: {e:#}"),
+                Err(e) => eprintln!("touchpad-snap: ignoring an invalid config: {e:#}"),
             }
         }
     }

@@ -4,7 +4,7 @@
 //! configured time.
 //!
 //! It belongs to the daemon's thread, whose message loop dispatches its
-//! paint and timer messages. One-shot `window-jump next` has no overlay on
+//! paint and timer messages. One-shot `touchpad-snap next` has no overlay on
 //! Windows: the process ends right after the jump.
 
 use std::cell::RefCell;
@@ -28,7 +28,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 /// The window class, also what tests look for (`FindWindow`).
-pub const CLASS_NAME: &str = "window-jump-hud";
+pub const CLASS_NAME: &str = "touchpad-snap-hud";
 
 const WIDTH: i32 = 560;
 const HEIGHT: i32 = 112;

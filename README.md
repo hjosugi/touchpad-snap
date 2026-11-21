@@ -1,4 +1,4 @@
-# window-jump
+# touchpad-snap
 
 Switch between the windows **of the app you are in**, with a hotkey or a
 modifier + touchpad swipe — like `Cmd+`` ` on macOS or the "cycle windows of
@@ -24,7 +24,7 @@ compositor where Wayland allows nothing else.
   right on screen) or `mru` (like Alt+Tab: one press toggles between the two
   most recent windows; pressing again while holding the modifiers digs
   deeper, and releasing settles there).
-- **Any binder**: `window-jump next` / `window-jump prev` are plain commands,
+- **Any binder**: `touchpad-snap next` / `touchpad-snap prev` are plain commands,
   so they also work from GNOME's own custom shortcuts, AutoHotkey, keyd, a
   mouse driver…
 
@@ -33,10 +33,10 @@ compositor where Wayland allows nothing else.
 ```
 GNOME                                           Windows
 ─────                                           ───────
-window-jump next / daemon                       window-jump next / daemon
+touchpad-snap next / daemon                       touchpad-snap next / daemon
         │  D-Bus (session bus)                          │  Win32
         ▼                                               ▼
-window-jump@hjosugi.github.io                   EnumWindows, SetForegroundWindow,
+touchpad-snap@hjosugi.github.io                   EnumWindows, SetForegroundWindow,
 (GNOME Shell extension, inside the compositor)  RegisterHotKey, Raw Input
  · List / Activate windows                       (Precision Touchpad)
  · grabs the daemon's hotkeys
@@ -53,23 +53,23 @@ Rust program. Everything the daemon registered is dropped the moment it exits.
 
 ### GNOME (any distribution)
 
-1. Download from the [latest release](https://github.com/hjosugi/window-jump/releases/latest):
-   - `window-jump-<version>-x86_64-unknown-linux-musl.tar.gz` (or `aarch64`) —
-     a static binary, no dependencies. Put `window-jump` on your `PATH`, e.g.
+1. Download from the [latest release](https://github.com/hjosugi/touchpad-snap/releases/latest):
+   - `touchpad-snap-<version>-x86_64-unknown-linux-musl.tar.gz` (or `aarch64`) —
+     a static binary, no dependencies. Put `touchpad-snap` on your `PATH`, e.g.
      `~/.local/bin`.
-   - `window-jump@hjosugi.github.io.shell-extension.zip`
+   - `touchpad-snap@hjosugi.github.io.shell-extension.zip`
 2. Install the extension, then **log out and back in** (GNOME on Wayland only
    discovers new extensions at login):
    ```sh
-   gnome-extensions install --force window-jump@hjosugi.github.io.shell-extension.zip
+   gnome-extensions install --force touchpad-snap@hjosugi.github.io.shell-extension.zip
    # after logging back in:
-   gnome-extensions enable window-jump@hjosugi.github.io
+   gnome-extensions enable touchpad-snap@hjosugi.github.io
    ```
 3. Check, start the daemon, and have it start at every login:
    ```sh
-   window-jump doctor
-   window-jump autostart enable     # ~/.config/autostart/window-jump.desktop
-   window-jump daemon &             # for this session
+   touchpad-snap doctor
+   touchpad-snap autostart enable     # ~/.config/autostart/touchpad-snap.desktop
+   touchpad-snap daemon &             # for this session
    ```
 
 Supported GNOME Shell versions: 46–51. CI runs the end-to-end test on 46 (Ubuntu 24.04), 48 (Debian 13), 49 (Fedora 43), 50 (Fedora 44) and the latest on Arch Linux (51 at the time of writing); 47 is not tested.
@@ -78,28 +78,28 @@ Supported GNOME Shell versions: 46–51. CI runs the end-to-end test on 46 (Ubun
 
 ```nix
 # flake.nix
-inputs.window-jump.url = "github:hjosugi/window-jump";
+inputs.touchpad-snap.url = "github:hjosugi/touchpad-snap";
 
-# configuration.nix (with `window-jump` passed in through specialArgs)
+# configuration.nix (with `touchpad-snap` passed in through specialArgs)
 environment.systemPackages = [
-  window-jump.packages.${pkgs.stdenv.hostPlatform.system}.window-jump
-  window-jump.packages.${pkgs.stdenv.hostPlatform.system}.gnome-shell-extension
+  touchpad-snap.packages.${pkgs.stdenv.hostPlatform.system}.touchpad-snap
+  touchpad-snap.packages.${pkgs.stdenv.hostPlatform.system}.gnome-shell-extension
 ];
 ```
 
-Then enable the extension (`gnome-extensions enable window-jump@hjosugi.github.io`
-or through dconf) and run `window-jump autostart enable`. Without NixOS:
-`nix run github:hjosugi/window-jump -- doctor`.
+Then enable the extension (`gnome-extensions enable touchpad-snap@hjosugi.github.io`
+or through dconf) and run `touchpad-snap autostart enable`. Without NixOS:
+`nix run github:hjosugi/touchpad-snap -- doctor`.
 
 ### Windows 10 / 11
 
-1. Download `window-jump-<version>-x86_64-pc-windows-msvc.zip` (or
+1. Download `touchpad-snap-<version>-x86_64-pc-windows-msvc.zip` (or
    `aarch64`) and unpack it somewhere permanent, e.g.
-   `%LOCALAPPDATA%\Programs\window-jump`.
+   `%LOCALAPPDATA%\Programs\touchpad-snap`.
 2. Start at login, and now:
    ```powershell
-   .\window-jump.exe autostart enable   # runs window-jumpw.exe (no console window) at login
-   .\window-jumpw.exe                    # start it now
+   .\touchpad-snap.exe autostart enable   # runs touchpad-snapw.exe (no console window) at login
+   .\touchpad-snapw.exe                    # start it now
    ```
 3. Touchpad (optional): swipes need a **Windows Precision Touchpad** (most
    modern laptops have one). Turn off the built-in **Three-finger gestures** and
@@ -110,7 +110,7 @@ or through dconf) and run `window-jump autostart enable`. Without NixOS:
    Windows' own gestures still fire if they stay enabled; raw input cannot
    intercept them, so both actions would happen.
 
-`window-jumpw.exe` shows a notification-area icon. Its menu reports how many
+`touchpad-snapw.exe` shows a notification-area icon. Its menu reports how many
 hotkeys were registered (and names any another app already took), and offers
 **Reload config**, **Open config file**, **Start at login** and **Quit** — no
 Task Manager needed to stop the daemon.
@@ -121,53 +121,53 @@ looked up behind their ApplicationFrameHost frame.
 Windows on other virtual desktops are included when `workspace = "all"` (the
 default) and skipped when it is `"current"`. The current desktop is `ws 0`;
 other desktops get positive numbers. Jumping to such a window is best effort:
-Windows has no documented API to switch desktops, so window-jump sends
+Windows has no documented API to switch desktops, so touchpad-snap sends
 `Win+Ctrl+Left/Right` (at most eight steps each way) and reports an error if
 the window cannot be reached. Suspended UWP windows stay hidden.
 
 Manual test: create a second desktop with `Win+Ctrl+D`, open a second Notepad
 there (or move one with Task View), return with `Win+Ctrl+Left`, then run
-`window-jump list` (the second Notepad shows a positive `ws`) and
-`window-jump next` from the first Notepad.
+`touchpad-snap list` (the second Notepad shows a positive `ws`) and
+`touchpad-snap next` from the first Notepad.
 
 ### From source
 
 ```sh
-cargo install --git https://github.com/hjosugi/window-jump window-jump
+cargo install --git https://github.com/hjosugi/touchpad-snap touchpad-snap
 ```
 
-The GNOME extension is the `gnome-extension/window-jump@hjosugi.github.io`
+The GNOME extension is the `gnome-extension/touchpad-snap@hjosugi.github.io`
 directory: copy it to `~/.local/share/gnome-shell/extensions/`.
 
 ## Usage
 
 | Command | |
 |---|---|
-| `window-jump next` / `prev` | Focus the next / previous window of the focused app. `--order`, `--workspace` override the config. |
-| `window-jump daemon [-v]` | Serve the configured hotkeys and swipes. |
-| `window-jump list [--json]` | Show windows grouped by app. |
-| `window-jump activate <id>` | Focus one window by id. |
-| `window-jump doctor` | Check config, extension and window list. |
-| `window-jump config init\|path\|check` | Write / locate / validate the config file. |
-| `window-jump autostart enable\|disable` | Start the daemon at login. |
+| `touchpad-snap next` / `prev` | Focus the next / previous window of the focused app. `--order`, `--workspace` override the config. |
+| `touchpad-snap daemon [-v]` | Serve the configured hotkeys and swipes. |
+| `touchpad-snap list [--json]` | Show windows grouped by app. |
+| `touchpad-snap activate <id>` | Focus one window by id. |
+| `touchpad-snap doctor` | Check config, extension and window list. |
+| `touchpad-snap config init\|path\|check` | Write / locate / validate the config file. |
+| `touchpad-snap autostart enable\|disable` | Start the daemon at login. |
 
 ### Without the daemon
 
 Bind the commands to any shortcut tool instead. GNOME: **Settings → Keyboard →
-View and Customise Shortcuts → Custom Shortcuts**, command `window-jump next`.
+View and Customise Shortcuts → Custom Shortcuts**, command `touchpad-snap next`.
 (The extension is still needed on GNOME, for listing and focusing windows.)
 
 ## Configuration
 
-`window-jump config init` writes a commented file to
-`~/.config/window-jump/config.toml` (`%APPDATA%\window-jump\config.toml` on
+`touchpad-snap config init` writes a commented file to
+`~/.config/touchpad-snap/config.toml` (`%APPDATA%\touchpad-snap\config.toml` on
 Windows). Everything is optional; these are the defaults:
 
 ```toml
 order = "stable"          # "stable" | "position" | "mru"
 workspace = "all"         # "all" | "current"
 include_minimized = true
-mru_session_ms = 1000     # order = "mru", for `window-jump next` from other tools: repeats closer than this are one session
+mru_session_ms = 1000     # order = "mru", for `touchpad-snap next` from other tools: repeats closer than this are one session
 
 [gesture]
 threshold = 120.0         # finger travel before a swipe counts (GNOME's full workspace swipe is 400)
@@ -226,7 +226,7 @@ Tips:
   Precision Touchpads report their contacts as raw HID input, and Windows'
   shell sees the same gesture independently — it cannot be intercepted.
 - If a hotkey cannot be grabbed (GNOME or another app already uses it), the
-  daemon says so at startup; `window-jump daemon -v` logs every event.
+  daemon says so at startup; `touchpad-snap daemon -v` logs every event.
 
 ## Development
 
@@ -236,8 +236,8 @@ npm test                       # unit tests of the extension's pure JS
 cargo build --all-targets && ./test/e2e/gnome.sh
                                # end to end in a throw-away headless GNOME Shell:
                                # real windows, hotkeys typed on a virtual keyboard
-pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe   # on Windows
-pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe -VirtualDesktops
+pwsh test/e2e/windows.ps1 -Bin target/debug/touchpad-snap.exe   # on Windows
+pwsh test/e2e/windows.ps1 -Bin target/debug/touchpad-snap.exe -VirtualDesktops
                                # also covers a window on a second virtual desktop
 nix build .#checks.x86_64-linux.vm-touchpad -L
                                # a full GNOME session in a VM (needs KVM),

@@ -67,7 +67,7 @@ impl Win32 {
             static WARNED: Once = Once::new();
             WARNED.call_once(|| {
                 eprintln!(
-                    "window-jump: virtual-desktop support is unavailable; windows on other desktops stay hidden"
+                    "touchpad-snap: virtual-desktop support is unavailable; windows on other desktops stay hidden"
                 );
             });
         }
@@ -625,11 +625,11 @@ pub fn run_daemon(
     handle: &mut super::Handler,
 ) -> Result<()> {
     // One daemon per session: a second would fail every RegisterHotKey anyway.
-    let name = wide("Local\\window-jump-daemon");
+    let name = wide("Local\\touchpad-snap-daemon");
     unsafe {
         let mutex = CreateMutexW(null_mut(), 0, name.as_ptr());
         if mutex.is_null() || GetLastError() == ERROR_ALREADY_EXISTS {
-            bail!("another window-jump daemon is already running");
+            bail!("another touchpad-snap daemon is already running");
         }
         // Deliberately leaked: held until the process exits.
     }
@@ -711,7 +711,7 @@ pub fn run_daemon(
                         t.set_status(&statuses);
                     }
                 }
-                Err(e) => eprintln!("window-jump: ignoring an invalid config: {e:#}"),
+                Err(e) => eprintln!("touchpad-snap: ignoring an invalid config: {e:#}"),
             }
         }
 
@@ -735,7 +735,7 @@ pub fn run_daemon(
                                 t.set_status(&statuses);
                             }
                             Err(e) => {
-                                eprintln!("window-jump: ignoring an invalid config: {e:#}")
+                                eprintln!("touchpad-snap: ignoring an invalid config: {e:#}")
                             }
                         }
                     }
@@ -875,7 +875,7 @@ fn register_hotkeys(hotkeys: &[Hotkey], previous: usize) -> (usize, Vec<HotkeySt
         let (mods, vk) = hk.to_windows();
         let registered = unsafe { RegisterHotKey(null_mut(), i as i32 + 1, mods, vk) } != 0;
         if !registered {
-            eprintln!("window-jump: could not register {hk}: another app already uses it");
+            eprintln!("touchpad-snap: could not register {hk}: another app already uses it");
         }
         statuses.push(HotkeyStatus {
             keys: hk.to_string(),
@@ -883,7 +883,7 @@ fn register_hotkeys(hotkeys: &[Hotkey], previous: usize) -> (usize, Vec<HotkeySt
         });
     }
     let ok = windows_tray::registered_count(&statuses);
-    eprintln!("window-jump: registered {ok} hotkey(s)");
+    eprintln!("touchpad-snap: registered {ok} hotkey(s)");
     (hotkeys.len(), statuses)
 }
 #[cfg(test)]

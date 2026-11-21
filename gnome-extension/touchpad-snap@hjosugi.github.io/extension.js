@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 //
-// GNOME Shell side of window-jump.
+// GNOME Shell side of touchpad-snap.
 //
 // Wayland clients cannot list or focus other clients' windows, grab global
 // keys or see the touchpad swipes the shell uses for itself. This extension
 // runs inside the compositor and offers exactly that on the session bus, for
-// the `window-jump` program to use:
+// the `touchpad-snap` program to use:
 //
-//   bus name   org.hjosugi.WindowJump
-//   object     /org/hjosugi/WindowJump
-//   interface  org.hjosugi.WindowJump1
+//   bus name   io.github.hjosugi.TouchpadSnap
+//   object     /io/github/hjosugi/TouchpadSnap
+//   interface  io.github.hjosugi.TouchpadSnap1
 //
-// List / Activate serve one-shot jumps (`window-jump next`). The daemon
-// (`window-jump daemon`) additionally hands over its hotkeys and swipe claims;
+// List / Activate serve one-shot jumps (`touchpad-snap next`). The daemon
+// (`touchpad-snap daemon`) additionally hands over its hotkeys and swipe claims;
 // the extension grabs them and reports activity back through signals sent to
 // that daemon only. Everything the daemon registered is dropped when it
 // disconnects, so a crashed daemon never leaves keys or swipes stolen.
@@ -33,9 +33,9 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {Phase, SwipeClaimer, modsFromState} from './lib.js';
 
-const BUS_NAME = 'org.hjosugi.WindowJump';
-const OBJECT_PATH = '/org/hjosugi/WindowJump';
-const INTERFACE = 'org.hjosugi.WindowJump1';
+const BUS_NAME = 'io.github.hjosugi.TouchpadSnap';
+const OBJECT_PATH = '/io/github/hjosugi/TouchpadSnap';
+const INTERFACE = 'io.github.hjosugi.TouchpadSnap1';
 const PROTOCOL_VERSION = 3;
 
 const IFACE_XML = `
@@ -117,7 +117,7 @@ class Hud {
 
         const app = this._tracker.get_window_app(window);
         const box = new St.BoxLayout({
-            style_class: 'window-jump-hud',
+            style_class: 'touchpad-snap-hud',
             reactive: false,
             opacity: 0,
         });
@@ -134,7 +134,7 @@ class Hud {
         }
 
         const title = new St.Label({
-            style_class: 'window-jump-hud-title',
+            style_class: 'touchpad-snap-hud-title',
             text: window.get_title() || app?.get_name() || '',
             x_align: Clutter.ActorAlign.CENTER,
         });
@@ -143,7 +143,7 @@ class Hud {
 
         const name = app?.get_name() ?? window.get_wm_class() ?? '';
         box.add_child(new St.Label({
-            style_class: 'window-jump-hud-detail',
+            style_class: 'touchpad-snap-hud-detail',
             text: total > 0 ? `${name} · ${index} / ${total}` : name,
             x_align: Clutter.ActorAlign.CENTER,
         }));
@@ -185,7 +185,7 @@ class Hud {
     }
 }
 
-class WindowJumpService {
+class TouchpadSnapService {
     constructor() {
         this._tracker = Shell.WindowTracker.get_default();
         this._hud = new Hud(this._tracker);
@@ -352,7 +352,7 @@ class WindowJumpService {
         try {
             this._connection.emit_signal(this._owner, OBJECT_PATH, INTERFACE, signal, params);
         } catch (e) {
-            logError(e, `window-jump: emitting ${signal}`);
+            logError(e, `touchpad-snap: emitting ${signal}`);
         }
     }
 
@@ -491,9 +491,9 @@ class WindowJumpService {
     }
 }
 
-export default class WindowJumpExtension extends Extension {
+export default class TouchpadSnapExtension extends Extension {
     enable() {
-        this._service = new WindowJumpService();
+        this._service = new TouchpadSnapService();
         this._service.start();
     }
 

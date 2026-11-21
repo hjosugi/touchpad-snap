@@ -1,8 +1,8 @@
 # End-to-end test on a real Windows desktop (the GitHub windows-2022 runner,
 # or your own machine): opens two Notepad windows and a Character Map, then
-# checks that window-jump groups the Notepads and cycles between them only.
+# checks that touchpad-snap groups the Notepads and cycles between them only.
 #
-#   pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe
+#   pwsh test/e2e/windows.ps1 -Bin target/debug/touchpad-snap.exe
 #
 # Add -VirtualDesktops to also cover a window on a second virtual desktop.
 # That part is opt-in because it needs a desktop session where Win+Ctrl+D
@@ -59,7 +59,7 @@ public static class Win {
         return sent;
     }
     public static bool HudVisible() {
-        var h = FindWindow("window-jump-hud", null);
+        var h = FindWindow("touchpad-snap-hud", null);
         return h != IntPtr.Zero && IsWindowVisible(h);
     }
     // The text of a classic Notepad's edit control.
@@ -94,7 +94,7 @@ function WaitFor([string]$what, [scriptblock]$cond, [int]$seconds = 15) {
 
 $procs = @()
 $daemon = $null
-$work = Join-Path ([IO.Path]::GetTempPath()) "window-jump-e2e-$PID"
+$work = Join-Path ([IO.Path]::GetTempPath()) "touchpad-snap-e2e-$PID"
 New-Item -ItemType Directory -Force $work | Out-Null
 try {
     $procs += Start-Process notepad -PassThru
@@ -161,7 +161,7 @@ try {
     if ($sent -ne 6) { Fail "SendInput accepted only $sent of 6 events for Ctrl+Alt+N" }
     WaitFor 'Ctrl+Alt+N -> second Notepad' { (Focused) -eq $n[1].id }
     WaitFor 'overlay shown' { [Win]::HudVisible() } 5
-    if (Snapshot | Where-Object { $_.wm_class -eq 'window-jump-hud' }) { Fail 'the overlay shows up in the window list' }
+    if (Snapshot | Where-Object { $_.wm_class -eq 'touchpad-snap-hud' }) { Fail 'the overlay shows up in the window list' }
     WaitFor 'overlay hidden again' { -not [Win]::HudVisible() } 5
     Ok 'daemon: Ctrl+Alt+N jumps, the overlay shows and hides, and is not listed'
 

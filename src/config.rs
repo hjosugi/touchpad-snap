@@ -193,7 +193,7 @@ impl Config {
 pub fn default_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("window-jump")
+        .join("touchpad-snap")
         .join("config.toml")
 }
 
@@ -226,8 +226,8 @@ pub fn ensure(path: &Path) -> Result<bool> {
     Ok(true)
 }
 
-/// The commented starter file written by `window-jump config init`.
-pub const TEMPLATE: &str = r#"# window-jump configuration.
+/// The commented starter file written by `touchpad-snap config init`.
+pub const TEMPLATE: &str = r#"# touchpad-snap configuration.
 # Every setting is optional; what is shown here are the defaults.
 # A running daemon picks up changes within about two seconds.
 
@@ -247,7 +247,7 @@ workspace = "all"
 include_minimized = true
 
 # With order = "mru", where it cannot be told whether keys are still held
-# (`window-jump next` run by another shortcut tool, a hotkey without
+# (`touchpad-snap next` run by another shortcut tool, a hotkey without
 # modifiers): jumps closer together than this count as one session.
 mru_session_ms = 1000
 
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn ensure_writes_the_template_only_once() {
-        let dir = std::env::temp_dir().join(format!("window-jump-ensure-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-ensure-{}", std::process::id()));
         let path = dir.join("nested").join("config.toml");
         assert!(ensure(&path).unwrap());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), TEMPLATE);

@@ -33,7 +33,7 @@ pub trait Backend {
     fn show_hud(&self, _id: u64, _index: usize, _total: usize, _duration_ms: u64) -> Result<()> {
         Ok(())
     }
-    /// One line for `window-jump doctor`.
+    /// One line for `touchpad-snap doctor`.
     fn describe(&self) -> String;
 }
 
@@ -74,7 +74,7 @@ pub fn connect() -> Result<Box<dyn Backend>> {
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        anyhow::bail!("window-jump supports GNOME (Linux) and Windows only, for now")
+        anyhow::bail!("touchpad-snap supports GNOME (Linux) and Windows only, for now")
     }
 }
 
@@ -104,6 +104,6 @@ pub fn run_daemon(
     #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = (cfg, hotkeys, config_path, handle);
-        anyhow::bail!("window-jump supports GNOME (Linux) and Windows only, for now")
+        anyhow::bail!("touchpad-snap supports GNOME (Linux) and Windows only, for now")
     }
 }

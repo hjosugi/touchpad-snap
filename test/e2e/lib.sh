@@ -13,13 +13,13 @@
 #     ... runs inside the private session from here on ...
 #
 # Variables named E2E_* are passed through into the session. E2E_BIN is the
-# window-jump binary to test (default: the debug build in cargo's target dir),
+# touchpad-snap binary to test (default: the debug build in cargo's target dir),
 # E2E_INJECT the key-injection helper (examples/inject_keys.rs).
 
 set -euo pipefail
 
 e2e_repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-e2e_uuid=window-jump@hjosugi.github.io
+e2e_uuid=touchpad-snap@hjosugi.github.io
 
 # Removes the session directory. xdg-document-portal mounts a FUSE filesystem
 # under $XDG_RUNTIME_DIR/doc and lets go of it a moment after its bus is gone,
@@ -39,7 +39,7 @@ e2e_remove_root() {
 e2e_enter() {
     [[ -n ${E2E_INNER:-} ]] && return 0
 
-    : "${E2E_BIN:=$(cd "$e2e_repo" && cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/debug/window-jump}"
+    : "${E2E_BIN:=$(cd "$e2e_repo" && cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/debug/touchpad-snap}"
     [[ -x $E2E_BIN ]] || { echo "build first: $E2E_BIN is missing (cargo build)" >&2; exit 1; }
     : "${E2E_INJECT:=$(dirname "$E2E_BIN")/examples/inject_keys}"
     [[ -x $E2E_INJECT ]] || { echo "build first: $E2E_INJECT is missing (cargo build --examples)" >&2; exit 1; }
@@ -47,7 +47,7 @@ e2e_enter() {
 
     local caller=${BASH_SOURCE[1]}
     local root
-    root=$(mktemp -d "${TMPDIR:-/tmp}/window-jump-e2e.XXXXXX")
+    root=$(mktemp -d "${TMPDIR:-/tmp}/touchpad-snap-e2e.XXXXXX")
     chmod 700 "$root"
     # shellcheck disable=SC2064
     trap "e2e_remove_root '$root'" EXIT
@@ -137,16 +137,16 @@ press_keys() { "$E2E_INJECT" "$@"; }
 # Sends the daemon a Swipe signal as the extension would after claiming a
 # touchpad swipe: swipe <phase> <fingers> <mods> <dx> <dy>
 swipe() {
-    gdbus emit --session --object-path /org/hjosugi/WindowJump \
-        --signal org.hjosugi.WindowJump1.Swipe -- \
+    gdbus emit --session --object-path /io/github/hjosugi/TouchpadSnap \
+        --signal io.github.hjosugi.TouchpadSnap1.Swipe -- \
         "uint32 $1" "uint32 $2" "uint32 $3" "$4" "$5" >/dev/null
 }
 
 # Call a method of the extension.
 call() {
-    gdbus call --session --dest org.hjosugi.WindowJump \
-        --object-path /org/hjosugi/WindowJump \
-        --method "org.hjosugi.WindowJump1.$1" "${@:2}"
+    gdbus call --session --dest io.github.hjosugi.TouchpadSnap \
+        --object-path /io/github/hjosugi/TouchpadSnap \
+        --method "io.github.hjosugi.TouchpadSnap1.$1" "${@:2}"
 }
 
 list_json() { wj list --json; }
@@ -197,8 +197,8 @@ e2e_start_shell() {
     e2e_pids+=($!)
 
     wait_for "wayland socket" 30 test -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
-    wait_for "extension bus name" 30 gdbus call --session --dest org.hjosugi.WindowJump \
-        --object-path /org/hjosugi/WindowJump --method org.freedesktop.DBus.Peer.Ping
+    wait_for "extension bus name" 30 gdbus call --session --dest io.github.hjosugi.TouchpadSnap \
+        --object-path /io/github/hjosugi/TouchpadSnap --method org.freedesktop.DBus.Peer.Ping
 }
 
 # Opens two text editors (separate processes, same app) and a calculator, in

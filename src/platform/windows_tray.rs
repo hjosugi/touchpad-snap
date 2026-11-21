@@ -1,6 +1,6 @@
 //! The Windows notification-area icon and its menu.
 //!
-//! `window-jumpw.exe` has no console, so the tray icon is the only way to see
+//! `touchpad-snapw.exe` has no console, so the tray icon is the only way to see
 //! whether the hotkeys were registered and to stop or reconfigure the daemon.
 //! The icon belongs to a hidden window on the daemon's thread; its messages
 //! are dispatched by the daemon's single `GetMessageW` loop. Menu commands are
@@ -47,11 +47,11 @@ pub fn registered_count(statuses: &[HotkeyStatus]) -> usize {
     statuses.iter().filter(|s| s.registered).count()
 }
 
-/// The icon's tooltip, e.g. `window-jump (2 hotkeys)`.
+/// The icon's tooltip, e.g. `touchpad-snap (2 hotkeys)`.
 pub fn tooltip(statuses: &[HotkeyStatus]) -> String {
     let n = registered_count(statuses);
     let plural = if n == 1 { "" } else { "s" };
-    format!("window-jump ({n} hotkey{plural})")
+    format!("touchpad-snap ({n} hotkey{plural})")
 }
 
 /// The disabled menu entries summarising the hotkey situation: a count, then
@@ -108,7 +108,7 @@ mod win32 {
     };
     use crate::{autostart, config};
 
-    const CLASS_NAME: &str = "window-jump-tray";
+    const CLASS_NAME: &str = "touchpad-snap-tray";
     const TRAY_ID: u32 = 1;
     const TRAY_CALLBACK: u32 = WM_APP + 1;
 
@@ -162,7 +162,7 @@ mod win32 {
         pub fn new(statuses: &[HotkeyStatus]) -> Option<Self> {
             STATE.with(|s| s.borrow_mut().statuses = statuses.to_vec());
             let class = wide(CLASS_NAME);
-            let title = wide("window-jump");
+            let title = wide("touchpad-snap");
             unsafe {
                 let instance = GetModuleHandleW(null_mut());
                 let wc = WNDCLASSW {
@@ -195,7 +195,7 @@ mod win32 {
                 set_tip(&mut nid, &tooltip(statuses));
                 if Shell_NotifyIconW(NIM_ADD, &nid) == 0 {
                     eprintln!(
-                        "window-jump: could not add the notification-area icon; continuing without it"
+                        "touchpad-snap: could not add the notification-area icon; continuing without it"
                     );
                     DestroyWindow(hwnd);
                     return None;
@@ -244,7 +244,7 @@ mod win32 {
     /// template first if it does not exist yet.
     pub fn open_config_file(path: &Path) {
         if let Err(e) = config::ensure(path) {
-            eprintln!("window-jump: could not create {}: {e:#}", path.display());
+            eprintln!("touchpad-snap: could not create {}: {e:#}", path.display());
             return;
         }
         let operation = wide("open");
@@ -261,7 +261,7 @@ mod win32 {
         } as isize;
         if code <= 32 {
             eprintln!(
-                "window-jump: could not open {} (ShellExecuteW returned {code})",
+                "touchpad-snap: could not open {} (ShellExecuteW returned {code})",
                 path.display()
             );
         }
@@ -275,8 +275,8 @@ mod win32 {
             autostart::disable()
         };
         match result {
-            Ok(message) => eprintln!("window-jump: {message}"),
-            Err(e) => eprintln!("window-jump: {e:#}"),
+            Ok(message) => eprintln!("touchpad-snap: {message}"),
+            Err(e) => eprintln!("touchpad-snap: {e:#}"),
         }
     }
 
@@ -379,12 +379,12 @@ mod tests {
             status("Ctrl+Alt+J", true),
         ];
         assert_eq!(registered_count(&statuses), 2);
-        assert_eq!(tooltip(&statuses), "window-jump (2 hotkeys)");
+        assert_eq!(tooltip(&statuses), "touchpad-snap (2 hotkeys)");
         assert_eq!(
             tooltip(&[status("Super+Alt+N", true)]),
-            "window-jump (1 hotkey)"
+            "touchpad-snap (1 hotkey)"
         );
-        assert_eq!(tooltip(&[]), "window-jump (0 hotkeys)");
+        assert_eq!(tooltip(&[]), "touchpad-snap (0 hotkeys)");
     }
 
     #[test]

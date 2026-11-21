@@ -1,4 +1,4 @@
-# window-jump
+# touchpad-snap
 
 **いま使っているアプリの別ウィンドウ**へ、ショートカットキーか「修飾キー＋タッチパッドのスワイプ」で切り替えるツールです。macOS の `Cmd+`` ` や BetterTouchTool の「同じアプリのウィンドウを巡回」に当たる操作を、**GNOME（Wayland / X11）** と **Windows** で使えます。本体は Rust 製のネイティブバイナリで、Wayland で他に手段がない部分だけを小さな GNOME Shell 拡張が受け持ちます。
 
@@ -9,17 +9,17 @@
 - **Windows のスワイプ**: Windows Precision Touchpad なら、GNOME と同じ「修飾キー＋3 本指スワイプ」が使えます。ただし Windows 標準の 3 / 4 本指ジェスチャーは先にオフにする必要があります（後述）。
 - **切り替え先の表示**: 切り替えるたびに、ウィンドウのタイトルと「アプリ · 2 / 5」（GNOME ではアプリのアイコンも）を画面中央に一瞬表示します。スワイプで何枚も進むときに今どこにいるかが分かります。Windows では daemon 経由のときに表示されます。
 - **並び順**: `stable`（固定順で全ウィンドウを巡回）、`position`（画面の左から右）、`mru`（Alt+Tab と同じ動き。1 回押すと直近 2 枚を往復し、修飾キーを押したまま続けて押すと古い方へ進み、離したところで確定する）。
-- **他のツールからも使える**: `window-jump next` / `window-jump prev` は普通のコマンドなので、GNOME のカスタムショートカット、AutoHotkey、keyd、マウスのユーティリティなどにも割り当てられます。
+- **他のツールからも使える**: `touchpad-snap next` / `touchpad-snap prev` は普通のコマンドなので、GNOME のカスタムショートカット、AutoHotkey、keyd、マウスのユーティリティなどにも割り当てられます。
 
 ## 仕組み
 
 ```
 GNOME                                       Windows
 ─────                                       ───────
-window-jump next / daemon                   window-jump next / daemon
+touchpad-snap next / daemon                   touchpad-snap next / daemon
         │  D-Bus（セッションバス）                  │  Win32
         ▼                                           ▼
-window-jump@hjosugi.github.io               EnumWindows, SetForegroundWindow,
+touchpad-snap@hjosugi.github.io               EnumWindows, SetForegroundWindow,
 （GNOME Shell 拡張。コンポジタ内で動く）    RegisterHotKey, Raw Input
  ・ウィンドウ一覧 / アクティブ化             （Precision Touchpad）
  ・daemon のホットキーを登録
@@ -32,20 +32,20 @@ Wayland では普通のプログラムが他のアプリのウィンドウを列
 
 ### GNOME（ディストリビューションを問わず）
 
-1. [最新リリース](https://github.com/hjosugi/window-jump/releases/latest)から次を取得します。
-   - `window-jump-<version>-x86_64-unknown-linux-musl.tar.gz`（または `aarch64`）: 依存のない静的バイナリ。`window-jump` を `~/.local/bin` など `PATH` の通った場所へ。
-   - `window-jump@hjosugi.github.io.shell-extension.zip`
+1. [最新リリース](https://github.com/hjosugi/touchpad-snap/releases/latest)から次を取得します。
+   - `touchpad-snap-<version>-x86_64-unknown-linux-musl.tar.gz`（または `aarch64`）: 依存のない静的バイナリ。`touchpad-snap` を `~/.local/bin` など `PATH` の通った場所へ。
+   - `touchpad-snap@hjosugi.github.io.shell-extension.zip`
 2. 拡張を入れて、**一度ログアウトしてログインし直します**（Wayland の GNOME は新しい拡張をログイン時にしか見つけません）。
    ```sh
-   gnome-extensions install --force window-jump@hjosugi.github.io.shell-extension.zip
+   gnome-extensions install --force touchpad-snap@hjosugi.github.io.shell-extension.zip
    # ログインし直したあとで:
-   gnome-extensions enable window-jump@hjosugi.github.io
+   gnome-extensions enable touchpad-snap@hjosugi.github.io
    ```
 3. 確認し、daemon を起動し、ログイン時に自動で起動するようにします。
    ```sh
-   window-jump doctor
-   window-jump autostart enable     # ~/.config/autostart/window-jump.desktop を作成
-   window-jump daemon &             # 今のセッション用
+   touchpad-snap doctor
+   touchpad-snap autostart enable     # ~/.config/autostart/touchpad-snap.desktop を作成
+   touchpad-snap daemon &             # 今のセッション用
    ```
 
 対応する GNOME Shell: 46〜51。CI では 46（Ubuntu 24.04）、48（Debian 13）、49（Fedora 43）、50（Fedora 44）と Arch Linux の最新版（現時点で 51）で e2e テストを実行しています。47 は未テストです。
@@ -54,68 +54,68 @@ Wayland では普通のプログラムが他のアプリのウィンドウを列
 
 ```nix
 # flake.nix
-inputs.window-jump.url = "github:hjosugi/window-jump";
+inputs.touchpad-snap.url = "github:hjosugi/touchpad-snap";
 
-# configuration.nix（specialArgs などで window-jump を渡す）
+# configuration.nix（specialArgs などで touchpad-snap を渡す）
 environment.systemPackages = [
-  window-jump.packages.${pkgs.stdenv.hostPlatform.system}.window-jump
-  window-jump.packages.${pkgs.stdenv.hostPlatform.system}.gnome-shell-extension
+  touchpad-snap.packages.${pkgs.stdenv.hostPlatform.system}.touchpad-snap
+  touchpad-snap.packages.${pkgs.stdenv.hostPlatform.system}.gnome-shell-extension
 ];
 ```
 
-そのあと拡張を有効にし（`gnome-extensions enable window-jump@hjosugi.github.io` か dconf）、`window-jump autostart enable` を実行します。NixOS 以外でも `nix run github:hjosugi/window-jump -- doctor` で試せます。
+そのあと拡張を有効にし（`gnome-extensions enable touchpad-snap@hjosugi.github.io` か dconf）、`touchpad-snap autostart enable` を実行します。NixOS 以外でも `nix run github:hjosugi/touchpad-snap -- doctor` で試せます。
 
 ### Windows 10 / 11
 
-1. `window-jump-<version>-x86_64-pc-windows-msvc.zip`（または `aarch64`）を取得し、`%LOCALAPPDATA%\Programs\window-jump` など消さない場所に展開します。
+1. `touchpad-snap-<version>-x86_64-pc-windows-msvc.zip`（または `aarch64`）を取得し、`%LOCALAPPDATA%\Programs\touchpad-snap` など消さない場所に展開します。
 2. ログイン時の自動起動と、今すぐの起動:
    ```powershell
-   .\window-jump.exe autostart enable   # ログイン時に window-jumpw.exe（コンソール窓なし）を起動
-   .\window-jumpw.exe                    # 今すぐ起動
+   .\touchpad-snap.exe autostart enable   # ログイン時に touchpad-snapw.exe（コンソール窓なし）を起動
+   .\touchpad-snapw.exe                    # 今すぐ起動
    ```
 3. タッチパッド（任意）: スワイプには **Windows Precision Touchpad** が必要です（最近のノート PC はほぼ対応）。**設定 → Bluetooth とデバイス → タッチパッド** で **3 本指のジェスチャー** と **4 本指のジェスチャー** をオフ（*何もしない*）にしてから、GNOME と同じ `[[swipe]]` 設定を使います。既定では `Ctrl` を押しながら 3 本指で左右に、または `Alt` を押しながら 3 本指で上下にスワイプします。Windows 標準のジェスチャーを有効にしたままだと、そちらも同時に反応します（生の HID 入力からは横取りできません）。
 
-`window-jumpw.exe` はタスクトレイ（通知領域）にアイコンを表示します。メニューには登録できたホットキーの数（他のアプリに取られて登録できなかったものはその名前）と、**Reload config**（設定の再読み込み）、**Open config file**（設定ファイルを開く）、**Start at login**（ログイン時に起動、現在の状態にチェック）、**Quit**（終了）が並びます。終了するためにタスク マネージャーを開く必要はありません。
+`touchpad-snapw.exe` はタスクトレイ（通知領域）にアイコンを表示します。メニューには登録できたホットキーの数（他のアプリに取られて登録できなかったものはその名前）と、**Reload config**（設定の再読み込み）、**Open config file**（設定ファイルを開く）、**Start at login**（ログイン時に起動、現在の状態にチェック）、**Quit**（終了）が並びます。終了するためにタスク マネージャーを開く必要はありません。
 
 ウィンドウは実行ファイル（`notepad.exe`、`Code.exe` など）単位でまとめます。UWP アプリは ApplicationFrameHost の枠の裏にある本体のプロセスで判定します。
 
 別の仮想デスクトップのウィンドウも、`workspace = "all"`（既定）なら対象に含まれ、`"current"` なら除外されます。いまのデスクトップが `ws 0`、ほかのデスクトップが正の番号です。別デスクトップのウィンドウへのジャンプはベストエフォートです。デスクトップを切り替える公開 API がないため、`Win+Ctrl+左/右` を最大 8 回ずつ送り、届かなければエラーを表示します。中断された UWP ウィンドウは表示されません。
 
-手動テスト: `Win+Ctrl+D` で 2 つ目のデスクトップを作り、そこで 2 つ目の Notepad を開き（またはタスク ビューで移動し）、`Win+Ctrl+左` で戻ってから `window-jump list`（2 つ目の Notepad が正の `ws`）と、1 つ目の Notepad での `window-jump next` を確認します。
+手動テスト: `Win+Ctrl+D` で 2 つ目のデスクトップを作り、そこで 2 つ目の Notepad を開き（またはタスク ビューで移動し）、`Win+Ctrl+左` で戻ってから `touchpad-snap list`（2 つ目の Notepad が正の `ws`）と、1 つ目の Notepad での `touchpad-snap next` を確認します。
 
 ### ソースから
 
 ```sh
-cargo install --git https://github.com/hjosugi/window-jump window-jump
+cargo install --git https://github.com/hjosugi/touchpad-snap touchpad-snap
 ```
 
-GNOME 拡張は `gnome-extension/window-jump@hjosugi.github.io` ディレクトリです。`~/.local/share/gnome-shell/extensions/` にコピーしてください。
+GNOME 拡張は `gnome-extension/touchpad-snap@hjosugi.github.io` ディレクトリです。`~/.local/share/gnome-shell/extensions/` にコピーしてください。
 
 ## 使い方
 
 | コマンド | |
 |---|---|
-| `window-jump next` / `prev` | フォーカス中のアプリの次 / 前のウィンドウへ。`--order`、`--workspace` で設定を上書き。 |
-| `window-jump daemon [-v]` | 設定したホットキーとスワイプを待ち受ける。 |
-| `window-jump list [--json]` | アプリごとにウィンドウを一覧表示。 |
-| `window-jump activate <id>` | ID を指定して 1 枚フォーカス。 |
-| `window-jump doctor` | 設定・拡張・ウィンドウ一覧をまとめて確認。 |
-| `window-jump config init\|path\|check` | 設定ファイルの作成 / 場所 / 検証。 |
-| `window-jump autostart enable\|disable` | ログイン時の daemon 自動起動。 |
+| `touchpad-snap next` / `prev` | フォーカス中のアプリの次 / 前のウィンドウへ。`--order`、`--workspace` で設定を上書き。 |
+| `touchpad-snap daemon [-v]` | 設定したホットキーとスワイプを待ち受ける。 |
+| `touchpad-snap list [--json]` | アプリごとにウィンドウを一覧表示。 |
+| `touchpad-snap activate <id>` | ID を指定して 1 枚フォーカス。 |
+| `touchpad-snap doctor` | 設定・拡張・ウィンドウ一覧をまとめて確認。 |
+| `touchpad-snap config init\|path\|check` | 設定ファイルの作成 / 場所 / 検証。 |
+| `touchpad-snap autostart enable\|disable` | ログイン時の daemon 自動起動。 |
 
 ### daemon を使わない場合
 
-コマンドを好きなショートカットツールに割り当てます。GNOME なら **設定 → キーボード → ショートカットの表示とカスタマイズ → カスタムショートカット** でコマンドに `window-jump next` を指定します（ウィンドウの列挙とフォーカスのため、GNOME では拡張は引き続き必要です）。
+コマンドを好きなショートカットツールに割り当てます。GNOME なら **設定 → キーボード → ショートカットの表示とカスタマイズ → カスタムショートカット** でコマンドに `touchpad-snap next` を指定します（ウィンドウの列挙とフォーカスのため、GNOME では拡張は引き続き必要です）。
 
 ## 設定
 
-`window-jump config init` でコメント付きのファイルを `~/.config/window-jump/config.toml`（Windows は `%APPDATA%\window-jump\config.toml`）に作ります。項目はすべて省略可能で、既定値は次の通りです。
+`touchpad-snap config init` でコメント付きのファイルを `~/.config/touchpad-snap/config.toml`（Windows は `%APPDATA%\touchpad-snap\config.toml`）に作ります。項目はすべて省略可能で、既定値は次の通りです。
 
 ```toml
 order = "stable"          # "stable" | "position" | "mru"
 workspace = "all"         # "all" | "current"
 include_minimized = true
-mru_session_ms = 1000     # order = "mru" で他のツールから window-jump next を呼ぶとき、これより短い間隔の連打を 1 回の巡回とみなす
+mru_session_ms = 1000     # order = "mru" で他のツールから touchpad-snap next を呼ぶとき、これより短い間隔の連打を 1 回の巡回とみなす
 
 [gesture]
 threshold = 120.0         # スワイプとみなすまでの指の移動量（GNOME のワークスペース 1 枚分が 400）
@@ -165,7 +165,7 @@ action = "prev"
 
 - スワイプの修飾キーに `Super` 単体は避けてください。離したときに GNOME のアクティビティ画面（Windows ではスタートメニュー）が開くことがあります。`Ctrl`、`Ctrl+Alt`、`Shift` なら問題ありません。
 - Windows では先に標準の 3 / 4 本指ジェスチャーをオフにしてください。Precision Touchpad は同じ指の動きを生の HID 入力として報告しますが、Windows のシェルも独立してジェスチャーを処理するため、横取りはできません。
-- ホットキーが登録できない場合（GNOME や他のアプリが使用中）は daemon の起動時に表示されます。`window-jump daemon -v` で全イベントをログに出せます。
+- ホットキーが登録できない場合（GNOME や他のアプリが使用中）は daemon の起動時に表示されます。`touchpad-snap daemon -v` で全イベントをログに出せます。
 
 ## 開発
 
@@ -175,8 +175,8 @@ npm test                       # 拡張の純粋な JS 部分のユニットテ�
 cargo build --all-targets && ./test/e2e/gnome.sh
                                # 使い捨ての headless GNOME Shell での e2e テスト:
                                # 本物のウィンドウと、仮想キーボードで押したホットキー
-pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe   # Windows 上で
-pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe -VirtualDesktops
+pwsh test/e2e/windows.ps1 -Bin target/debug/touchpad-snap.exe   # Windows 上で
+pwsh test/e2e/windows.ps1 -Bin target/debug/touchpad-snap.exe -VirtualDesktops
                                # 2 つ目の仮想デスクトップ上のウィンドウも確認
 nix build .#checks.x86_64-linux.vm-touchpad -L
                                # VM 内の本物の GNOME セッションで、仮想タッチパッドから

@@ -61,4 +61,7 @@ if left=$(git grep -n -I -i -E 'window[-_ ]?jump|org[./]hjosugi' -- . ":!CHANGEL
     echo "$left" >&2
     exit 1
 fi
+if command -v cargo >/dev/null; then
+    cargo fmt # the new name is one letter longer: lines reflow
+fi
 echo "renamed in ${#files[@]} file(s); review with: git status && git diff --stat"

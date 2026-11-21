@@ -2,7 +2,7 @@
 version: '3'
 
 vars:
-  UUID: window-jump@hjosugi.github.io
+  UUID: touchpad-snap@hjosugi.github.io
   EXTENSION_DIR: '{{.HOME}}/.local/share/gnome-shell/extensions'
 
 tasks:
@@ -46,14 +46,14 @@ tasks:
         echo "Installed. Next:"
         echo "  1. Log out and back in once (GNOME on Wayland only discovers new extensions at login)."
         echo "  2. gnome-extensions enable {{.UUID}}"
-        echo "  3. window-jump doctor && window-jump autostart enable && window-jump daemon &"
+        echo "  3. touchpad-snap doctor && touchpad-snap autostart enable && touchpad-snap daemon &"
 
   uninstall:
     desc: Remove what `task install` put in your home directory
     cmds:
-      - cargo uninstall window-jump || true
+      - cargo uninstall touchpad-snap || true
       - rm -rf '{{.EXTENSION_DIR}}/{{.UUID}}'
-      - window-jump autostart disable 2>/dev/null || rm -f '{{.HOME}}/.config/autostart/window-jump.desktop'
+      - touchpad-snap autostart disable 2>/dev/null || rm -f '{{.HOME}}/.config/autostart/touchpad-snap.desktop'
 
   release:
     desc: 'Tag and push a release: task release -- 0.3.0 (bump Cargo.toml, metadata.json and CHANGELOG.md first)'
@@ -62,5 +62,5 @@ tasks:
       - grep -q '^version = "{{.CLI_ARGS}}"' Cargo.toml
       - "grep -q '\"version-name\": \"{{.CLI_ARGS}}\"' gnome-extension/{{.UUID}}/metadata.json"
       - grep -q '## \[{{.CLI_ARGS}}\]' CHANGELOG.md
-      - git tag -a v{{.CLI_ARGS}} -m "window-jump {{.CLI_ARGS}}"
+      - git tag -a v{{.CLI_ARGS}} -m "touchpad-snap {{.CLI_ARGS}}"
       - git push origin v{{.CLI_ARGS}}
