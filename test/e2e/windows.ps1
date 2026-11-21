@@ -47,6 +47,24 @@ public static class Win {
         }
         return sent;
     }
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
+    [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
+    [DllImport("user32.dll")] static extern bool PeekMessage(out MSG m, IntPtr h, uint min, uint max, uint remove);
+    [DllImport("user32.dll", SetLastError = true)] public static extern bool PostThreadMessage(uint thread, uint msg, IntPtr w, IntPtr l);
+    [StructLayout(LayoutKind.Sequential)] public struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int x; public int y; }
+    // DIAGNOSTIC: does a hotkey registered by this very thread fire on SendInput?
+    public static string SelfHotkey(params byte[] keys) {
+        if (!RegisterHotKey(IntPtr.Zero, 77, 0x4000 | 0x1 | 0x2, 0x4D)) return "register failed " + Marshal.GetLastWin32Error();
+        Chord(keys);
+        var until = DateTime.Now.AddSeconds(3);
+        MSG m;
+        while (DateTime.Now < until) {
+            if (PeekMessage(out m, IntPtr.Zero, 0, 0, 1) && m.message == 0x0312) { UnregisterHotKey(IntPtr.Zero, 77); return "fired"; }
+            System.Threading.Thread.Sleep(20);
+        }
+        UnregisterHotKey(IntPtr.Zero, 77);
+        return "not fired";
+    }
     public static bool HudVisible() {
         var h = FindWindow("window-jump-hud", null);
         return h != IntPtr.Zero && IsWindowVisible(h);
@@ -141,8 +159,14 @@ try {
     # anything: type into the focused Notepad and read it back.
     $sent = [Win]::Chord(0x51)  # Q
     WaitFor "typed key to reach Notepad (SendInput accepted $sent of 2)" { [Win]::NotepadText([IntPtr]$n[0].id) -match 'q' } 5
+    Write-Host "DIAGNOSTIC self hotkey Ctrl+Alt+M: $([Win]::SelfHotkey(0x11, 0x12, 0x4D))"
     $sent = [Win]::Chord(0x11, 0x12, 0x4E)  # Ctrl, Alt, N
     Write-Host "SendInput accepted $sent of 6 events for Ctrl+Alt+N"
+    Start-Sleep -Seconds 2
+    $tid = (Get-Process -Id $daemon.Id).Threads | Sort-Object StartTime | Select-Object -First 1 -ExpandProperty Id
+    Write-Host "DIAGNOSTIC posting WM_HOTKEY to daemon thread $tid : $([Win]::PostThreadMessage([uint32]$tid, 0x0312, [IntPtr]1, [IntPtr]::Zero))"
+    Start-Sleep -Seconds 2
+    Write-Host "DIAGNOSTIC daemon log:"; Get-Content $log
     WaitFor 'Ctrl+Alt+N -> second Notepad' { (Focused) -eq $n[1].id }
     WaitFor 'overlay shown' { [Win]::HudVisible() } 5
     if (Snapshot | Where-Object { $_.wm_class -eq 'window-jump-hud' }) { Fail 'the overlay shows up in the window list' }
