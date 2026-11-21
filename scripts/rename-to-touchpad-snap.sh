@@ -10,6 +10,7 @@
 #                                              config directory, CSS classes)
 #   window_jump             touchpad_snap     (the Rust library)
 #   WindowJump              TouchpadSnap      (type names)
+#   WINDOW_JUMP             TOUCHPAD_SNAP     (environment variables)
 #   org.hjosugi.WindowJump  io.github.hjosugi.TouchpadSnap   (D-Bus name,
 #   /org/hjosugi/...        /io/github/hjosugi/...            path, interface)
 #
@@ -50,6 +51,7 @@ if ((${#files[@]})); then
         -e 's#org\.hjosugi\.WindowJump#io.github.hjosugi.TouchpadSnap#g' \
         -e 's#org/hjosugi/WindowJump#io/github/hjosugi/TouchpadSnap#g' \
         -e 's#WindowJump#TouchpadSnap#g' \
+        -e 's#WINDOW_JUMP#TOUCHPAD_SNAP#g' \
         -e 's#window-jump#touchpad-snap#g' \
         -e 's#window_jump#touchpad_snap#g' \
         "${files[@]}"
