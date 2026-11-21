@@ -119,3 +119,30 @@ jobs:
       - run: cargo build --locked
       - run: ./test/e2e/windows.ps1 -Bin target/debug/window-jump.exe
         shell: pwsh
+
+  gnome-vm:
+    name: GNOME VM (real touchpad swipes through libinput)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Let the runner user use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: cachix/install-nix-action@v32
+        with:
+          extra_nix_config: |
+            system-features = nixos-test benchmark big-parallel kvm
+      # The driver runs outside the Nix sandbox here so that its screenshots
+      # survive a failure (`nix build .#checks.x86_64-linux.vm-touchpad` is
+      # the same test, sandboxed).
+      - run: nix build .#checks.x86_64-linux.vm-touchpad.driver -L
+      - run: mkdir -p vm-out && ./result/bin/nixos-test-driver --output_directory vm-out
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: vm-screenshots
+          path: vm-out/*.png
+          if-no-files-found: ignore

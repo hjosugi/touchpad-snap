@@ -165,10 +165,13 @@ cargo build --all-targets && ./test/e2e/gnome.sh
 pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe   # Windows 上で
 pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe -VirtualDesktops
                                # 2 つ目の仮想デスクトップ上のウィンドウも確認
-nix flake check                # Nix ビルド（cargo test を含む）
+nix build .#checks.x86_64-linux.vm-touchpad -L
+                               # VM 内の本物の GNOME セッションで、仮想タッチパッドから
+                               # スワイプする（KVM が必要）
+nix flake check                # Nix のチェック一式: ビルド（cargo test を含む）と VM テスト
 ```
 
-e2e テストは動作中のデスクトップには一切触れません。専用の gnome-shell・D-Bus・HOME・dconf を立ち上げて使い捨てます。D-Bus プロトコルは [gnome-extension/README.md](gnome-extension/README.md) を参照してください。CI では上記すべてを GNOME 46・48・49・50・51（Ubuntu、Debian、Fedora、Arch のコンテナ）と Windows Server 2022 で実行しています。
+e2e テストは動作中のデスクトップには一切触れません。専用の gnome-shell・D-Bus・HOME・dconf を立ち上げて使い捨てます。この gnome-shell は入力デバイスを読まないため、タッチパッドの経路は VM で確かめます。uinput の仮想タッチパッドから 3 本指スワイプを libinput・mutter・GNOME Shell に流し、Ctrl＋3 本指ではワークスペースが切り替わらずにウィンドウが切り替わること、修飾キーなしの 3 本指では今まで通りワークスペースが切り替わることを確認します。D-Bus プロトコルは [gnome-extension/README.md](gnome-extension/README.md) を参照してください。CI では上記すべてを GNOME 46・48・49・50・51（Ubuntu、Debian、Fedora、Arch のコンテナ）、NixOS の VM、Windows Server 2022 で実行しています。
 
 ## ライセンス
 

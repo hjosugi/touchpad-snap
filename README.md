@@ -222,13 +222,20 @@ cargo build --all-targets && ./test/e2e/gnome.sh
 pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe   # on Windows
 pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe -VirtualDesktops
                                # also covers a window on a second virtual desktop
-nix flake check                # Nix build (runs cargo test)
+nix build .#checks.x86_64-linux.vm-touchpad -L
+                               # a full GNOME session in a VM (needs KVM),
+                               # swiped on a virtual touchpad
+nix flake check                # all Nix checks: the build (runs cargo test) and the VM test
 ```
 
 The e2e test never touches your running desktop: it starts its own
-gnome-shell with its own D-Bus, HOME and dconf. See
+gnome-shell with its own D-Bus, HOME and dconf. That shell reads no input
+devices, so the touchpad path is tested in the VM instead: a uinput touchpad
+plays three-finger swipes through libinput, mutter and GNOME Shell, and the
+test checks that Ctrl + three fingers jumps without switching workspace while
+plain three fingers still switch it. See
 [gnome-extension/README.md](gnome-extension/README.md) for the D-Bus protocol.
-CI runs all of the above on GNOME 46, 48, 49, 50 and 51 (Ubuntu, Debian, Fedora and Arch containers) and on Windows Server 2022.
+CI runs all of the above on GNOME 46, 48, 49, 50 and 51 (Ubuntu, Debian, Fedora and Arch containers), in the NixOS VM, and on Windows Server 2022.
 
 ## License
 

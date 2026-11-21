@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Tests
+
+- A NixOS VM test boots a full GNOME session and swipes on a virtual
+  (uinput) touchpad: Ctrl + three fingers must jump to the app's other window
+  without switching workspace, plain three fingers must still switch it.
+  Runs in CI. (#26)
+
 ## [0.3.0] - 2026-11-21
 
 ### Added
