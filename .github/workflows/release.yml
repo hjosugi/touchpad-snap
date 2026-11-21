@@ -47,18 +47,18 @@ jobs:
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
-          name="window-jump-${TAG}-${{ matrix.target }}"
+          name="touchpad-snap-${TAG}-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          cp "target/${{ matrix.target }}/release/window-jump" README.md README.ja.md LICENSE "dist/$name/"
+          cp "target/${{ matrix.target }}/release/touchpad-snap" README.md README.ja.md LICENSE "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -rf "dist/$name"
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $name = "window-jump-$env:TAG-${{ matrix.target }}"
+          $name = "touchpad-snap-$env:TAG-${{ matrix.target }}"
           New-Item -ItemType Directory -Force "dist/$name" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/window-jump.exe", "target/${{ matrix.target }}/release/window-jumpw.exe", README.md, README.ja.md, LICENSE "dist/$name/"
+          Copy-Item "target/${{ matrix.target }}/release/touchpad-snap.exe", "target/${{ matrix.target }}/release/touchpad-snapw.exe", README.md, README.ja.md, LICENSE "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
           Remove-Item -Recurse "dist/$name"
       - uses: actions/upload-artifact@v7
@@ -76,8 +76,8 @@ jobs:
       # The layout `gnome-extensions install` expects: metadata.json at the root.
       - run: |
           mkdir -p dist
-          cd gnome-extension/window-jump@hjosugi.github.io
-          zip -r ../../dist/window-jump@hjosugi.github.io.shell-extension.zip .
+          cd gnome-extension/touchpad-snap@hjosugi.github.io
+          zip -r ../../dist/touchpad-snap@hjosugi.github.io.shell-extension.zip .
       - uses: actions/upload-artifact@v7
         with:
           name: dist-extension
@@ -115,5 +115,5 @@ jobs:
             gh release upload "$TAG" dist/* --clobber
             gh release edit "$TAG" --notes-file notes.md
           else
-            gh release create "$TAG" dist/* --title "window-jump $TAG" --notes-file notes.md --verify-tag
+            gh release create "$TAG" dist/* --title "touchpad-snap $TAG" --notes-file notes.md --verify-tag
           fi

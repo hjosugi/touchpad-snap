@@ -1,4 +1,4 @@
-//! window-jump: switch between windows of the same app with hotkeys and
+//! touchpad-snap: switch between windows of the same app with hotkeys and
 //! touchpad swipes, on GNOME (via a small shell extension), KDE Plasma (via a
 //! KWin script), Sway/Hyprland/niri and Windows.
 //!
@@ -13,6 +13,7 @@ pub mod cycle;
 pub mod daemon;
 pub mod gesture;
 pub mod hotkey;
+pub mod legacy;
 pub mod model;
 pub mod platform;
 pub mod session;

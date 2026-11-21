@@ -1,11 +1,11 @@
 [package]
-name = "window-jump"
+name = "touchpad-snap"
 version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Switch between windows of the same app with hotkeys and touchpad swipes (GNOME, Windows)"
 license = "MIT"
-repository = "https://github.com/hjosugi/window-jump"
+repository = "https://github.com/hjosugi/touchpad-snap"
 readme = "README.md"
 keywords = ["window-switcher", "gnome", "wayland", "windows", "gestures"]
 categories = ["command-line-utilities", "gui"]

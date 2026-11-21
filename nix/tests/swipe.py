@@ -13,7 +13,7 @@ DIR/cmd and appends its number to DIR/done (DIR: --dir, /run/swipe).
 `send` writes one command and waits until it has been played: fingers down,
 moved by --dx/--dy millimetres (negative: left, up), lifted; the --mod keys
 are held around the swipe. libinput turns the contacts into a swipe gesture,
-so mutter, GNOME Shell and the window-jump extension see what they would
+so mutter, GNOME Shell and the touchpad-snap extension see what they would
 see from hardware. Both need root (/dev/uinput, DIR).
 """
 
@@ -63,7 +63,7 @@ def touchpad():
     }
     return UInput(
         caps,
-        name="window-jump test touchpad",
+        name="touchpad-snap test touchpad",
         vendor=VENDOR,
         product=0x0001,
         input_props=[e.INPUT_PROP_POINTER, e.INPUT_PROP_BUTTONPAD],
@@ -74,7 +74,7 @@ def keyboard():
     keys = list(range(e.KEY_ESC, e.KEY_KPDOT + 1))
     return UInput(
         {e.EV_KEY: keys},
-        name="window-jump test keyboard",
+        name="touchpad-snap test keyboard",
         vendor=VENDOR,
         product=0x0002,
     )

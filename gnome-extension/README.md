@@ -1,9 +1,9 @@
-# window-jump GNOME Shell extension
+# touchpad-snap GNOME Shell extension
 
-`window-jump@hjosugi.github.io` is the part of window-jump that runs inside
+`touchpad-snap@hjosugi.github.io` is the part of touchpad-snap that runs inside
 GNOME Shell. It holds no policy: it lists and activates windows, grabs the
 hotkeys the daemon asks for, and forwards the touchpad swipes the daemon
-claims. Install it together with the `window-jump` binary.
+claims. Install it together with the `touchpad-snap` binary.
 
 `lib.js` is the GNOME-free part (modifier mapping, the swipe claim state
 machine), unit-tested with Node: `npm test` at the repository root.
@@ -12,9 +12,9 @@ machine), unit-tested with Node: `npm test` at the repository root.
 
 | | |
 |---|---|
-| bus name | `org.hjosugi.WindowJump` |
-| object | `/org/hjosugi/WindowJump` |
-| interface | `org.hjosugi.WindowJump1` |
+| bus name | `io.github.hjosugi.TouchpadSnap` |
+| object | `/io/github/hjosugi/TouchpadSnap` |
+| interface | `io.github.hjosugi.TouchpadSnap1` |
 
 ### Methods
 

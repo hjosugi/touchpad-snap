@@ -43,8 +43,13 @@ pub trait Backend {
     fn show_hud(&self, _id: u64, _index: usize, _total: usize, _duration_ms: u64) -> Result<()> {
         Ok(())
     }
-    /// One line for `window-jump doctor`.
+    /// One line for `touchpad-snap doctor`.
     fn describe(&self) -> String;
+    /// What an installation under the old name (see [`crate::legacy`]) still
+    /// has running here and how to get rid of it, for `touchpad-snap doctor`.
+    fn leftovers(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// How often the platform loops send [`Event::Tick`].
@@ -108,7 +113,7 @@ pub fn connect() -> Result<Box<dyn Backend>> {
     #[cfg(not(any(target_os = "linux", windows)))]
     {
         anyhow::bail!(
-            "window-jump supports GNOME, KDE Plasma, Sway/Hyprland/niri (Linux) and Windows only, for now"
+            "touchpad-snap supports GNOME, KDE Plasma, Sway/Hyprland/niri (Linux) and Windows only, for now"
         )
     }
 }
@@ -121,13 +126,13 @@ pub type Handler<'a> = dyn FnMut(&dyn Backend, Event) -> Option<Config> + 'a;
 /// selects the XDG GlobalShortcuts portal; unset keeps GNOME's extension
 /// grabs when running GNOME, and tries the portal elsewhere.
 #[cfg(target_os = "linux")]
-pub const HOTKEY_SOURCE_ENV: &str = "WINDOW_JUMP_HOTKEYS";
+pub const HOTKEY_SOURCE_ENV: &str = "TOUCHPAD_SNAP_HOTKEYS";
 
 /// Where global hotkeys are registered on Linux.
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeySource {
-    /// The window-jump GNOME Shell extension (`SetAccelerators`).
+    /// The touchpad-snap GNOME Shell extension (`SetAccelerators`).
     Gnome,
     /// `org.freedesktop.portal.GlobalShortcuts`.
     Portal,
@@ -160,10 +165,10 @@ pub fn is_gnome(desktop: Option<&str>) -> bool {
 #[cfg(target_os = "linux")]
 pub(crate) fn claim_daemon_name(conn: &zbus::blocking::Connection) -> Result<()> {
     use zbus::fdo::RequestNameFlags;
-    const DAEMON_NAME: &str = "org.hjosugi.WindowJump.Daemon";
+    const DAEMON_NAME: &str = "io.github.hjosugi.TouchpadSnap.Daemon";
     match conn.request_name_with_flags(DAEMON_NAME, RequestNameFlags::DoNotQueue.into()) {
         Err(zbus::Error::NameTaken) => {
-            anyhow::bail!("another window-jump daemon is already running")
+            anyhow::bail!("another touchpad-snap daemon is already running")
         }
         Err(e) => Err(e).context("claiming the daemon bus name"),
         Ok(_) => Ok(()),
@@ -184,7 +189,9 @@ pub fn run_daemon(
     #[cfg(target_os = "linux")]
     {
         let _ = config_path;
-        let requested = std::env::var(HOTKEY_SOURCE_ENV).ok();
+        let requested = std::env::var(HOTKEY_SOURCE_ENV)
+            .or_else(|_| std::env::var(crate::legacy::HOTKEY_SOURCE_ENV))
+            .ok();
         let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
         // A running extension means GNOME even when XDG_CURRENT_DESKTOP is
         // unset (headless sessions, odd launchers).
@@ -234,7 +241,7 @@ pub fn run_daemon(
     {
         let _ = (cfg, hotkeys, config_path, verbose, handle);
         anyhow::bail!(
-            "window-jump supports GNOME, KDE Plasma, Sway/Hyprland/niri (Linux) and Windows only, for now"
+            "touchpad-snap supports GNOME, KDE Plasma, Sway/Hyprland/niri (Linux) and Windows only, for now"
         )
     }
 }

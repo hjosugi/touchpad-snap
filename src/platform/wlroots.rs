@@ -63,7 +63,7 @@ where
             };
             bail!(
                 "{} detected from XDG_CURRENT_DESKTOP, but {variable} is not set; \
-                 start window-jump inside the compositor session",
+                 start touchpad-snap inside the compositor session",
                 compositor.name()
             )
         }
@@ -156,14 +156,14 @@ impl Backend for Wlroots {
 /// touchpad swipes read straight from libinput (and still reloads the config).
 pub fn run_daemon(cfg: &Config, verbose: bool, handle: &mut super::Handler) -> Result<()> {
     eprintln!(
-        "window-jump: this compositor has no portable global-hotkey API; \
-         bind `window-jump next` / `window-jump prev` in its config instead \
-         (for example `bindsym $mod+n exec window-jump next`). \
+        "touchpad-snap: this compositor has no portable global-hotkey API; \
+         bind `touchpad-snap next` / `touchpad-snap prev` in its config instead \
+         (for example `bindsym $mod+n exec touchpad-snap next`). \
          The daemon is not needed for hotkeys."
     );
     #[cfg(feature = "libinput")]
     {
-        eprintln!("window-jump: serving configured touchpad swipes through libinput");
+        eprintln!("touchpad-snap: serving configured touchpad swipes through libinput");
         run_gestures(cfg, verbose, handle)
     }
     #[cfg(not(feature = "libinput"))]

@@ -33,7 +33,7 @@ impl Niri {
         let socket = std::env::var_os("NIRI_SOCKET")
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
-            .context("NIRI_SOCKET is not set; start window-jump from inside niri")?;
+            .context("NIRI_SOCKET is not set; start touchpad-snap from inside niri")?;
         if !socket.exists() {
             bail!(
                 "NIRI_SOCKET points to {}, which does not exist; is niri running?",

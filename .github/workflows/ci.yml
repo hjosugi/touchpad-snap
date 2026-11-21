@@ -130,7 +130,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked
-      - run: ./test/e2e/windows.ps1 -Bin target/debug/window-jump.exe
+      - run: ./test/e2e/windows.ps1 -Bin target/debug/touchpad-snap.exe
         shell: pwsh
 
   gnome-vm:

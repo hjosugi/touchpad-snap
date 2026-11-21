@@ -18,7 +18,7 @@ pub fn now_ms() -> u64 {
 
 pub fn default_path() -> PathBuf {
     let base = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
-    base.join("window-jump").join("state.json")
+    base.join("touchpad-snap").join("state.json")
 }
 
 /// Loads the state. A missing or unreadable file is simply "no state".
@@ -48,7 +48,7 @@ pub fn save(path: &Path, state: &Option<CycleState>) {
     })();
     if let Err(e) = result {
         eprintln!(
-            "window-jump: could not save state to {}: {e}",
+            "touchpad-snap: could not save state to {}: {e}",
             path.display()
         );
     }

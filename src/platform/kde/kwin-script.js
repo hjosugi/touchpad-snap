@@ -1,17 +1,17 @@
-// window-jump's KWin bridge.
+// touchpad-snap's KWin bridge.
 //
 // Loaded on demand through org.kde.KWin.Scripting; it is not a package and
-// survives only until the window-jump process that loaded it unloads it (or
+// survives only until the touchpad-snap process that loaded it unloads it (or
 // until KWin restarts). There is nothing to enable in System Settings.
 //
 // The script periodically sends a snapshot of the window list to the
-// window-jump D-Bus service and applies the single command the reply carries:
+// touchpad-snap D-Bus service and applies the single command the reply carries:
 // an empty string means "do nothing", `activate <id>` focuses that window.
 // The service name is substituted by the Rust side before the file is loaded.
 
-var SERVICE = "__WINDOW_JUMP_SERVICE__";
-var OBJECT_PATH = "/org/hjosugi/WindowJump/KWin";
-var INTERFACE = "org.hjosugi.WindowJump.KWin1";
+var SERVICE = "__TOUCHPAD_SNAP_SERVICE__";
+var OBJECT_PATH = "/io/github/hjosugi/TouchpadSnap/KWin";
+var INTERFACE = "io.github.hjosugi.TouchpadSnap.KWin1";
 var POLL_MS = 100;
 
 var inFlight = false;

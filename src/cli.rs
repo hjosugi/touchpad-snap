@@ -1,4 +1,4 @@
-//! Command-line interface, shared by `window-jump` and `window-jumpw`.
+//! Command-line interface, shared by `touchpad-snap` and `touchpad-snapw`.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -9,18 +9,18 @@ use clap::{Parser, Subcommand};
 
 use crate::config::{self, Config};
 use crate::cycle::{self, Order, Pick, Session, Step, WorkspaceScope};
-use crate::{autostart, daemon, platform, session};
+use crate::{autostart, daemon, legacy, platform, session};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "window-jump",
+    name = "touchpad-snap",
     version,
     about = "Switch between windows of the same app with hotkeys and touchpad swipes (GNOME, KDE Plasma, Sway, Hyprland, niri, Windows)",
-    after_help = "Bind `window-jump next` / `window-jump prev` to any shortcut, or run `window-jump daemon` \
+    after_help = "Bind `touchpad-snap next` / `touchpad-snap prev` to any shortcut, or run `touchpad-snap daemon` \
                   for the hotkeys and swipes in the config file."
 )]
 struct Cli {
-    /// Config file [default: ~/.config/window-jump/config.toml, %APPDATA%\window-jump\config.toml]
+    /// Config file [default: ~/.config/touchpad-snap/config.toml, %APPDATA%\touchpad-snap\config.toml]
     #[arg(long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
 
@@ -141,7 +141,7 @@ where
     match dispatch(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("window-jump: {e:#}");
+            eprintln!("touchpad-snap: {e:#}");
             ExitCode::FAILURE
         }
     }
@@ -149,6 +149,23 @@ where
 
 fn dispatch(cli: Cli) -> Result<()> {
     let config_path = cli.config.clone().unwrap_or_else(config::default_path);
+    if cli.config.is_none() {
+        // First run after the rename: carry window-jump's settings over.
+        let old = legacy::config_path();
+        match legacy::import_config(&old, &config_path) {
+            Ok(true) => eprintln!(
+                "touchpad-snap: copied the settings of {} from {} to {}",
+                legacy::NAME,
+                old.display(),
+                config_path.display()
+            ),
+            Ok(false) => {}
+            Err(e) => eprintln!(
+                "touchpad-snap: could not carry over the settings of {}: {e:#}",
+                legacy::NAME
+            ),
+        }
+    }
     match cli.command {
         Command::Next(args) => jump(&config_path, Step::Next, args),
         Command::Prev(args) => jump(&config_path, Step::Prev, args),
@@ -303,6 +320,10 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
         }
         Ok(backend) => {
             println!("backend  {}", backend.describe());
+            for leftover in backend.leftovers() {
+                problems += 1;
+                println!("backend  ERROR {leftover}");
+            }
             match backend.snapshot() {
                 Err(e) => {
                     problems += 1;
@@ -336,6 +357,11 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
     #[cfg(target_os = "linux")]
     println!("gestures {}", platform::libinput::doctor());
 
+    if let Some(leftover) = autostart::leftover() {
+        problems += 1;
+        println!("startup  ERROR {leftover}");
+    }
+
     if problems > 0 {
         bail!("{problems} problem(s) found");
     }
@@ -354,12 +380,12 @@ mod tests {
 
     #[test]
     fn parses_jump_overrides() {
-        let cli = Cli::try_parse_from(["window-jump", "next", "--order", "mru"]).unwrap();
+        let cli = Cli::try_parse_from(["touchpad-snap", "next", "--order", "mru"]).unwrap();
         match cli.command {
             Command::Next(a) => assert_eq!(a.order, Some(Order::Mru)),
             other => panic!("{other:?}"),
         }
-        assert!(Cli::try_parse_from(["window-jump", "next", "--order", "nope"]).is_err());
+        assert!(Cli::try_parse_from(["touchpad-snap", "next", "--order", "nope"]).is_err());
     }
 
     #[test]

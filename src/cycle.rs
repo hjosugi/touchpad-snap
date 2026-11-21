@@ -85,7 +85,7 @@ impl Default for CycleOptions {
 /// the window it ends on counts as used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Session {
-    /// Nobody can tell whether the keys are still down (`window-jump next`
+    /// Nobody can tell whether the keys are still down (`touchpad-snap next`
     /// run by another shortcut tool, a hotkey without modifiers): continue
     /// if the last jump was less than `mru_session_ms` ago.
     ByTime,
@@ -574,7 +574,7 @@ mod tests {
             )),
             1
         );
-        // The same holds for a timed-out session of `window-jump next`.
+        // The same holds for a timed-out session of `touchpad-snap next`.
         let mut state = None;
         let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
         assert_eq!(
