@@ -13,19 +13,50 @@ $Bin = (Resolve-Path $Bin).Path
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class Win {
-    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [StructLayout(LayoutKind.Sequential)]
+    struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Explicit, Size = 40)]
+    struct INPUT { [FieldOffset(0)] public uint type; [FieldOffset(8)] public KEYBDINPUT ki; }
+    [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
+    [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint mapType);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string name);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string name);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, StringBuilder l);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+
+    static INPUT Key(byte vk, bool up) {
+        var i = new INPUT { type = 1 };
+        i.ki.wVk = vk;
+        i.ki.wScan = (ushort)MapVirtualKey(vk, 0);
+        i.ki.dwFlags = up ? 2u : 0u;
+        return i;
+    }
     // Presses the keys in order and releases them in reverse, like a person.
-    public static void Chord(params byte[] keys) {
-        foreach (var k in keys) keybd_event(k, 0, 0, UIntPtr.Zero);
-        System.Threading.Thread.Sleep(50);
-        for (int i = keys.Length - 1; i >= 0; i--) keybd_event(keys[i], 0, 2, UIntPtr.Zero);
+    // Returns how many events Windows accepted (2 per key when all went in).
+    public static uint Chord(params byte[] keys) {
+        uint sent = 0;
+        foreach (var k in keys) {
+            sent += SendInput(1, new[] { Key(k, false) }, Marshal.SizeOf(typeof(INPUT)));
+            System.Threading.Thread.Sleep(30);
+        }
+        for (int i = keys.Length - 1; i >= 0; i--) {
+            sent += SendInput(1, new[] { Key(keys[i], true) }, Marshal.SizeOf(typeof(INPUT)));
+            System.Threading.Thread.Sleep(30);
+        }
+        return sent;
     }
     public static bool HudVisible() {
         var h = FindWindow("window-jump-hud", null);
         return h != IntPtr.Zero && IsWindowVisible(h);
+    }
+    // The text of a classic Notepad's edit control.
+    public static string NotepadText(IntPtr notepad) {
+        var edit = FindWindowEx(notepad, IntPtr.Zero, "Edit", null);
+        var sb = new StringBuilder(4096);
+        SendMessage(edit, 0x000D, (IntPtr)sb.Capacity, sb);  // WM_GETTEXT
+        return sb.ToString();
     }
 }
 "@
@@ -106,7 +137,12 @@ try {
 
     & $Bin activate $n[0].id
     WaitFor 'first Notepad focused' { (Focused) -eq $n[0].id }
-    [Win]::Chord(0x11, 0x12, 0x4E)  # Ctrl, Alt, N
+    # Synthetic input has to reach the desktop at all for this part to mean
+    # anything: type into the focused Notepad and read it back.
+    $sent = [Win]::Chord(0x51)  # Q
+    WaitFor "typed key to reach Notepad (SendInput accepted $sent of 2)" { [Win]::NotepadText([IntPtr]$n[0].id) -match 'q' } 5
+    $sent = [Win]::Chord(0x11, 0x12, 0x4E)  # Ctrl, Alt, N
+    Write-Host "SendInput accepted $sent of 6 events for Ctrl+Alt+N"
     WaitFor 'Ctrl+Alt+N -> second Notepad' { (Focused) -eq $n[1].id }
     WaitFor 'overlay shown' { [Win]::HudVisible() } 5
     if (Snapshot | Where-Object { $_.wm_class -eq 'window-jump-hud' }) { Fail 'the overlay shows up in the window list' }
