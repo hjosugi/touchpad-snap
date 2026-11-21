@@ -139,7 +139,7 @@ jobs:
       # survive a failure (`nix build .#checks.x86_64-linux.vm-touchpad` is
       # the same test, sandboxed).
       - run: nix build .#checks.x86_64-linux.vm-touchpad.driver -L
-      - run: ./result/bin/nixos-test-driver --output_directory vm-out
+      - run: mkdir -p vm-out && ./result/bin/nixos-test-driver --output_directory vm-out
       - uses: actions/upload-artifact@v7
         if: always()
         with:
