@@ -4,5 +4,5 @@
   "description": "Bridge for the touchpad-snap program: switch between windows of the same app with hotkeys and modifier + touchpad swipes. Exposes the window list, global hotkeys and swipe gestures on the session bus, which Wayland offers no other way to reach. Needs the touchpad-snap binary (https://github.com/hjosugi/touchpad-snap).",
   "shell-version": ["46", "47", "48", "49", "50", "51"],
   "url": "https://github.com/hjosugi/touchpad-snap",
-  "version-name": "0.4.0"
+  "version-name": "0.5.0"
 }
