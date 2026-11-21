@@ -48,7 +48,7 @@ Wayland では普通のプログラムが他のアプリのウィンドウを列
    window-jump daemon &             # 今のセッション用
    ```
 
-対応する GNOME Shell: 46〜50（CI で 46、実機で 50 を確認）。
+対応する GNOME Shell: 46〜51。CI では 46（Ubuntu 24.04）、48（Debian 13）、49（Fedora 43）、50（Fedora 44）と Arch Linux の最新版（現時点で 51）で e2e テストを実行しています。47 は未テストです。
 
 ### NixOS / Nix flake
 
@@ -159,7 +159,7 @@ pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe   # Windows 上で
 nix flake check                # Nix ビルド（cargo test を含む）
 ```
 
-e2e テストは動作中のデスクトップには一切触れません。専用の gnome-shell・D-Bus・HOME・dconf を立ち上げて使い捨てます。D-Bus プロトコルは [gnome-extension/README.md](gnome-extension/README.md) を参照してください。CI では上記すべてを Ubuntu（GNOME 46）と Windows Server 2022 で実行しています。
+e2e テストは動作中のデスクトップには一切触れません。専用の gnome-shell・D-Bus・HOME・dconf を立ち上げて使い捨てます。D-Bus プロトコルは [gnome-extension/README.md](gnome-extension/README.md) を参照してください。CI では上記すべてを GNOME 46・48・49・50・51（Ubuntu、Debian、Fedora、Arch のコンテナ）と Windows Server 2022 で実行しています。
 
 ## ライセンス
 

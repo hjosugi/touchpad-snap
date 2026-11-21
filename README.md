@@ -69,7 +69,7 @@ Rust program. Everything the daemon registered is dropped the moment it exits.
    window-jump daemon &             # for this session
    ```
 
-Supported GNOME Shell versions: 46–50 (tested on 46 in CI and on 50).
+Supported GNOME Shell versions: 46–51. CI runs the end-to-end test on 46 (Ubuntu 24.04), 48 (Debian 13), 49 (Fedora 43), 50 (Fedora 44) and the latest on Arch Linux (51 at the time of writing); 47 is not tested.
 
 ### NixOS / Nix flake
 
@@ -200,7 +200,7 @@ nix flake check                # Nix build (runs cargo test)
 The e2e test never touches your running desktop: it starts its own
 gnome-shell with its own D-Bus, HOME and dconf. See
 [gnome-extension/README.md](gnome-extension/README.md) for the D-Bus protocol.
-CI runs all of the above on Ubuntu (GNOME 46) and Windows Server 2022.
+CI runs all of the above on GNOME 46, 48, 49, 50 and 51 (Ubuntu, Debian, Fedora and Arch containers) and on Windows Server 2022.
 
 ## License
 

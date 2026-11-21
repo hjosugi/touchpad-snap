@@ -61,6 +61,19 @@ disable-user-extensions=false
 welcome-dialog-last-shown-version='999'
 EOF2
 
+    # Containers have no system bus, and GNOME Shell aborts without one; start
+    # a private one there (and only there, unless E2E_PRIVATE_SYSTEM_BUS=1
+    # asks for it, which mimics a container on a normal machine).
+    local system_bus=${DBUS_SYSTEM_BUS_ADDRESS:-}
+    if [[ -n ${E2E_PRIVATE_SYSTEM_BUS:-} ]] || [[ -z $system_bus && ! -S /run/dbus/system_bus_socket ]]; then
+        local bus_pid
+        bus_pid=$(dbus-daemon --config-file="$e2e_repo/test/e2e/system-bus.conf" \
+            --address="unix:path=$root/system_bus_socket" --fork --print-pid)
+        # shellcheck disable=SC2064
+        trap "kill $bus_pid 2>/dev/null; e2e_remove_root '$root'" EXIT
+        system_bus="unix:path=$root/system_bus_socket"
+    fi
+
     local passthrough=() name
     while IFS= read -r name; do
         passthrough+=("$name=${!name}")
@@ -81,6 +94,7 @@ EOF2
         GSETTINGS_SCHEMA_DIR="${GSETTINGS_SCHEMA_DIR:-}" \
         NIX_GSETTINGS_OVERRIDES_DIR="${NIX_GSETTINGS_OVERRIDES_DIR:-}" \
         GIO_EXTRA_MODULES="${GIO_EXTRA_MODULES:-}" \
+        ${system_bus:+DBUS_SYSTEM_BUS_ADDRESS="$system_bus"} \
         E2E_INNER=1 \
         E2E_ROOT="$root" \
         "${passthrough[@]}" \
