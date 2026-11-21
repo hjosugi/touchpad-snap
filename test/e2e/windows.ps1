@@ -33,6 +33,12 @@ public static class Win {
         i.ki.dwFlags = up ? 2u : 0u;
         return i;
     }
+    // One key event; returns 1 if Windows accepted it.
+    public static uint Send(byte vk, bool up) {
+        var sent = SendInput(1, new[] { Key(vk, up) }, Marshal.SizeOf(typeof(INPUT)));
+        System.Threading.Thread.Sleep(30);
+        return sent;
+    }
     // Presses the keys in order and releases them in reverse, like a person.
     // Returns how many events Windows accepted (2 per key when all went in).
     public static uint Chord(params byte[] keys) {
@@ -153,6 +159,35 @@ try {
     if (Snapshot | Where-Object { $_.wm_class -eq 'window-jump-hud' }) { Fail 'the overlay shows up in the window list' }
     WaitFor 'overlay hidden again' { -not [Win]::HudVisible() } 5
     Ok 'daemon: Ctrl+Alt+N jumps, the overlay shows and hides, and is not listed'
+
+    # Alt+Tab-style sessions with order = "mru": presses while Ctrl+Alt stay
+    # down dig further back however slowly they come; releasing commits, and
+    # the windows passed on the way do not count as used.
+    $procs += Start-Process notepad -PassThru
+    WaitFor 'third Notepad window' { (Notepads).Count -ge 3 }
+    $n = Notepads
+    Set-Content -Path $cfg -Encoding ascii -Value "order = `"mru`"`n[[hotkey]]`nkeys = `"Ctrl+Alt+N`"`naction = `"next`"`n"
+    WaitFor 'daemon to load order = mru' { Select-String -Path $log -Pattern 'reloaded' -Quiet }
+    foreach ($i in 2, 1, 0) {
+        & $Bin activate $n[$i].id
+        WaitFor "Notepad $i focused" { (Focused) -eq $n[$i].id }
+    }
+    Start-Sleep -Milliseconds 500
+    # Hold Ctrl+Alt, press N, wait longer than mru_session_ms (1 s), press N again.
+    $sent = [Win]::Send(0x11, $false) + [Win]::Send(0x12, $false) + [Win]::Send(0x4E, $false) + [Win]::Send(0x4E, $true)
+    Start-Sleep -Milliseconds 1500
+    $sent += [Win]::Send(0x4E, $false) + [Win]::Send(0x4E, $true)
+    Start-Sleep -Milliseconds 300
+    $sent += [Win]::Send(0x12, $true) + [Win]::Send(0x11, $true)
+    if ($sent -ne 8) { Fail "SendInput accepted only $sent of 8 events" }
+    WaitFor 'held Ctrl+Alt, N, N -> third Notepad' { (Focused) -eq $n[2].id }
+    if (-not (Select-String -Path $log -Pattern 'keys still held' -Quiet)) { Fail 'the second press did not continue the session' }
+    WaitFor 'the release to be reported' { Select-String -Path $log -Pattern 'hotkey modifiers released' -Quiet }
+    # Z order is now 2, 1, 0, but 1 was only passed through: a new press goes
+    # back to 0, where the session started.
+    $sent = [Win]::Chord(0x11, 0x12, 0x4E)
+    WaitFor 'next press -> back to the first Notepad' { (Focused) -eq $n[0].id }
+    Ok 'daemon: held modifiers keep digging past the timeout, release commits'
 
     Write-Host 'ALL PASSED'
 }

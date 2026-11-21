@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `order = "mru"` works like Alt+Tab: presses while the hotkey's modifiers
+  stay down form one session (each goes one window further back, however
+  slowly they come), and releasing the modifiers ends it. The windows passed
+  on the way do not count as used: the next press goes back to where the
+  session started. A swipe is one session while the fingers stay down.
+  `mru_session_ms` now only applies where key releases cannot be seen
+  (`window-jump next` from another shortcut tool, hotkeys without
+  modifiers). Extension protocol 3 adds the `AcceleratorReleased` signal; with
+  an older extension sessions go by time as before. (#6)
+
 ## [0.2.0] - 2026-11-21
 
 ### Added

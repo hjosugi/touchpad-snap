@@ -8,7 +8,7 @@
 - **GNOME のスワイプ**: `Ctrl` を押しながら 3 本指でスワイプ。登録した組み合わせ（指の本数＋修飾キー）だけを GNOME から横取りするので、修飾キーなしの 3 本指スワイプは今まで通りワークスペース切り替えに使えます。指を離さずに動かし続けると何枚も進み、戻すと戻ります。
 - **Windows のスワイプ**: Windows の設定でタッチパッドのジェスチャーにショートカットを割り当てます（後述）。
 - **切り替え先の表示**: 切り替えるたびに、ウィンドウのタイトルと「アプリ · 2 / 5」（GNOME ではアプリのアイコンも）を画面中央に一瞬表示します。スワイプで何枚も進むときに今どこにいるかが分かります。Windows では daemon 経由のときに表示されます。
-- **並び順**: `stable`（固定順で全ウィンドウを巡回）、`position`（画面の左から右）、`mru`（直近 2 枚の往復。素早く続けて押すと古い方へ進む。Alt+Tab と同じ感覚）。
+- **並び順**: `stable`（固定順で全ウィンドウを巡回）、`position`（画面の左から右）、`mru`（Alt+Tab と同じ動き。1 回押すと直近 2 枚を往復し、修飾キーを押したまま続けて押すと古い方へ進み、離したところで確定する）。
 - **他のツールからも使える**: `window-jump next` / `window-jump prev` は普通のコマンドなので、GNOME のカスタムショートカット、AutoHotkey、keyd、マウスのユーティリティなどにも割り当てられます。
 
 ## 仕組み
@@ -109,7 +109,7 @@ GNOME 拡張は `gnome-extension/window-jump@hjosugi.github.io` ディレクト�
 order = "stable"          # "stable" | "position" | "mru"
 workspace = "all"         # "all" | "current"
 include_minimized = true
-mru_session_ms = 1000     # order = "mru" のとき、これより短い間隔の連打は 1 回の巡回として続く
+mru_session_ms = 1000     # order = "mru" で他のツールから window-jump next を呼ぶとき、これより短い間隔の連打を 1 回の巡回とみなす
 
 [gesture]
 threshold = 120.0         # スワイプとみなすまでの指の移動量（GNOME のワークスペース 1 枚分が 400）

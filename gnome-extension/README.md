@@ -8,7 +8,7 @@ claims. Install it together with the `window-jump` binary.
 `lib.js` is the GNOME-free part (modifier mapping, the swipe claim state
 machine), unit-tested with Node: `npm test` at the repository root.
 
-## D-Bus protocol (version 2)
+## D-Bus protocol (version 3)
 
 | | |
 |---|---|
@@ -20,7 +20,7 @@ machine), unit-tested with Node: `npm test` at the repository root.
 
 - `List() → s json` — the window list, most recently used first:
   ```json
-  {"version": 1, "active_workspace": 0, "windows": [
+  {"version": 3, "active_workspace": 0, "windows": [
     {"id": 123, "title": "…", "app_id": "org.gnome.TextEditor.desktop",
      "app_name": "Text Editor", "wm_class": "org.gnome.TextEditor", "pid": 4242,
      "workspace": 0, "minimized": false, "focused": true, "mru": 0,
@@ -46,6 +46,10 @@ machine), unit-tested with Node: `npm test` at the repository root.
 ### Signals (sent to the registered caller only)
 
 - `AcceleratorActivated(s action)`
+- `AcceleratorReleased(s action)` — after an `AcceleratorActivated`, once
+  none of the modifiers held at that moment is down any more (polled every
+  25 ms while they are). Presses of hotkeys in between are one session, as
+  with Alt+Tab. *(Since version 3.)*
 - `Swipe(u phase, u fingers, u mods, d dx, d dy)` — `phase`: 0 begin,
   1 update, 2 end, 3 cancel; `dx`/`dy`: unaccelerated motion.
 
@@ -58,5 +62,6 @@ When the caller's connection closes, its grabs and claims are released.
 
 ### Property
 
-- `ProtocolVersion` (u) — 2. Version 1 had no `ShowHud`; the binary works
-  with either and skips the overlay on version 1.
+- `ProtocolVersion` (u) — 3. Version 1 had no `ShowHud`, version 2 no
+  `AcceleratorReleased`; the binary works with any of them, skipping the
+  overlay on version 1 and ending MRU sessions by time on versions 1 and 2.

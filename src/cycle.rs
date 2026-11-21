@@ -36,8 +36,8 @@ pub enum Order {
     /// Left to right on screen, then top to bottom.
     Position,
     /// Most recently used first. A single jump toggles between the two most
-    /// recent windows; jumps repeated within `mru_session_ms` keep digging
-    /// into older windows, like holding Alt while pressing Tab.
+    /// recent windows; repeats within one [`Session`] keep digging into older
+    /// windows, like pressing Tab again while holding Alt.
     Mru,
 }
 
@@ -77,6 +77,24 @@ impl Default for CycleOptions {
     }
 }
 
+/// Whether a jump continues the MRU session of the jump before it
+/// (`Order::Mru` only).
+///
+/// A session is what Alt+Tab calls holding Alt: every press while it lasts
+/// goes one window further back in the order frozen at its start, and only
+/// the window it ends on counts as used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Session {
+    /// Nobody can tell whether the keys are still down (`window-jump next`
+    /// run by another shortcut tool, a hotkey without modifiers): continue
+    /// if the last jump was less than `mru_session_ms` ago.
+    ByTime,
+    /// The keys or fingers of the last jump are still down: continue.
+    Held,
+    /// The first jump of a new press: start a new session.
+    Fresh,
+}
+
 /// State carried from one jump to the next.
 ///
 /// Kept in a small file by the CLI and in memory by the daemon (see
@@ -84,7 +102,8 @@ impl Default for CycleOptions {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CycleState {
     pub app_key: String,
-    /// MRU order frozen at the start of the session (`Order::Mru` only).
+    /// MRU order frozen at the start of the session (`Order::Mru` only),
+    /// beginning with the window the session started from.
     pub order: Vec<u64>,
     /// The window that was current when the last jump was made.
     #[serde(default)]
@@ -109,6 +128,7 @@ pub enum Pick {
 pub fn pick(
     snapshot: &Snapshot,
     step: Step,
+    session: Session,
     opts: &CycleOptions,
     state: &mut Option<CycleState>,
     now_ms: u64,
@@ -150,21 +170,38 @@ pub fn pick(
         }
         Order::Mru => {
             let live: Vec<u64> = candidates.iter().map(|w| w.id).collect();
-            let session = state.as_ref().filter(|s| {
-                s.app_key == key
-                    && s.last_target == focused.id
-                    && now_ms.saturating_sub(s.updated_ms) <= opts.mru_session_ms
+            // The last session, if nothing has been focused since it ended.
+            let previous = state
+                .as_ref()
+                .filter(|s| s.app_key == key && s.last_target == focused.id);
+            let running = previous.filter(|s| match session {
+                Session::Held => true,
+                Session::Fresh => false,
+                Session::ByTime => now_ms.saturating_sub(s.updated_ms) <= opts.mru_session_ms,
             });
-            // Continue the frozen order of a running session, dropping
-            // windows that have gone and appending ones that appeared.
-            let mut order: Vec<u64> = match session {
+            let mut order: Vec<u64> = match running {
+                // Continue the frozen order, dropping windows that have gone
+                // (new ones are appended below).
                 Some(s) => s
                     .order
                     .iter()
                     .copied()
                     .filter(|id| live.contains(id))
                     .collect(),
-                None => Vec::new(),
+                // A new session starts here. If the last one ended here too,
+                // the window it started from comes next, not the ones it
+                // passed on the way: as with Alt+Tab, those were never really
+                // used, even though they had focus for a moment.
+                None => {
+                    let mut o = vec![focused.id];
+                    if let Some(&origin) = previous.and_then(|s| s.order.first())
+                        && origin != focused.id
+                        && live.contains(&origin)
+                    {
+                        o.push(origin);
+                    }
+                    o
+                }
             };
             for id in &live {
                 if !order.contains(id) {
@@ -273,7 +310,14 @@ mod tests {
         let mut state = None;
         for t in 0..4 {
             // Far enough apart that the focus hint never kicks in.
-            let id = jump(pick(&s, Step::Next, &opts, &mut state, t * 10_000));
+            let id = jump(pick(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                t * 10_000,
+            ));
             seen.push(id);
             for w in &mut s.windows {
                 w.focused = w.id == id;
@@ -286,30 +330,45 @@ mod tests {
     fn stable_prev_goes_backwards() {
         let opts = CycleOptions::default();
         let s = snap(vec![win(1, "a", 1), win(2, "a", 0), win(3, "a", 2)], 2);
-        assert_eq!(jump(pick(&s, Step::Prev, &opts, &mut None, 0)), 1);
+        assert_eq!(
+            jump(pick(&s, Step::Prev, Session::ByTime, &opts, &mut None, 0)),
+            1
+        );
         let s = snap(vec![win(1, "a", 1), win(2, "a", 0), win(3, "a", 2)], 1);
-        assert_eq!(jump(pick(&s, Step::Prev, &opts, &mut None, 0)), 3);
+        assert_eq!(
+            jump(pick(&s, Step::Prev, Session::ByTime, &opts, &mut None, 0)),
+            3
+        );
     }
 
     #[test]
     fn other_apps_are_ignored() {
         let opts = CycleOptions::default();
         let s = snap(vec![win(1, "a", 0), win(2, "b", 1)], 1);
-        assert_eq!(pick(&s, Step::Next, &opts, &mut None, 0), Pick::Alone);
+        assert_eq!(
+            pick(&s, Step::Next, Session::ByTime, &opts, &mut None, 0),
+            Pick::Alone
+        );
     }
 
     #[test]
     fn no_windows_means_no_focus() {
         let opts = CycleOptions::default();
         let s = Snapshot::default();
-        assert_eq!(pick(&s, Step::Next, &opts, &mut None, 0), Pick::NoFocus);
+        assert_eq!(
+            pick(&s, Step::Next, Session::ByTime, &opts, &mut None, 0),
+            Pick::NoFocus
+        );
     }
 
     #[test]
     fn falls_back_to_most_recent_when_nothing_focused() {
         let opts = CycleOptions::default();
         let s = snap(vec![win(1, "a", 1), win(2, "a", 0)], 0);
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut None, 0)), 1);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::ByTime, &opts, &mut None, 0)),
+            1
+        );
     }
 
     #[test]
@@ -328,7 +387,10 @@ mod tests {
         let mut d = win(4, "a", 3);
         d.workspace = -1; // sticky
         let s = snap(vec![a, b, c, d], 1);
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut None, 0)), 4);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::ByTime, &opts, &mut None, 0)),
+            4
+        );
     }
 
     #[test]
@@ -344,8 +406,14 @@ mod tests {
         let mut r = win(2, "a", 2);
         r.x = 900;
         let s = snap(vec![l, m, r], 1);
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut None, 0)), 2);
-        assert_eq!(jump(pick(&s, Step::Prev, &opts, &mut None, 0)), 3);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::ByTime, &opts, &mut None, 0)),
+            2
+        );
+        assert_eq!(
+            jump(pick(&s, Step::Prev, Session::ByTime, &opts, &mut None, 0)),
+            3
+        );
     }
 
     #[test]
@@ -356,10 +424,23 @@ mod tests {
         };
         let mut state = None;
         let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut state, 0)), 2);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::ByTime, &opts, &mut state, 0)),
+            2
+        );
         // Much later, focus is on 2 and the MRU order has changed.
         let s = snap(vec![win(1, "a", 1), win(2, "a", 0), win(3, "a", 2)], 2);
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut state, 60_000)), 1);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                60_000
+            )),
+            1
+        );
     }
 
     #[test]
@@ -370,12 +451,189 @@ mod tests {
         };
         let mut state = None;
         let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut state, 0)), 2);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::ByTime, &opts, &mut state, 0)),
+            2
+        );
         // The backend already reports 2 as focused and most recent, but the
         // session keeps the order frozen, so the next jump goes to 3.
         let s = snap(vec![win(1, "a", 1), win(2, "a", 0), win(3, "a", 2)], 2);
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut state, 500)), 3);
-        assert_eq!(jump(pick(&s, Step::Prev, &opts, &mut state, 900)), 2);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                500
+            )),
+            3
+        );
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Prev,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                900
+            )),
+            2
+        );
+    }
+
+    /// The snapshot after `focused` was activated: it is focused and most
+    /// recent, the others keep their relative MRU order.
+    fn after(s: &Snapshot, focused: u64) -> Snapshot {
+        let mut s = s.clone();
+        let old = s.get(focused).map(|w| w.mru).unwrap_or(0);
+        for w in &mut s.windows {
+            w.focused = w.id == focused;
+            if w.id == focused {
+                w.mru = 0;
+            } else if w.mru < old {
+                w.mru += 1;
+            }
+        }
+        s
+    }
+
+    fn mru_opts() -> CycleOptions {
+        CycleOptions {
+            order: Order::Mru,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn held_session_outlasts_the_timeout() {
+        let opts = mru_opts();
+        let mut state = None;
+        let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::Fresh, &opts, &mut state, 0)),
+            2
+        );
+        // Five seconds later, keys still down: one further back, not a toggle.
+        let s = after(&s, 2);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::Held,
+                &opts,
+                &mut state,
+                5_000
+            )),
+            3
+        );
+    }
+
+    #[test]
+    fn fresh_press_toggles_even_right_after_a_release() {
+        let opts = mru_opts();
+        let mut state = None;
+        let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::Fresh, &opts, &mut state, 0)),
+            2
+        );
+        let s = after(&s, 2);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::Fresh, &opts, &mut state, 100)),
+            1
+        );
+    }
+
+    #[test]
+    fn windows_passed_in_a_session_do_not_count_as_used() {
+        let opts = mru_opts();
+        let mut state = None;
+        let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
+        // Hold, press twice: 1 → 2 → 3, then release.
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::Fresh, &opts, &mut state, 0)),
+            2
+        );
+        let s = after(&s, 2);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::Held, &opts, &mut state, 300)),
+            3
+        );
+        // The shell now has 3, 2, 1 as its MRU order, but 2 was only passed
+        // through: the next press goes back to 1.
+        let s = after(&s, 3);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::Fresh,
+                &opts,
+                &mut state,
+                9_000
+            )),
+            1
+        );
+        // The same holds for a timed-out session of `window-jump next`.
+        let mut state = None;
+        let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::ByTime, &opts, &mut state, 0)),
+            2
+        );
+        let s = after(&s, 2);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                500
+            )),
+            3
+        );
+        let s = after(&s, 3);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                9_000
+            )),
+            1
+        );
+    }
+
+    #[test]
+    fn focusing_a_window_by_hand_ends_what_the_session_remembers() {
+        let opts = mru_opts();
+        let mut state = None;
+        let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::Fresh, &opts, &mut state, 0)),
+            2
+        );
+        let s = after(&s, 2);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::Held, &opts, &mut state, 300)),
+            3
+        );
+        // After the session, the user clicks 2: plain MRU order again.
+        let s = after(&after(&s, 3), 2);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::Fresh,
+                &opts,
+                &mut state,
+                9_000
+            )),
+            3
+        );
     }
 
     #[test]
@@ -383,11 +641,34 @@ mod tests {
         let opts = CycleOptions::default();
         let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
         let mut state = None;
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut state, 0)), 2);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::ByTime, &opts, &mut state, 0)),
+            2
+        );
         // Same snapshot (focus change not visible yet), 100 ms later.
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut state, 100)), 3);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                100
+            )),
+            3
+        );
         // Long after: the snapshot is trusted again.
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut state, 10_000)), 2);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                10_000
+            )),
+            2
+        );
     }
 
     #[test]
@@ -403,7 +684,10 @@ mod tests {
             ],
             1,
         );
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut state, 0)), 2);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::ByTime, &opts, &mut state, 0)),
+            2
+        );
         // 100 ms later the user has clicked a window of app b: jump within b,
         // not from where the hint says app a is.
         let s = snap(
@@ -415,6 +699,16 @@ mod tests {
             ],
             3,
         );
-        assert_eq!(jump(pick(&s, Step::Next, &opts, &mut state, 100)), 4);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                100
+            )),
+            4
+        );
     }
 }

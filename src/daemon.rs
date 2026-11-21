@@ -6,18 +6,25 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::config::{self, Claim, Config};
-use crate::cycle::{self, Pick, Step};
+use crate::cycle::{self, Pick, Session, Step};
 use crate::gesture::{Phase, SwipeRecognizer};
 use crate::platform::{self, Backend, Event};
 use crate::session;
 
 /// Jumps once: list, pick, activate, remember.
-pub fn jump(backend: &dyn Backend, cfg: &Config, step: Step, state_path: &Path) -> Result<Pick> {
+pub fn jump(
+    backend: &dyn Backend,
+    cfg: &Config,
+    step: Step,
+    session: Session,
+    state_path: &Path,
+) -> Result<Pick> {
     let snapshot = backend.snapshot()?;
     let mut state = session::load(state_path);
     let pick = cycle::pick(
         &snapshot,
         step,
+        session,
         &cfg.cycle_options(),
         &mut state,
         session::now_ms(),
@@ -92,6 +99,10 @@ pub struct Handler {
     cfg: Config,
     recognizer: SwipeRecognizer,
     claim: Option<Claim>,
+    /// Jumps made by the swipe in progress.
+    swipe_jumps: usize,
+    /// The modifiers of the last (tracked) hotkey are still down.
+    held: bool,
     state_path: PathBuf,
     watch: Option<ConfigWatch>,
     verbose: bool,
@@ -104,6 +115,8 @@ impl Handler {
             cfg,
             recognizer,
             claim: None,
+            swipe_jumps: 0,
+            held: false,
             state_path,
             watch: None,
             verbose,
@@ -133,14 +146,34 @@ impl Handler {
                 self.cfg = cfg.clone();
                 return Some(cfg);
             }
-            Event::Hotkey(i) => {
-                if let Some(binding) = self.cfg.hotkeys.get(i) {
+            Event::Hotkey { index, tracked } => {
+                let session = match (tracked, self.held) {
+                    (false, _) => Session::ByTime,
+                    (true, true) => Session::Held,
+                    (true, false) => Session::Fresh,
+                };
+                self.held = tracked;
+                if let Some(binding) = self.cfg.hotkeys.get(index) {
                     let step = binding.action;
                     if self.verbose {
-                        eprintln!("window-jump: hotkey {} → {step:?}", binding.keys);
+                        eprintln!(
+                            "window-jump: hotkey {} → {step:?} ({})",
+                            binding.keys,
+                            match session {
+                                Session::ByTime => "session by time",
+                                Session::Held => "keys still held",
+                                Session::Fresh => "new press",
+                            }
+                        );
                     }
-                    self.run(backend, step);
+                    self.run(backend, step, session);
                 }
+            }
+            Event::Released => {
+                if self.held && self.verbose {
+                    eprintln!("window-jump: hotkey modifiers released");
+                }
+                self.held = false;
             }
             Event::Swipe {
                 phase,
@@ -151,6 +184,7 @@ impl Handler {
                 if phase == Phase::Begin {
                     self.recognizer.begin();
                     self.claim = Some(claim);
+                    self.swipe_jumps = 0;
                 }
                 let claim = self.claim?;
                 if matches!(phase, Phase::Begin | Phase::Update) {
@@ -162,7 +196,15 @@ impl Handler {
                                     claim.fingers
                                 );
                             }
-                            self.run(backend, step);
+                            // One swipe is one session: keep going and it
+                            // digs further back; lift the fingers to commit.
+                            let session = if self.swipe_jumps == 0 {
+                                Session::Fresh
+                            } else {
+                                Session::Held
+                            };
+                            self.swipe_jumps += 1;
+                            self.run(backend, step, session);
                         }
                     }
                 }
@@ -175,8 +217,8 @@ impl Handler {
         None
     }
 
-    fn run(&self, backend: &dyn Backend, step: Step) {
-        match jump(backend, &self.cfg, step, &self.state_path) {
+    fn run(&self, backend: &dyn Backend, step: Step, session: Session) {
+        match jump(backend, &self.cfg, step, session, &self.state_path) {
             Ok(pick) => {
                 if self.verbose {
                     eprintln!("window-jump: {pick:?}");
@@ -204,7 +246,8 @@ mod tests {
     use crate::hotkey::Mods;
     use crate::model::{Snapshot, Window};
 
-    /// Three windows of one app; activating one moves focus to it.
+    /// Three windows of one app; activating one moves focus to it and makes
+    /// it the most recently used.
     struct Fake {
         snap: RefCell<Snapshot>,
         activated: RefCell<Vec<u64>>,
@@ -238,8 +281,15 @@ mod tests {
             Ok(self.snap.borrow().clone())
         }
         fn activate(&self, id: u64) -> Result<()> {
-            for w in &mut self.snap.borrow_mut().windows {
+            let mut snap = self.snap.borrow_mut();
+            let old = snap.get(id).map(|w| w.mru).unwrap_or(0);
+            for w in &mut snap.windows {
                 w.focused = w.id == id;
+                if w.id == id {
+                    w.mru = 0;
+                } else if w.mru < old {
+                    w.mru += 1;
+                }
             }
             self.activated.borrow_mut().push(id);
             Ok(())
@@ -250,6 +300,13 @@ mod tests {
         }
         fn describe(&self) -> String {
             "fake".into()
+        }
+    }
+
+    fn hotkey(index: usize) -> Event {
+        Event::Hotkey {
+            index,
+            tracked: true,
         }
     }
 
@@ -272,11 +329,11 @@ mod tests {
         let mut h = Handler::new(Config::default(), dir.join("state.json"), false);
 
         // Default hotkey 0 is "next", and the overlay names the target.
-        h.handle(&fake, Event::Hotkey(0));
+        h.handle(&fake, hotkey(0));
         assert_eq!(*fake.activated.borrow(), vec![2]);
         assert_eq!(*fake.huds.borrow(), vec![(2, 2, 3)]);
         // Unknown index: ignored.
-        h.handle(&fake, Event::Hotkey(99));
+        h.handle(&fake, hotkey(99));
         assert_eq!(fake.activated.borrow().len(), 1);
 
         // Ctrl + 3 fingers left = next; keep going for a second step.
@@ -309,12 +366,75 @@ mod tests {
     }
 
     #[test]
+    fn held_hotkeys_and_swipes_are_sessions() {
+        let fake = Fake::new();
+        let dir = std::env::temp_dir().join(format!("window-jump-held-{}", std::process::id()));
+        let cfg = Config {
+            order: crate::cycle::Order::Mru,
+            ..Config::default()
+        };
+        let mut h = Handler::new(cfg, dir.join("state.json"), false);
+
+        // Hold the modifiers and press twice: 1 → 2 → 3. Release, press
+        // again: back to 1, where the session started.
+        h.handle(&fake, hotkey(0));
+        h.handle(&fake, hotkey(0));
+        h.handle(&fake, Event::Released);
+        h.handle(&fake, hotkey(0));
+        assert_eq!(*fake.activated.borrow(), vec![2, 3, 1]);
+        // A release on its own changes nothing.
+        h.handle(&fake, Event::Released);
+        h.handle(&fake, Event::Released);
+
+        // One swipe that keeps going is one session: 1 → 3 → 2. The next
+        // swipe starts a new one, which goes back to 1, where the last one
+        // started.
+        h.handle(&fake, swipe(Phase::Begin, 0.0));
+        h.handle(&fake, swipe(Phase::Update, -130.0));
+        h.handle(&fake, swipe(Phase::Update, -230.0));
+        h.handle(&fake, swipe(Phase::End, 0.0));
+        assert_eq!(fake.activated.borrow()[3..], [3, 2]);
+        h.handle(&fake, swipe(Phase::Begin, 0.0));
+        h.handle(&fake, swipe(Phase::Update, -130.0));
+        h.handle(&fake, swipe(Phase::End, 0.0));
+        assert_eq!(fake.activated.borrow()[5..], [1]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn untracked_hotkeys_go_by_time() {
+        let fake = Fake::new();
+        let dir = std::env::temp_dir().join(format!("window-jump-bytime-{}", std::process::id()));
+        let cfg = Config {
+            order: crate::cycle::Order::Mru,
+            ..Config::default()
+        };
+        let mut h = Handler::new(cfg, dir.join("state.json"), false);
+        let untracked = Event::Hotkey {
+            index: 0,
+            tracked: false,
+        };
+        // Two presses well within mru_session_ms: one session, 1 → 2 → 3.
+        h.handle(&fake, untracked.clone());
+        h.handle(&fake, untracked);
+        assert_eq!(*fake.activated.borrow(), vec![2, 3]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn overlay_can_be_turned_off() {
         let fake = Fake::new();
         let dir = std::env::temp_dir().join(format!("window-jump-hud-{}", std::process::id()));
         let mut cfg = Config::default();
         cfg.hud.enabled = false;
-        jump(&fake, &cfg, Step::Prev, &dir.join("state.json")).unwrap();
+        jump(
+            &fake,
+            &cfg,
+            Step::Prev,
+            Session::ByTime,
+            &dir.join("state.json"),
+        )
+        .unwrap();
         assert_eq!(*fake.activated.borrow(), vec![3]);
         assert!(fake.huds.borrow().is_empty());
         let _ = std::fs::remove_dir_all(dir);
@@ -343,7 +463,7 @@ mod tests {
         assert_eq!(new.hotkeys.len(), 1);
         assert_eq!(h.config().hotkeys[0].keys, "Ctrl+Alt+J");
         // ...and used: hotkey 0 is now "prev" (1 → 3, wrapping backwards).
-        h.handle(&fake, Event::Hotkey(0));
+        h.handle(&fake, hotkey(0));
         assert_eq!(*fake.activated.borrow(), vec![3]);
 
         // A broken file keeps the previous config, and is not re-reported.
