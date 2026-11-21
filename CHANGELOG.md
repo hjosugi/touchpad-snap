@@ -14,6 +14,8 @@
   `[hud] enabled` / `duration_ms` in the config. Extension protocol 2 adds
   `ShowHud`; the binary still works with a protocol 1 extension, without the
   overlay. (#5)
+- Windows: the same overlay from the daemon, as a layered, click-through,
+  topmost window that never takes focus. (#5)
 
 ## [0.1.0] - 2026-11-21
 
