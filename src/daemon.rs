@@ -386,6 +386,52 @@ mod tests {
     }
 
     #[test]
+    fn alt_swipes_up_and_down_jump() {
+        let fake = Fake::new();
+        let dir = std::env::temp_dir().join(format!("window-jump-alt-{}", std::process::id()));
+        let mut h = Handler::new(Config::default(), dir.join("state.json"), false);
+        let alt = |phase, dy| Event::Swipe {
+            phase,
+            claim: Claim {
+                fingers: 3,
+                mods: Mods::ALT,
+            },
+            dx: 0.0,
+            dy,
+        };
+
+        // Up (negative dy, as libinput reports it) = next: 1 → 2.
+        h.handle(&fake, alt(Phase::Begin, 0.0));
+        h.handle(&fake, alt(Phase::Update, -130.0));
+        h.handle(&fake, alt(Phase::End, 0.0));
+        assert_eq!(*fake.activated.borrow(), vec![2]);
+
+        // Down = prev: back to 1, and on to 3 while the fingers stay down.
+        h.handle(&fake, alt(Phase::Begin, 0.0));
+        h.handle(&fake, alt(Phase::Update, 130.0));
+        h.handle(&fake, alt(Phase::Update, 230.0));
+        h.handle(&fake, alt(Phase::End, 0.0));
+        assert_eq!(*fake.activated.borrow(), vec![2, 1, 3]);
+
+        // Alt + left/right is claimed with it but bound to nothing.
+        h.handle(&fake, alt(Phase::Begin, 0.0));
+        h.handle(
+            &fake,
+            Event::Swipe {
+                phase: Phase::Update,
+                claim: Claim {
+                    fingers: 3,
+                    mods: Mods::ALT,
+                },
+                dx: -300.0,
+                dy: 0.0,
+            },
+        );
+        assert_eq!(fake.activated.borrow().len(), 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn held_hotkeys_and_swipes_are_sessions() {
         let fake = Fake::new();
         let dir = std::env::temp_dir().join(format!("window-jump-held-{}", std::process::id()));

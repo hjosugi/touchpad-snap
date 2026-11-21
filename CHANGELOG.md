@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Default swipes: Alt + three fingers up / down jump to the next / previous
+  window of the app, next to Ctrl + three fingers left / right. Plain three
+  fingers up still open GNOME's overview. A config file with its own
+  `[[swipe]]` tables is not affected. (#30)
+
 ## [0.3.0] - 2026-11-22
 
 ### Added
