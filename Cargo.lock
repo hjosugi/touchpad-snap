@@ -907,6 +907,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
+name = "touchpad-snap"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs",
+ "input",
+ "serde",
+ "serde_json",
+ "toml",
+ "windows-sys 0.61.2",
+ "zbus",
+]
+
+[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1025,21 +1040,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b1f9c3798725016c6ee5f2f57869ec0831e8bbc0ab0310a86e787e97f41389e"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "touchpad-snap"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "clap",
- "dirs",
- "input",
- "serde",
- "serde_json",
- "toml",
- "windows-sys 0.61.2",
- "zbus",
 ]
 
 [[package]]
