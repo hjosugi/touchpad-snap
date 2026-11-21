@@ -14,10 +14,9 @@ use crate::legacy;
 
 /// The command that starts the daemon, quoted for the platform.
 fn daemon_command() -> Result<String> {
-    let exe = std::env::current_exe().context("locating the touchpad-snap executable")?;
-
     #[cfg(windows)]
     {
+        let exe = std::env::current_exe().context("locating the touchpad-snap executable")?;
         let gui = exe.with_file_name("touchpad-snapw.exe");
         if gui.exists() {
             return Ok(format!("\"{}\"", gui.display()));
@@ -26,14 +25,26 @@ fn daemon_command() -> Result<String> {
     }
     #[cfg(not(windows))]
     {
-        // A Nix store path changes with every update and dies with garbage
-        // collection; the profile puts the binary on PATH, so use the name.
-        let exe_str = exe.display().to_string();
-        if exe_str.starts_with("/nix/store/") {
-            return Ok("touchpad-snap daemon".into());
+        let exe = executable_path()?;
+        if exe == "touchpad-snap" {
+            Ok("touchpad-snap daemon".into())
+        } else {
+            Ok(format!("\"{}\" daemon", exe.replace('"', "\\\"")))
         }
-        Ok(format!("\"{}\" daemon", exe_str.replace('"', "\\\"")))
     }
+}
+
+/// The executable to run the daemon, without arguments or quoting.
+#[cfg(not(windows))]
+pub(crate) fn executable_path() -> Result<String> {
+    let exe = std::env::current_exe().context("locating the touchpad-snap executable")?;
+    // A Nix store path changes with every update and dies with garbage
+    // collection; the profile puts the binary on PATH, so use the name.
+    let exe_str = exe.display().to_string();
+    if exe_str.starts_with("/nix/store/") {
+        return Ok("touchpad-snap".into());
+    }
+    Ok(exe_str)
 }
 
 #[cfg(not(windows))]
