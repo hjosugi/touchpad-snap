@@ -152,6 +152,9 @@ try {
         -RedirectStandardError $log -RedirectStandardOutput (Join-Path $work 'daemon.out') -PassThru
     WaitFor 'daemon registration' { (Test-Path $log) -and (Select-String -Path $log -Pattern 'registered 1 hotkey' -Quiet) }
     Ok 'daemon registered Ctrl+Alt+N'
+    Start-Sleep -Seconds 3
+    $daemon.Refresh()
+    Write-Host ("DIAGNOSTIC after 3 s, daemon exited: {0} code: {1}" -f $daemon.HasExited, $(if ($daemon.HasExited) { '0x{0:X8}' -f $daemon.ExitCode } else { '-' }))
 
     & $Bin activate $n[0].id
     WaitFor 'first Notepad focused' { (Focused) -eq $n[0].id }
@@ -163,10 +166,8 @@ try {
     $sent = [Win]::Chord(0x11, 0x12, 0x4E)  # Ctrl, Alt, N
     Write-Host "SendInput accepted $sent of 6 events for Ctrl+Alt+N"
     Start-Sleep -Seconds 2
-    $tid = (Get-Process -Id $daemon.Id).Threads | Sort-Object StartTime | Select-Object -First 1 -ExpandProperty Id
-    Write-Host "DIAGNOSTIC posting WM_HOTKEY to daemon thread $tid : $([Win]::PostThreadMessage([uint32]$tid, 0x0312, [IntPtr]1, [IntPtr]::Zero))"
-    Start-Sleep -Seconds 2
-    Write-Host "DIAGNOSTIC daemon log:"; Get-Content $log
+    $daemon.Refresh()
+    Write-Host ("DIAGNOSTIC daemon exited: {0} code: {1}" -f $daemon.HasExited, $(if ($daemon.HasExited) { '0x{0:X8}' -f $daemon.ExitCode } else { '-' }))
     WaitFor 'Ctrl+Alt+N -> second Notepad' { (Focused) -eq $n[1].id }
     WaitFor 'overlay shown' { [Win]::HudVisible() } 5
     if (Snapshot | Where-Object { $_.wm_class -eq 'window-jump-hud' }) { Fail 'the overlay shows up in the window list' }
