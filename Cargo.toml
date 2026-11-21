@@ -1,0 +1,30 @@
+[package]
+name = "window-jump"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Switch between windows of the same app with hotkeys and touchpad swipes (GNOME, Windows)"
+license = "MIT"
+repository = "https://github.com/hjosugi/window-jump"
+readme = "README.md"
+keywords = ["window-switcher", "gnome", "wayland", "windows", "gestures"]
+categories = ["command-line-utilities", "gui"]
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.9", features = ["derive"] }
+dirs = "7.0.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.2.2"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Graphics_Dwm", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Security"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

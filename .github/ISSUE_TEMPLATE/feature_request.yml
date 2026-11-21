@@ -1,0 +1,18 @@
+name: Feature request
+description: A new action, gesture, platform or option
+labels: [enhancement]
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: What would you like to do?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why (what is awkward today)?
+  - type: input
+    id: platform
+    attributes:
+      label: Platform(s)
