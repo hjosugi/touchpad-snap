@@ -15,7 +15,7 @@ use crate::{autostart, daemon, platform, session};
 #[command(
     name = "window-jump",
     version,
-    about = "Switch between windows of the same app with hotkeys and touchpad swipes (GNOME, Windows)",
+    about = "Switch between windows of the same app with hotkeys and touchpad swipes (GNOME, Sway, Hyprland, niri, Windows)",
     after_help = "Bind `window-jump next` / `window-jump prev` to any shortcut, or run `window-jump daemon` \
                   for the hotkeys and swipes in the config file."
 )]

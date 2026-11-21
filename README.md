@@ -2,9 +2,9 @@
 
 Switch between the windows **of the app you are in**, with a hotkey or a
 modifier + touchpad swipe — like `Cmd+`` ` on macOS or the "cycle windows of
-the current app" action in BetterTouchTool, for **GNOME (Wayland and X11)** and
-**Windows**. Written in Rust; a small GNOME Shell extension bridges to the
-compositor where Wayland allows nothing else.
+the current app" action in BetterTouchTool, for **GNOME (Wayland and X11)**,
+**Sway, Hyprland and niri**, and **Windows**. Written in Rust; a small GNOME
+Shell extension bridges to the compositor where Wayland allows nothing else.
 
 [日本語の README はこちら](README.ja.md)
 
@@ -154,6 +154,46 @@ directory: copy it to `~/.local/share/gnome-shell/extensions/`.
 Bind the commands to any shortcut tool instead. GNOME: **Settings → Keyboard →
 View and Customise Shortcuts → Custom Shortcuts**, command `window-jump next`.
 (The extension is still needed on GNOME, for listing and focusing windows.)
+
+## Sway, Hyprland, niri
+
+Sway, Hyprland and niri expose their window lists and focus over their own
+IPC, so window-jump works there without an extension and without the daemon.
+It detects the compositor from `SWAYSOCK`, `HYPRLAND_INSTANCE_SIGNATURE` or
+`NIRI_SOCKET`, falling back to `XDG_CURRENT_DESKTOP` to explain a missing
+socket. `window-jump list`, `next`, `prev`, `activate` and `doctor` work as
+usual.
+
+Global hotkeys have no portable API on these compositors, so bind the command
+in the compositor's own config instead of running `window-jump daemon`.
+
+Sway (`~/.config/sway/config`):
+
+```
+bindsym $mod+n exec window-jump next
+bindsym $mod+p exec window-jump prev
+```
+
+Hyprland (`~/.config/hypr/hyprland.conf`):
+
+```
+bind = SUPER, N, exec, window-jump next
+bind = SUPER, P, exec, window-jump prev
+```
+
+niri (`~/.config/niri/config.kdl`):
+
+```
+binds {
+    MOD+N { spawn "window-jump" "next"; }
+    MOD+P { spawn "window-jump" "prev"; }
+}
+```
+
+`window-jump daemon` is not needed on these compositors; it only prints a
+reminder to bind the commands in the compositor config. Touchpad swipes and
+the overlay are GNOME/Windows features for now. `window-jump doctor` names the
+compositor it detected.
 
 ## Configuration
 

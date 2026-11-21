@@ -24,6 +24,8 @@ mod windows_hud;
 mod windows_touchpad;
 #[cfg(any(windows, test))]
 mod windows_tray;
+#[cfg(target_os = "linux")]
+pub mod wlroots;
 
 pub trait Backend {
     fn snapshot(&self) -> Result<Snapshot>;
@@ -62,11 +64,44 @@ pub enum Event {
     },
 }
 
+/// Whether `XDG_CURRENT_DESKTOP` names GNOME. GNOME wins even when a
+/// compositor's socket variable leaked in from a nested session.
+#[cfg(target_os = "linux")]
+fn is_gnome_desktop() -> bool {
+    desktop_is_gnome(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref())
+}
+
+#[cfg(target_os = "linux")]
+fn desktop_is_gnome(desktop: Option<&str>) -> bool {
+    desktop.is_some_and(|desktop| {
+        desktop
+            .split([':', ';'])
+            .any(|part| part.trim().eq_ignore_ascii_case("GNOME"))
+    })
+}
+
 /// Connects to the backend for the running desktop.
 pub fn connect() -> Result<Box<dyn Backend>> {
     #[cfg(target_os = "linux")]
     {
-        Ok(Box::new(gnome::Gnome::connect()?))
+        if is_gnome_desktop() {
+            return Ok(Box::new(gnome::Gnome::connect()?));
+        }
+        match wlroots::Wlroots::connect() {
+            Ok(backend) => Ok(Box::new(backend)),
+            Err(wlroots_error) => {
+                // Only fall back to GNOME when nothing pointed at a wlroots
+                // compositor; a stale SWAYSOCK or NIRI_SOCKET should say so.
+                if wlroots::detect_from_env().is_ok() || wlroots::desktop_hint_from_env().is_some()
+                {
+                    return Err(wlroots_error);
+                }
+                match gnome::Gnome::connect() {
+                    Ok(backend) => Ok(Box::new(backend)),
+                    Err(_) => Err(wlroots_error),
+                }
+            }
+        }
     }
     #[cfg(windows)]
     {
@@ -74,7 +109,9 @@ pub fn connect() -> Result<Box<dyn Backend>> {
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        anyhow::bail!("window-jump supports GNOME (Linux) and Windows only, for now")
+        anyhow::bail!(
+            "window-jump supports GNOME (Linux), Sway/Hyprland/niri (Linux) and Windows only, for now"
+        )
     }
 }
 
@@ -95,6 +132,12 @@ pub fn run_daemon(
     #[cfg(target_os = "linux")]
     {
         let _ = config_path;
+        if is_gnome_desktop() {
+            return gnome::run_daemon(cfg, hotkeys, handle);
+        }
+        if wlroots::detect_from_env().is_ok() || wlroots::desktop_hint_from_env().is_some() {
+            return wlroots::run_daemon();
+        }
         gnome::run_daemon(cfg, hotkeys, handle)
     }
     #[cfg(windows)]
@@ -104,6 +147,23 @@ pub fn run_daemon(
     #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = (cfg, hotkeys, config_path, handle);
-        anyhow::bail!("window-jump supports GNOME (Linux) and Windows only, for now")
+        anyhow::bail!(
+            "window-jump supports GNOME (Linux), Sway/Hyprland/niri (Linux) and Windows only, for now"
+        )
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gnome_is_recognised_among_other_desktop_components() {
+        assert!(desktop_is_gnome(Some("ubuntu:GNOME")));
+        assert!(desktop_is_gnome(Some("GNOME")));
+        assert!(desktop_is_gnome(Some("GNOME:sway")));
+        assert!(!desktop_is_gnome(Some("sway")));
+        assert!(!desktop_is_gnome(Some("Hyprland")));
+        assert!(!desktop_is_gnome(None));
     }
 }

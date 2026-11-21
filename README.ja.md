@@ -1,6 +1,6 @@
 # window-jump
 
-**いま使っているアプリの別ウィンドウ**へ、ショートカットキーか「修飾キー＋タッチパッドのスワイプ」で切り替えるツールです。macOS の `Cmd+`` ` や BetterTouchTool の「同じアプリのウィンドウを巡回」に当たる操作を、**GNOME（Wayland / X11）** と **Windows** で使えます。本体は Rust 製のネイティブバイナリで、Wayland で他に手段がない部分だけを小さな GNOME Shell 拡張が受け持ちます。
+**いま使っているアプリの別ウィンドウ**へ、ショートカットキーか「修飾キー＋タッチパッドのスワイプ」で切り替えるツールです。macOS の `Cmd+`` ` や BetterTouchTool の「同じアプリのウィンドウを巡回」に当たる操作を、**GNOME（Wayland / X11）**、**Sway・Hyprland・niri**、**Windows** で使えます。本体は Rust 製のネイティブバイナリで、Wayland で他に手段がない部分だけを小さな GNOME Shell 拡張が受け持ちます。
 
 [English README](README.md)
 
@@ -106,6 +106,37 @@ GNOME 拡張は `gnome-extension/window-jump@hjosugi.github.io` ディレクト�
 ### daemon を使わない場合
 
 コマンドを好きなショートカットツールに割り当てます。GNOME なら **設定 → キーボード → ショートカットの表示とカスタマイズ → カスタムショートカット** でコマンドに `window-jump next` を指定します（ウィンドウの列挙とフォーカスのため、GNOME では拡張は引き続き必要です）。
+
+## Sway・Hyprland・niri
+
+Sway・Hyprland・niri はウィンドウ一覧とフォーカスを独自の IPC で公開しているため、拡張も daemon もなしで動きます。`SWAYSOCK`・`HYPRLAND_INSTANCE_SIGNATURE`・`NIRI_SOCKET` からコンポジタを判別し、ソケットが無い場合は `XDG_CURRENT_DESKTOP` から分かりやすく案内します。`window-jump list`・`next`・`prev`・`activate`・`doctor` はそのまま使えます。
+
+これらのコンポジタにはグローバルホットキーの共通 API がないため、`window-jump daemon` の代わりにコンポジタ側の設定でコマンドを割り当てます。
+
+Sway（`~/.config/sway/config`）:
+
+```
+bindsym $mod+n exec window-jump next
+bindsym $mod+p exec window-jump prev
+```
+
+Hyprland（`~/.config/hypr/hyprland.conf`）:
+
+```
+bind = SUPER, N, exec, window-jump next
+bind = SUPER, P, exec, window-jump prev
+```
+
+niri（`~/.config/niri/config.kdl`）:
+
+```
+binds {
+    MOD+N { spawn "window-jump" "next"; }
+    MOD+P { spawn "window-jump" "prev"; }
+}
+```
+
+`window-jump daemon` は不要です（実行するとコンポジタ設定への割り当てを促すメッセージを出すだけです）。タッチパッドのスワイプと切り替え先の表示は今のところ GNOME / Windows 向けです。`window-jump doctor` が判別したコンポジタ名を表示します。
 
 ## 設定
 
