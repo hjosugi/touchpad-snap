@@ -15,9 +15,9 @@ ok "extension loaded and owns org.hjosugi.WindowJump"
 
 version=$(gdbus call --session --dest org.hjosugi.WindowJump --object-path /org/hjosugi/WindowJump \
     --method org.freedesktop.DBus.Properties.Get org.hjosugi.WindowJump1 ProtocolVersion)
-[[ $version == "(<uint32 2>,)" ]] || fail "unexpected protocol version: $version"
+[[ $version == "(<uint32 3>,)" ]] || fail "unexpected protocol version: $version"
 [[ $(list_json | jq '.windows | length') == 0 ]] || fail "expected no windows initially"
-ok "protocol 2, empty list at startup"
+ok "protocol 3, empty list at startup"
 
 e2e_open_clients
 # A window gets its size a moment after it is mapped.
@@ -101,7 +101,8 @@ press_keys Super_L Alt_L n || fail "injecting Super+Alt+N failed"
 wait_for "Super+Alt+N → second editor" 15 focus_is "${editors[1]}"
 press_keys Super_L Alt_L p || fail "injecting Super+Alt+P failed"
 wait_for "Super+Alt+P → first editor" 15 focus_is "${editors[0]}"
-grep -q "hotkey Super+Alt+N → Next" "$daemon_log" || fail "daemon did not log the hotkey"
+grep -q "hotkey Super+Alt+N → Next (new press)" "$daemon_log" || fail "daemon did not log the hotkey"
+wait_for "the release of Super+Alt to be reported" 15 grep -q "hotkey modifiers released" "$daemon_log"
 ok "hotkeys: Super+Alt+N / Super+Alt+P cycle the editors through the daemon"
 
 # Swipes: what the extension forwards for a claimed Ctrl + three-finger swipe.
@@ -144,6 +145,41 @@ rm "$XDG_CONFIG_HOME/window-jump/config.toml"
 wait_for "daemon back on the defaults" 15 bash -c "grep -c 'registered 2 hotkey(s) and 1 swipe claim(s)' '$daemon_log' | grep -qx 2"
 ok "config reload: new hotkey active without a restart, broken edits ignored, removal restores defaults"
 
+# Alt+Tab-style sessions with order = "mru": presses while Super+Alt stays
+# down dig further back, however slowly they come; releasing commits, and the
+# windows passed on the way do not count as used. Needs a third editor.
+# What the daemon logged since `mark_log`.
+mark_log() { log_mark=$(wc -l <"$daemon_log"); }
+logged() { tail -n +$((log_mark + 1)) "$daemon_log" | grep -q "$1"; }
+mark_log
+cat > "$XDG_CONFIG_HOME/window-jump/config.toml" <<'TOML'
+order = "mru"
+TOML
+wait_for "daemon to load order = mru" 15 logged "reloaded .*config.toml"
+GDK_BACKEND=wayland gnome-text-editor --standalone >"$E2E_ROOT/editor3.log" 2>&1 &
+e2e_pids+=($!)
+wait_for "third text editor window" 30 window_count_is 4
+editors3=($(list_json | jq '[.windows[] | select(.app_id | test("TextEditor"))] | sort_by(.id) | .[].id'))
+[[ ${#editors3[@]} == 3 ]] || fail "expected three editors"
+# MRU order: e0, e1, e2.
+focus_on "${editors3[2]}"
+focus_on "${editors3[1]}"
+focus_on "${editors3[0]}"
+sleep 0.5
+mark_log
+# Hold Super+Alt, press N, wait longer than mru_session_ms (1 s), press N again.
+press_keys +Super_L +Alt_L n @1500 n @300 -Alt_L -Super_L || fail "injecting a held Super+Alt+N+N failed"
+wait_for "held Super+Alt, N, N → third editor" 15 focus_is "${editors3[2]}"
+logged "hotkey Super+Alt+N → Next (new press)" || fail "the first press did not start a session"
+logged "hotkey Super+Alt+N → Next (keys still held)" || fail "the second press did not continue the session"
+wait_for "the release to be reported" 15 logged "hotkey modifiers released"
+# The shell's MRU order is now e2, e1, e0, but e1 was only passed through:
+# a new press goes back to e0, where the session started.
+press_keys Super_L Alt_L n || fail "injecting Super+Alt+N failed"
+wait_for "next press → back to the first editor" 15 focus_is "${editors3[0]}"
+ok "hotkey sessions: held modifiers keep digging past the timeout, release commits"
+rm "$XDG_CONFIG_HOME/window-jump/config.toml"
+
 # A second daemon refuses to start.
 if wj daemon >"$E2E_ROOT/daemon2.log" 2>&1; then fail "second daemon started"; fi
 grep -q "already running" "$E2E_ROOT/daemon2.log" || fail "second daemon gave no reason"
@@ -151,7 +187,7 @@ ok "second daemon refused"
 
 doctor=$(wj doctor 2>&1) || fail "doctor reported problems: $doctor"
 echo "$doctor"
-grep -q "protocol 2" <<<"$doctor" || fail "doctor does not see the extension"
+grep -q "protocol 3" <<<"$doctor" || fail "doctor does not see the extension"
 ok "doctor"
 
 # When the daemon goes away, the extension lets go of its keys at once.

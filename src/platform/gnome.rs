@@ -29,9 +29,10 @@ use crate::model::Snapshot;
 pub const BUS_NAME: &str = "org.hjosugi.WindowJump";
 pub const OBJECT_PATH: &str = "/org/hjosugi/WindowJump";
 pub const INTERFACE: &str = "org.hjosugi.WindowJump1";
-/// The extension protocol this binary speaks. Version 2 added ShowHud; a
-/// version 1 extension still works, without the overlay.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// The extension protocol this binary speaks. Version 2 added ShowHud,
+/// version 3 the AcceleratorReleased signal. Older extensions still work,
+/// without the overlay (1) or with MRU sessions going by time (2).
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const EXTENSION_UUID: &str = "window-jump@hjosugi.github.io";
 
 /// Held by the running daemon so a second one refuses to start.
@@ -61,13 +62,19 @@ impl Gnome {
     }
 
     /// Pushes hotkeys and swipe claims to the extension. It keeps them only
-    /// while this connection is alive.
-    fn register(&self, cfg: &Config, hotkeys: &[Hotkey]) -> Result<()> {
+    /// while this connection is alive. Returns the extension's protocol
+    /// version.
+    fn register(&self, cfg: &Config, hotkeys: &[Hotkey]) -> Result<u32> {
         let version = self.protocol_version()?;
         if version < PROTOCOL_VERSION {
+            let missing = if version < 2 {
+                "the overlay after a jump, and hotkey sessions that end when the modifiers are released"
+            } else {
+                "hotkey sessions that end when the modifiers are released (they go by time instead)"
+            };
             eprintln!(
                 "window-jump: the GNOME extension is older (protocol {version}, this binary {PROTOCOL_VERSION}); \
-                 everything works except the overlay after a jump. Update the extension and log in again."
+                 everything works except {missing}. Update the extension and log in again."
             );
         } else if version > PROTOCOL_VERSION {
             eprintln!(
@@ -100,7 +107,7 @@ impl Gnome {
             hotkeys.len() - failed.len(),
             cfg.claims().len()
         );
-        Ok(())
+        Ok(version)
     }
 }
 
@@ -215,9 +222,15 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
         }
     });
 
-    if let Err(e) = gnome.register(&cfg, &hotkeys) {
-        eprintln!("window-jump: waiting for the GNOME Shell extension: {e:#}");
-    }
+    // The extension's protocol version, once registered: from 3 on it reports
+    // when a hotkey's modifiers are released.
+    let mut version = match gnome.register(&cfg, &hotkeys) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("window-jump: waiting for the GNOME Shell extension: {e:#}");
+            0
+        }
+    };
 
     let mut last_tick = Instant::now();
     loop {
@@ -238,15 +251,20 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
             Some(Incoming::Owner(true)) => {
                 // The shell restarted or the extension was re-enabled; it has
                 // forgotten our hotkeys and claims.
-                if let Err(e) = gnome.register(&cfg, &hotkeys) {
-                    eprintln!("window-jump: registering with the GNOME extension failed: {e:#}");
+                match gnome.register(&cfg, &hotkeys) {
+                    Ok(v) => version = v,
+                    Err(e) => {
+                        eprintln!("window-jump: registering with the GNOME extension failed: {e:#}")
+                    }
                 }
+                // A release still pending from the old shell will never come.
+                changed = changed.or(handle(&gnome, Event::Released));
             }
             Some(Incoming::Owner(false)) => {
                 eprintln!("window-jump: the GNOME extension went away; waiting for it to return");
             }
             Some(Incoming::Signal(msg)) => {
-                if let Some(event) = parse_signal(&msg) {
+                if let Some(event) = parse_signal(&msg, version, &hotkeys) {
                     changed = changed.or(handle(&gnome, event));
                 }
             }
@@ -257,10 +275,11 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
                 Ok(parsed) => {
                     cfg = new;
                     hotkeys = parsed;
-                    if let Err(e) = gnome.register(&cfg, &hotkeys) {
-                        eprintln!(
+                    match gnome.register(&cfg, &hotkeys) {
+                        Ok(v) => version = v,
+                        Err(e) => eprintln!(
                             "window-jump: registering with the GNOME extension failed: {e:#}"
-                        );
+                        ),
                     }
                 }
                 Err(e) => eprintln!("window-jump: ignoring an invalid config: {e:#}"),
@@ -270,15 +289,20 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
     Ok(())
 }
 
-fn parse_signal(msg: &Message) -> Option<Event> {
+/// `version` is the extension's protocol version, `hotkeys` what was
+/// registered with it.
+fn parse_signal(msg: &Message, version: u32, hotkeys: &[Hotkey]) -> Option<Event> {
     let header = msg.header();
     let member = header.member()?;
     match member.as_str() {
         "AcceleratorActivated" => {
             let (action,): (String,) = msg.body().deserialize().ok()?;
-            let index = action.strip_prefix("hotkey:")?.parse().ok()?;
-            Some(Event::Hotkey(index))
+            let index: usize = action.strip_prefix("hotkey:")?.parse().ok()?;
+            // Without modifiers there is nothing to hold.
+            let tracked = version >= 3 && hotkeys.get(index).is_some_and(|h| !h.mods.is_empty());
+            Some(Event::Hotkey { index, tracked })
         }
+        "AcceleratorReleased" => Some(Event::Released),
         "Swipe" => {
             let (phase, fingers, mods, dx, dy): (u32, u32, u32, f64, f64) =
                 msg.body().deserialize().ok()?;

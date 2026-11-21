@@ -19,8 +19,9 @@ compositor where Wayland allows nothing else.
   app icon on GNOME) show briefly in the middle of the screen, so you can
   follow where you are while scrubbing. On Windows this needs the daemon.
 - **Orders**: `stable` (fixed order, walks every window), `position` (left to
-  right on screen) or `mru` (toggle between the two most recent windows; quick
-  repeats dig deeper, like Alt+Tab).
+  right on screen) or `mru` (like Alt+Tab: one press toggles between the two
+  most recent windows; pressing again while holding the modifiers digs
+  deeper, and releasing settles there).
 - **Any binder**: `window-jump next` / `window-jump prev` are plain commands,
   so they also work from GNOME's own custom shortcuts, AutoHotkey, keyd, a
   mouse driver…
@@ -143,7 +144,7 @@ Windows). Everything is optional; these are the defaults:
 order = "stable"          # "stable" | "position" | "mru"
 workspace = "all"         # "all" | "current"
 include_minimized = true
-mru_session_ms = 1000     # order = "mru": repeats closer than this continue one session
+mru_session_ms = 1000     # order = "mru", for `window-jump next` from other tools: repeats closer than this are one session
 
 [gesture]
 threshold = 120.0         # finger travel before a swipe counts (GNOME's full workspace swipe is 400)

@@ -18,19 +18,22 @@ use windows_sys::Win32::System::Threading::{
     AttachThreadInput, CreateMutexW, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN,
+    VK_SHIFT,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, DispatchMessageW, EnumChildWindows, EnumWindows, GW_OWNER, GWL_EXSTYLE,
     GetClassNameW, GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
     GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
-    IsWindowVisible, MSG, SW_RESTORE, SetForegroundWindow, SetTimer, ShowWindow, TranslateMessage,
-    WM_HOTKEY, WM_TIMER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    IsWindowVisible, KillTimer, MSG, SW_RESTORE, SetForegroundWindow, SetTimer, ShowWindow,
+    TranslateMessage, WM_HOTKEY, WM_TIMER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 use super::windows_hud::HudWindow;
 use super::{Backend, Event};
 use crate::config::Config;
-use crate::hotkey::Hotkey;
+use crate::hotkey::{Hotkey, Mods};
 use crate::model::{Snapshot, Window};
 
 pub struct Win32 {
@@ -276,17 +279,21 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
         // Deliberately leaked: held until the process exits.
     }
 
-    let mut registered = register_hotkeys(hotkeys, 0);
+    let mut hotkeys = hotkeys.to_vec();
+    let mut registered = register_hotkeys(&hotkeys, 0);
     explain_swipes(cfg);
 
-    // Timer messages posted to this thread drive Event::Tick.
-    unsafe { SetTimer(null_mut(), 0, super::TICK.as_millis() as u32, None) };
+    // Thread timers: the tick, and while a hotkey's modifiers are held, the
+    // check for their release. Both post WM_TIMER to this thread with the
+    // id SetTimer returned.
+    let tick = unsafe { SetTimer(null_mut(), 0, super::TICK.as_millis() as u32, None) };
+    let mut release = Release::default();
 
     let backend = Win32 {
         hud: HudWindow::new(),
     };
     let mut msg: MSG = unsafe { std::mem::zeroed() };
-    // Hotkeys registered with a null HWND, and the tick timer, are posted to
+    // Hotkeys registered with a null HWND, and the timers, are posted to
     // this thread's queue with a null HWND; the overlay's own messages carry
     // its window and are dispatched to it.
     while unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } > 0 {
@@ -300,15 +307,33 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
         let changed = match msg.message {
             WM_HOTKEY => match msg.wParam as usize {
                 0 => None,
-                id => handle(&backend, Event::Hotkey(id - 1)),
+                id => {
+                    let index = id - 1;
+                    let mods = hotkeys.get(index).map(|h| h.mods).unwrap_or_default();
+                    // Without modifiers there is nothing to hold.
+                    let tracked = !mods.is_empty();
+                    let changed = handle(&backend, Event::Hotkey { index, tracked });
+                    if tracked {
+                        release.watch(mods);
+                    }
+                    changed
+                }
             },
-            WM_TIMER => handle(&backend, Event::Tick),
+            WM_TIMER if msg.wParam == tick => handle(&backend, Event::Tick),
+            WM_TIMER if release.is_timer(msg.wParam) => {
+                if release.poll() {
+                    handle(&backend, Event::Released)
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
         if let Some(new) = changed {
             match new.validate() {
                 Ok(parsed) => {
                     registered = register_hotkeys(&parsed, registered);
+                    hotkeys = parsed;
                     explain_swipes(&new);
                 }
                 Err(e) => eprintln!("window-jump: ignoring an invalid config: {e:#}"),
@@ -316,6 +341,49 @@ pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler)
         }
     }
     Ok(())
+}
+
+/// How often to look at the modifiers while a hotkey's are held.
+const RELEASE_POLL_MS: u32 = 25;
+
+/// Watches for the release of a hotkey's modifiers, like Alt+Tab waits for
+/// Alt. Polled with `GetAsyncKeyState`, and only while they are held: no
+/// keyboard hook.
+#[derive(Default)]
+struct Release {
+    timer: usize,
+    mods: Mods,
+}
+
+impl Release {
+    fn watch(&mut self, mods: Mods) {
+        self.mods = mods;
+        if self.timer == 0 {
+            self.timer = unsafe { SetTimer(null_mut(), 0, RELEASE_POLL_MS, None) };
+        }
+    }
+
+    fn is_timer(&self, id: usize) -> bool {
+        self.timer != 0 && id == self.timer
+    }
+
+    /// True once none of the modifiers is down any more (and the watch is over).
+    fn poll(&mut self) -> bool {
+        if modifiers_down(self.mods) {
+            return false;
+        }
+        unsafe { KillTimer(null_mut(), self.timer) };
+        self.timer = 0;
+        true
+    }
+}
+
+fn modifiers_down(mods: Mods) -> bool {
+    let down = |vk: u16| unsafe { GetAsyncKeyState(vk as i32) } < 0;
+    (mods.contains(Mods::SHIFT) && down(VK_SHIFT))
+        || (mods.contains(Mods::CTRL) && down(VK_CONTROL))
+        || (mods.contains(Mods::ALT) && down(VK_MENU))
+        || (mods.contains(Mods::SUPER) && (down(VK_LWIN) || down(VK_RWIN)))
 }
 
 /// Drops the `previous` hotkey ids and registers `hotkeys` as ids 1..=n (the

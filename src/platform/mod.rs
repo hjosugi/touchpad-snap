@@ -39,8 +39,12 @@ pub const TICK: std::time::Duration = std::time::Duration::from_secs(2);
 pub enum Event {
     /// Sent about every [`TICK`] for housekeeping (the config file check).
     Tick,
-    /// The hotkey at this index of `Config::hotkeys` was pressed.
-    Hotkey(usize),
+    /// The hotkey at this index of `Config::hotkeys` was pressed. With
+    /// `tracked`, the platform sends [`Event::Released`] once the modifiers
+    /// held for it are all up again, so presses in between form one session.
+    Hotkey { index: usize, tracked: bool },
+    /// The modifiers of the last tracked hotkey have all been released.
+    Released,
     /// Motion of a claimed touchpad swipe.
     Swipe {
         phase: Phase,

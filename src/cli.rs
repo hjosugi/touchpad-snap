@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 use crate::config::{self, Config};
-use crate::cycle::{self, Order, Pick, Step, WorkspaceScope};
+use crate::cycle::{self, Order, Pick, Session, Step, WorkspaceScope};
 use crate::{autostart, daemon, platform, session};
 
 #[derive(Parser, Debug)]
@@ -214,7 +214,15 @@ fn jump(config_path: &std::path::Path, step: Step, args: JumpArgs) -> Result<()>
         cfg.workspace = workspace;
     }
     let backend = platform::connect()?;
-    match daemon::jump(backend.as_ref(), &cfg, step, &session::default_path())? {
+    // A shortcut tool runs us once per press; whether its keys are still held
+    // is unknown, so MRU sessions go by time.
+    match daemon::jump(
+        backend.as_ref(),
+        &cfg,
+        step,
+        Session::ByTime,
+        &session::default_path(),
+    )? {
         Pick::Jump(_) | Pick::Alone => Ok(()),
         Pick::NoFocus => bail!("no window is focused"),
     }

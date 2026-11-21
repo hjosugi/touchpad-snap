@@ -215,8 +215,10 @@ pub const TEMPLATE: &str = r#"# window-jump configuration.
 # How the windows of the focused app are ordered when cycling:
 #   "stable"   fixed order (creation order); next/prev walk every window
 #   "position" left to right on screen, then top to bottom
-#   "mru"      most recently used; a single jump toggles between the two most
-#              recent windows, quick repeats dig into older ones
+#   "mru"      most recently used, like Alt+Tab: a single press toggles
+#              between the two most recent windows; pressing again while
+#              holding the modifiers (or while a swipe goes on) digs into
+#              older ones, and releasing settles on the window reached
 order = "stable"
 
 # "all": windows on every workspace (jumping may switch workspace)
@@ -225,7 +227,9 @@ workspace = "all"
 
 include_minimized = true
 
-# With order = "mru": jumps closer together than this continue one session.
+# With order = "mru", where it cannot be told whether keys are still held
+# (`window-jump next` run by another shortcut tool, a hotkey without
+# modifiers): jumps closer together than this count as one session.
 mru_session_ms = 1000
 
 [gesture]

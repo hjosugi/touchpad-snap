@@ -3,7 +3,14 @@
 //!
 //!     cargo run --example inject_keys -- Super_L Alt_L n
 //!
-//! The keys are pressed in order and released in reverse. Mutter ends a
+//! The keys are pressed in order and released in reverse. To hold keys
+//! across several presses, write a script instead: `+Key` presses and holds,
+//! `-Key` releases, `@300` waits 300 ms, and a bare key is pressed and
+//! released:
+//!
+//!     cargo run --example inject_keys -- +Super_L +Alt_L n @300 n -Alt_L -Super_L
+//!
+//! Mutter ends a
 //! remote-desktop session when its caller disconnects, so this has to be one
 //! process holding the connection (gdbus cannot do it call by call). Used by
 //! test/e2e/gnome.sh against the throw-away headless shell.
@@ -13,10 +20,35 @@ fn main() -> zbus::Result<()> {
     use zbus::blocking::{Connection, Proxy};
     use zbus::zvariant::OwnedObjectPath;
 
-    let keysyms: Vec<u32> = std::env::args()
-        .skip(1)
-        .map(|name| keysym(&name).unwrap_or_else(|| panic!("unknown key {name}")))
-        .collect();
+    enum Op {
+        Down(u32),
+        Up(u32),
+        Wait(u64),
+    }
+    let key = |name: &str| keysym(name).unwrap_or_else(|| panic!("unknown key {name}"));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let script = args
+        .iter()
+        .any(|a| a.len() > 1 && (a.starts_with('+') || a.starts_with('-') || a.starts_with('@')));
+    let mut ops = Vec::new();
+    if script {
+        for a in &args {
+            if let Some(k) = a.strip_prefix('+') {
+                ops.push(Op::Down(key(k)));
+            } else if let Some(k) = a.strip_prefix('-') {
+                ops.push(Op::Up(key(k)));
+            } else if let Some(ms) = a.strip_prefix('@') {
+                ops.push(Op::Wait(ms.parse().expect("@milliseconds")));
+            } else {
+                ops.push(Op::Down(key(a)));
+                ops.push(Op::Up(key(a)));
+            }
+        }
+    } else {
+        let keysyms: Vec<u32> = args.iter().map(|a| key(a)).collect();
+        ops.extend(keysyms.iter().map(|&k| Op::Down(k)));
+        ops.extend(keysyms.iter().rev().map(|&k| Op::Up(k)));
+    }
 
     let conn = Connection::session()?;
     let rd = Proxy::new(
@@ -35,11 +67,12 @@ fn main() -> zbus::Result<()> {
     session.call_method("Start", &())?;
     // Give the virtual keyboard a moment to appear in the seat.
     std::thread::sleep(std::time::Duration::from_millis(300));
-    for &k in &keysyms {
-        session.call_method("NotifyKeyboardKeysym", &(k, true))?;
-    }
-    for &k in keysyms.iter().rev() {
-        session.call_method("NotifyKeyboardKeysym", &(k, false))?;
+    for op in ops {
+        match op {
+            Op::Down(k) => drop(session.call_method("NotifyKeyboardKeysym", &(k, true))?),
+            Op::Up(k) => drop(session.call_method("NotifyKeyboardKeysym", &(k, false))?),
+            Op::Wait(ms) => std::thread::sleep(std::time::Duration::from_millis(ms)),
+        }
     }
     std::thread::sleep(std::time::Duration::from_millis(200));
     session.call_method("Stop", &())?;

@@ -36,7 +36,7 @@ import {Phase, SwipeClaimer, modsFromState} from './lib.js';
 const BUS_NAME = 'org.hjosugi.WindowJump';
 const OBJECT_PATH = '/org/hjosugi/WindowJump';
 const INTERFACE = 'org.hjosugi.WindowJump1';
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 
 const IFACE_XML = `
 <node>
@@ -65,6 +65,9 @@ const IFACE_XML = `
     <signal name="AcceleratorActivated">
       <arg type="s" name="action"/>
     </signal>
+    <signal name="AcceleratorReleased">
+      <arg type="s" name="action"/>
+    </signal>
     <signal name="Swipe">
       <arg type="u" name="phase"/>
       <arg type="u" name="fingers"/>
@@ -80,6 +83,17 @@ const IFACE_XML = `
 // activates the window, which closes it. Swipes only outside it, where three
 // fingers are not already busy moving the overview around.
 const HOTKEY_MODES = Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW;
+
+// The modifiers whose release ends a hotkey session; lock keys (Caps Lock,
+// Num Lock) and AltGr are not held for a shortcut.
+const HOLD_MASK = Clutter.ModifierType.SHIFT_MASK | Clutter.ModifierType.CONTROL_MASK |
+    Clutter.ModifierType.MOD1_MASK | Clutter.ModifierType.MOD4_MASK |
+    Clutter.ModifierType.SUPER_MASK | Clutter.ModifierType.HYPER_MASK |
+    Clutter.ModifierType.META_MASK;
+
+// How often to look at the modifiers while a hotkey's are held. Only while
+// they are: the watch stops at the release.
+const RELEASE_POLL_MS = 25;
 
 const PHASES = new Map([
     [Clutter.TouchpadGesturePhase.BEGIN, Phase.BEGIN],
@@ -185,6 +199,10 @@ class WindowJumpService {
         this._dbus = null;
         this._acceleratorId = 0;
         this._capturedId = 0;
+        // Watching for the release of the modifiers of the last hotkey.
+        this._releaseId = 0;
+        this._releaseMask = 0;
+        this._releaseAction = '';
     }
 
     start() {
@@ -309,6 +327,7 @@ class WindowJumpService {
     }
 
     _release() {
+        this._stopReleaseWatch();
         this._ungrabAll();
         this._claimer.setClaims([]);
         if (this._ownerWatchId) {
@@ -341,8 +360,40 @@ class WindowJumpService {
 
     _onAccelerator(action) {
         const name = this._accels.get(action);
-        if (name !== undefined)
-            this._emit('AcceleratorActivated', new GLib.Variant('(s)', [name]));
+        if (name === undefined)
+            return;
+        this._emit('AcceleratorActivated', new GLib.Variant('(s)', [name]));
+        this._watchRelease(name);
+    }
+
+    // Like the shell's own Alt+Tab switcher: after a hotkey, wait until none
+    // of the modifiers held for it is down any more, then tell the daemon,
+    // which treats the presses in between as one session. Polled, because
+    // key releases go to the focused window, not to the shell.
+    _watchRelease(name) {
+        const [, , mods] = global.get_pointer();
+        this._releaseMask = mods & HOLD_MASK;
+        this._releaseAction = name;
+        if (!this._releaseId) {
+            this._releaseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, RELEASE_POLL_MS,
+                () => this._pollRelease());
+        }
+    }
+
+    _pollRelease() {
+        const [, , mods] = global.get_pointer();
+        if (mods & this._releaseMask)
+            return GLib.SOURCE_CONTINUE;
+        this._releaseId = 0;
+        this._emit('AcceleratorReleased', new GLib.Variant('(s)', [this._releaseAction]));
+        return GLib.SOURCE_REMOVE;
+    }
+
+    _stopReleaseWatch() {
+        if (this._releaseId) {
+            GLib.Source.remove(this._releaseId);
+            this._releaseId = 0;
+        }
     }
 
     _onTouchpad(event) {
