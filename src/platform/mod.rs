@@ -18,6 +18,8 @@ pub mod gnome;
 pub mod windows;
 #[cfg(windows)]
 mod windows_hud;
+#[cfg(windows)]
+mod windows_touchpad;
 
 pub trait Backend {
     fn snapshot(&self) -> Result<Snapshot>;

@@ -254,10 +254,12 @@ action = "next"
 keys = "Super+Alt+P"
 action = "prev"
 
-# Touchpad swipes, held together with modifier keys (GNOME, via the shell
-# extension). A claimed swipe is taken away from GNOME, so Ctrl + three
-# fingers no longer switches workspace while plain three fingers still does.
-# Avoid Super alone: releasing it opens the Activities overview.
+# Touchpad swipes, held together with modifier keys: on GNOME via the shell
+# extension, on Windows from a Precision Touchpad's raw HID input. On GNOME a
+# claimed swipe is taken away from the shell, so Ctrl + three fingers no
+# longer switches workspace while plain three fingers still does. On Windows,
+# turn the built-in three/four-finger gestures off first.
+# Avoid Super alone: releasing it opens the Activities overview (or Start).
 # Set `swipe = []` to bind none.
 [[swipe]]
 fingers = 3
