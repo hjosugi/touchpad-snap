@@ -10,6 +10,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
+use crate::legacy;
+
 /// The command that starts the daemon, quoted for the platform.
 fn daemon_command() -> Result<String> {
     let exe = std::env::current_exe().context("locating the touchpad-snap executable")?;
@@ -47,7 +49,7 @@ fn desktop_file() -> PathBuf {
 pub fn enabled() -> bool {
     #[cfg(windows)]
     {
-        registry::run_value_exists()
+        registry::run_value_exists(registry::VALUE)
     }
     #[cfg(not(windows))]
     {
@@ -61,6 +63,7 @@ pub fn enable() -> Result<String> {
     #[cfg(windows)]
     {
         registry::set_run_value(&command)?;
+        registry::delete_run_value(legacy::RUN_VALUE)?;
         Ok(format!(
             "touchpad-snap will start at login: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\touchpad-snap = {command}"
         ))
@@ -82,6 +85,7 @@ pub fn enable() -> Result<String> {
              X-GNOME-Autostart-Phase=Applications\n"
         );
         std::fs::write(&path, entry).with_context(|| format!("writing {}", path.display()))?;
+        remove(&legacy::autostart_entry())?;
         Ok(format!(
             "touchpad-snap will start at login ({})",
             path.display()
@@ -92,18 +96,49 @@ pub fn enable() -> Result<String> {
 pub fn disable() -> Result<String> {
     #[cfg(windows)]
     {
-        registry::delete_run_value()?;
+        registry::delete_run_value(registry::VALUE)?;
+        registry::delete_run_value(legacy::RUN_VALUE)?;
         Ok("touchpad-snap will no longer start at login".into())
     }
     #[cfg(not(windows))]
     {
         let path = desktop_file();
-        match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                Err(e).with_context(|| format!("removing {}", path.display()))
-            }
-            _ => Ok(format!("removed {}", path.display())),
+        remove(&path)?;
+        remove(&legacy::autostart_entry())?;
+        Ok(format!("removed {}", path.display()))
+    }
+}
+
+/// An autostart entry left by the old name (see [`legacy`]), which would
+/// start a second daemon or one that is no longer installed: what it is and
+/// how to get rid of it. `enable` and `disable` both remove it.
+pub fn leftover() -> Option<String> {
+    #[cfg(windows)]
+    let (found, what) = (
+        registry::run_value_exists(legacy::RUN_VALUE),
+        format!("HKCU\\{}\\{}", registry::RUN_KEY, legacy::RUN_VALUE),
+    );
+    #[cfg(not(windows))]
+    let (found, what) = {
+        let path = legacy::autostart_entry();
+        (path.exists(), path.display().to_string())
+    };
+    found.then(|| {
+        format!(
+            "{} still starts at login ({what}); replace it with: touchpad-snap autostart enable",
+            legacy::NAME
+        )
+    })
+}
+
+/// Removes a file; one that is not there is fine.
+#[cfg(not(windows))]
+fn remove(path: &std::path::Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(e).with_context(|| format!("removing {}", path.display()))
         }
+        _ => Ok(()),
     }
 }
 
@@ -115,8 +150,8 @@ mod registry {
         HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
     };
 
-    const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-    const VALUE: &str = "touchpad-snap";
+    pub const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    pub const VALUE: &str = "touchpad-snap";
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -140,7 +175,7 @@ mod registry {
         Ok(())
     }
 
-    pub fn run_value_exists() -> bool {
+    pub fn run_value_exists(value: &str) -> bool {
         let mut data = [0u16; 1024];
         let mut len = (data.len() * 2) as u32;
         let mut kind = 0u32;
@@ -148,7 +183,7 @@ mod registry {
             RegGetValueW(
                 HKEY_CURRENT_USER,
                 wide(RUN_KEY).as_ptr(),
-                wide(VALUE).as_ptr(),
+                wide(value).as_ptr(),
                 RRF_RT_REG_SZ,
                 &mut kind,
                 data.as_mut_ptr().cast(),
@@ -158,12 +193,12 @@ mod registry {
         rc == ERROR_SUCCESS || rc == ERROR_MORE_DATA
     }
 
-    pub fn delete_run_value() -> Result<()> {
+    pub fn delete_run_value(value: &str) -> Result<()> {
         let rc = unsafe {
             RegDeleteKeyValueW(
                 HKEY_CURRENT_USER,
                 wide(RUN_KEY).as_ptr(),
-                wide(VALUE).as_ptr(),
+                wide(value).as_ptr(),
             )
         };
         if rc != ERROR_SUCCESS && rc != ERROR_FILE_NOT_FOUND {

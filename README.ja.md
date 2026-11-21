@@ -94,6 +94,21 @@ cargo install --git https://github.com/hjosugi/touchpad-snap touchpad-snap
 
 GNOME 拡張は `gnome-extension/touchpad-snap@hjosugi.github.io` ディレクトリです。`~/.local/share/gnome-shell/extensions/` にコピーしてください。
 
+### window-jump からの移行
+
+touchpad-snap は、バージョン 0.5 より前は **window-jump** という名前でした。中身は同じで、名前だけがすべて変わっています。上の手順で touchpad-snap を入れたあと、次のようにします。
+
+- **設定**: `~/.config/window-jump/config.toml`（Windows は `%APPDATA%\window-jump`）は、touchpad-snap を初めて動かしたときに新しい `touchpad-snap` フォルダへコピーされます。古いファイルはそのまま残り、以後は読まれません。
+- **GNOME**: 拡張を入れ替えます。新しい拡張が見つからないときは、一度ログインし直してください。
+  ```sh
+  gnome-extensions disable window-jump@hjosugi.github.io
+  gnome-extensions enable touchpad-snap@hjosugi.github.io
+  ```
+- **ログイン時の起動**: `touchpad-snap autostart enable` が window-jump の登録を置き換えます。Windows では、先にタスクトレイのアイコンから window-jump を終了してください。
+- **ポータル経由のホットキー**: 環境変数は `TOUCHPAD_SNAP_HOTKEYS` になりました（`WINDOW_JUMP_HOTKEYS` も引き続き読みます）。アプリ ID も名前と一緒に変わったので、デスクトップが割り当ての確認をもう一度表示します。
+- `touchpad-snap doctor` を実行すると、window-jump のうちまだ動いているものが分かります。
+- 古いバイナリ（`cargo uninstall window-jump`、または `window-jump.exe` と `window-jumpw.exe` を削除）と `~/.local/share/gnome-shell/extensions/window-jump@hjosugi.github.io` は消して構いません。
+
 ## 使い方
 
 | コマンド | |

@@ -45,6 +45,11 @@ pub trait Backend {
     }
     /// One line for `touchpad-snap doctor`.
     fn describe(&self) -> String;
+    /// What an installation under the old name (see [`crate::legacy`]) still
+    /// has running here and how to get rid of it, for `touchpad-snap doctor`.
+    fn leftovers(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// How often the platform loops send [`Event::Tick`].
@@ -184,7 +189,9 @@ pub fn run_daemon(
     #[cfg(target_os = "linux")]
     {
         let _ = config_path;
-        let requested = std::env::var(HOTKEY_SOURCE_ENV).ok();
+        let requested = std::env::var(HOTKEY_SOURCE_ENV)
+            .or_else(|_| std::env::var(crate::legacy::HOTKEY_SOURCE_ENV))
+            .ok();
         let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
         // A running extension means GNOME even when XDG_CURRENT_DESKTOP is
         // unset (headless sessions, odd launchers).

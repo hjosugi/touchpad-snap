@@ -43,7 +43,9 @@ e2e_enter() {
     [[ -x $E2E_BIN ]] || { echo "build first: $E2E_BIN is missing (cargo build)" >&2; exit 1; }
     : "${E2E_INJECT:=$(dirname "$E2E_BIN")/examples/inject_keys}"
     [[ -x $E2E_INJECT ]] || { echo "build first: $E2E_INJECT is missing (cargo build --examples)" >&2; exit 1; }
-    export E2E_BIN E2E_INJECT
+    : "${E2E_OWN_NAME:=$(dirname "$E2E_BIN")/examples/own_name}"
+    [[ -x $E2E_OWN_NAME ]] || { echo "build first: $E2E_OWN_NAME is missing (cargo build --examples)" >&2; exit 1; }
+    export E2E_BIN E2E_INJECT E2E_OWN_NAME
 
     local caller=${BASH_SOURCE[1]}
     local root
@@ -129,7 +131,7 @@ fail() {
 
 ok() { echo "ok:   $*"; }
 
-wj() { "$E2E_BIN" "$@"; }
+tps() { "$E2E_BIN" "$@"; }
 
 # Types a key combination through Mutter's RemoteDesktop API: press_keys Super_L Alt_L n
 press_keys() { "$E2E_INJECT" "$@"; }
@@ -149,7 +151,7 @@ call() {
         --method "io.github.hjosugi.TouchpadSnap1.$1" "${@:2}"
 }
 
-list_json() { wj list --json; }
+list_json() { tps list --json; }
 
 window_count_is() { list_json | jq -e --argjson n "$1" '.windows | length == $n'; }
 

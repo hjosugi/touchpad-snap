@@ -148,6 +148,30 @@ cargo install --git https://github.com/hjosugi/touchpad-snap touchpad-snap
 The GNOME extension is the `gnome-extension/touchpad-snap@hjosugi.github.io`
 directory: copy it to `~/.local/share/gnome-shell/extensions/`.
 
+### Upgrading from window-jump
+
+touchpad-snap was called **window-jump** before version 0.5. The program is the
+same; every name changed with it. After installing touchpad-snap as above:
+
+- **Settings**: `~/.config/window-jump/config.toml` (`%APPDATA%\window-jump` on
+  Windows) is copied to the new `touchpad-snap` directory the first time
+  touchpad-snap runs. The old file is left alone and no longer read.
+- **GNOME**: switch extensions, then log out and back in if the new one is not
+  found:
+  ```sh
+  gnome-extensions disable window-jump@hjosugi.github.io
+  gnome-extensions enable touchpad-snap@hjosugi.github.io
+  ```
+- **Start at login**: `touchpad-snap autostart enable` replaces window-jump's
+  entry. On Windows, quit window-jump from its tray icon first.
+- **Portal hotkeys**: the variable is now `TOUCHPAD_SNAP_HOTKEYS`
+  (`WINDOW_JUMP_HOTKEYS` is still read), and the desktop asks once more to
+  confirm the bindings, as the app id changed with the name.
+- `touchpad-snap doctor` lists whatever of window-jump is still active.
+- Remove the old binary (`cargo uninstall window-jump`, or delete
+  `window-jump.exe` and `window-jumpw.exe`) and
+  `~/.local/share/gnome-shell/extensions/window-jump@hjosugi.github.io`.
+
 ## Usage
 
 | Command | |

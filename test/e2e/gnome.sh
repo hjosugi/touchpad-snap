@@ -34,34 +34,34 @@ echo "$json" | jq -e 'all(.windows[]; .id > 0 and .pid > 0 and .width > 0 and .h
     || fail "every window needs id, pid and geometry"
 ok "three windows, the two editors share an app (${editors[*]}), calculator $calc"
 
-wj list | grep -q "TextEditor" || fail "`touchpad-snap list` does not show the editors"
+tps list | grep -q "TextEditor" || fail "`touchpad-snap list` does not show the editors"
 ok "touchpad-snap list"
 
 # Focus the first editor, then cycle with the binary. Asserted on keyboard
 # focus, which is what the binary itself goes by.
 focus_on "${editors[0]}"
 
-wj next || fail "touchpad-snap next failed"
+tps next || fail "touchpad-snap next failed"
 wait_for "next → second editor" 15 focus_is "${editors[1]}"
 ok "next: ${editors[0]} → ${editors[1]}"
 
-wj next || fail "touchpad-snap next failed"
+tps next || fail "touchpad-snap next failed"
 wait_for "next wraps → first editor" 15 focus_is "${editors[0]}"
 ok "next wraps round to ${editors[0]} (calculator skipped)"
 
-wj prev || fail "touchpad-snap prev failed"
+tps prev || fail "touchpad-snap prev failed"
 wait_for "prev → second editor" 15 focus_is "${editors[1]}"
 ok "prev: ${editors[0]} → ${editors[1]}"
 
 # Quick repeats inside the focus hint still step through the windows.
-wj next && wj next || fail "touchpad-snap next failed"
+tps next && tps next || fail "touchpad-snap next failed"
 wait_for "two quick nexts → second editor again" 15 focus_is "${editors[1]}"
 front_is "${editors[1]}" || fail "MRU order does not follow the jumps"
 ok "two quick nexts land back on ${editors[1]}"
 
 # The calculator is alone in its app: jumping from it is a no-op, not an error.
 focus_on "$calc"
-wj next || fail "touchpad-snap next from a single-window app must succeed"
+tps next || fail "touchpad-snap next from a single-window app must succeed"
 sleep 0.5
 focus_is "$calc" || fail "jumping from a single-window app moved focus"
 ok "single-window app: next is a no-op"
@@ -82,13 +82,28 @@ grab=$(call SetAccelerators "[('<Super><Alt>n', 'hotkey:0'), ('<Alt>Tab', 'hotke
 call SetSwipeClaims "[(uint32 3, uint32 2)]" >/dev/null || fail "SetSwipeClaims failed"
 ok "SetAccelerators grabs free keys and reports taken ones; SetSwipeClaims accepted"
 
+# An upgrade from window-jump, this program's old name: its config file is
+# carried over the first time ours is looked for, and only then.
+mkdir -p "$XDG_CONFIG_HOME/window-jump"
+echo 'mru_session_ms = 1234' > "$XDG_CONFIG_HOME/window-jump/config.toml"
+checked=$(tps config check 2>&1) || fail "config check failed: $checked"
+grep -q "copied the settings of window-jump" <<<"$checked" || fail "the old config was not carried over: $checked"
+grep -q 1234 "$XDG_CONFIG_HOME/touchpad-snap/config.toml" || fail "the carried-over config is not the old one"
+echo 'mru_session_ms = 99' > "$XDG_CONFIG_HOME/window-jump/config.toml"
+checked=$(tps config check 2>&1) || fail "config check failed: $checked"
+grep -q "copied" <<<"$checked" && fail "the old config was carried over twice"
+grep -q 1234 "$XDG_CONFIG_HOME/touchpad-snap/config.toml" || fail "the old config overwrote ours"
+rm -r "$XDG_CONFIG_HOME/window-jump" "$XDG_CONFIG_HOME/touchpad-snap"
+ok "window-jump's config file is carried over once"
+
 # The daemon, with the default config (no file): Super+Alt+N/P, Ctrl +
-# three fingers left/right and Alt + three fingers up/down. Release what the gdbus calls above grabbed by
-# letting the daemon take over (a new caller replaces the previous one).
-wj config check >/dev/null || fail "config check failed"
+# three fingers left/right and Alt + three fingers up/down. Release what the
+# gdbus calls above grabbed by letting the daemon take over (a new caller
+# replaces the previous one).
+tps config check >/dev/null || fail "config check failed"
 daemon_log="$E2E_ROOT/daemon.log"
 e2e_extra_logs+=("$daemon_log")
-wj daemon --verbose >"$daemon_log" 2>&1 &
+tps daemon --verbose >"$daemon_log" 2>&1 &
 daemon_pid=$!
 e2e_pids+=($daemon_pid)
 wait_for "daemon registration" 15 grep -q "registered 2 hotkey(s) and 2 swipe claim(s)" "$daemon_log"
@@ -191,14 +206,35 @@ ok "hotkey sessions: held modifiers keep digging past the timeout, release commi
 rm "$XDG_CONFIG_HOME/touchpad-snap/config.toml"
 
 # A second daemon refuses to start.
-if wj daemon >"$E2E_ROOT/daemon2.log" 2>&1; then fail "second daemon started"; fi
+if tps daemon >"$E2E_ROOT/daemon2.log" 2>&1; then fail "second daemon started"; fi
 grep -q "already running" "$E2E_ROOT/daemon2.log" || fail "second daemon gave no reason"
 ok "second daemon refused"
 
-doctor=$(wj doctor 2>&1) || fail "doctor reported problems: $doctor"
+doctor=$(tps doctor 2>&1) || fail "doctor reported problems: $doctor"
 echo "$doctor"
 grep -q "protocol 3" <<<"$doctor" || fail "doctor does not see the extension"
 ok "doctor"
+
+# What window-jump, this program's old name, can leave behind: its GNOME
+# Shell extension still enabled (played here by a process that owns its bus
+# name) and its autostart entry. doctor reports both; `autostart enable`
+# replaces the entry.
+"$E2E_OWN_NAME" org.hjosugi.WindowJump >"$E2E_ROOT/old-extension.log" 2>&1 &
+old_extension_pid=$!
+e2e_pids+=($old_extension_pid)
+wait_for "the stand-in for the old extension" 15 grep -q "owning" "$E2E_ROOT/old-extension.log"
+mkdir -p "$XDG_CONFIG_HOME/autostart"
+touch "$XDG_CONFIG_HOME/autostart/window-jump.desktop"
+if doctor=$(tps doctor 2>&1); then fail "doctor missed what window-jump left behind: $doctor"; fi
+grep -q "gnome-extensions disable window-jump@hjosugi.github.io" <<<"$doctor" || fail "doctor does not name the old extension: $doctor"
+grep -q "window-jump still starts at login" <<<"$doctor" || fail "doctor does not name the old autostart entry: $doctor"
+kill "$old_extension_pid"
+tps autostart enable >/dev/null || fail "autostart enable failed"
+[[ -e "$XDG_CONFIG_HOME/autostart/touchpad-snap.desktop" && ! -e "$XDG_CONFIG_HOME/autostart/window-jump.desktop" ]] \
+    || fail "autostart enable did not replace the old entry"
+tps autostart disable >/dev/null || fail "autostart disable failed"
+doctor=$(tps doctor 2>&1) || fail "doctor still reports problems: $doctor"
+ok "doctor reports what window-jump left behind; autostart enable replaces its entry"
 
 # When the daemon goes away, the extension lets go of its keys at once.
 kill "$daemon_pid"
