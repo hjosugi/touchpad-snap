@@ -1,13 +1,39 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-11-22
 
 ### Added
 
+- Sway, Hyprland and niri backends: window lists, `next`/`prev` and `activate`
+  work through each compositor's IPC, selected by `SWAYSOCK`,
+  `HYPRLAND_INSTANCE_SIGNATURE` or `NIRI_SOCKET`. Bind the commands in the
+  compositor config; the daemon is not needed there. (#9)
+- KDE Plasma backend: a KWin script bridges the window list and activation, so
+  `window-jump list` / `next` / `prev` work on Plasma Wayland. (#8)
+- Hotkeys through `org.freedesktop.portal.GlobalShortcuts`: set
+  `WINDOW_JUMP_HOTKEYS=portal` to let KDE or GNOME 48+ register the bindings,
+  with the desktop's confirmation dialog. GNOME still uses the extension by
+  default; other desktops try the portal automatically. (#11)
+- Optional `libinput` cargo feature: on desktops without the GNOME extension
+  (KDE, wlroots, X11 window managers) the daemon can read touchpad swipes
+  directly from libinput; needs the user in the `input` group. The compositor
+  still sees the same gesture, so use a modifier the desktop does not use for
+  its own gesture. (#10)
 - Default swipes: Alt + three fingers up / down jump to the next / previous
   window of the app, next to Ctrl + three fingers left / right. Plain three
   fingers up still open GNOME's overview. A config file with its own
   `[[swipe]]` tables is not affected. (#30)
+
+### Changed
+
+- Linux backend selection: GNOME (the default), KDE Plasma, then
+  Sway/Hyprland/niri. `window-jump doctor` names the detected backend and
+  reports portal and libinput availability.
+
+### Tests
+
+- The NixOS VM touchpad test also covers Alt + three fingers up/down, and CI
+  builds and tests the optional `libinput` feature. (#30, #10)
 
 ## [0.3.0] - 2026-11-22
 

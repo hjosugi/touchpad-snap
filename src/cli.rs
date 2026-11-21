@@ -15,7 +15,7 @@ use crate::{autostart, daemon, platform, session};
 #[command(
     name = "window-jump",
     version,
-    about = "Switch between windows of the same app with hotkeys and touchpad swipes (GNOME, Windows)",
+    about = "Switch between windows of the same app with hotkeys and touchpad swipes (GNOME, KDE Plasma, Sway, Hyprland, niri, Windows)",
     after_help = "Bind `window-jump next` / `window-jump prev` to any shortcut, or run `window-jump daemon` \
                   for the hotkeys and swipes in the config file."
 )]
@@ -328,6 +328,13 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
             }
         }
     }
+
+    #[cfg(target_os = "linux")]
+    println!("kde      {}", platform::kde::doctor());
+    #[cfg(target_os = "linux")]
+    println!("portal   {}", platform::portal::doctor());
+    #[cfg(target_os = "linux")]
+    println!("gestures {}", platform::libinput::doctor());
 
     if problems > 0 {
         bail!("{problems} problem(s) found");

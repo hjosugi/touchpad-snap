@@ -1,12 +1,13 @@
 # window-jump
 
-**いま使っているアプリの別ウィンドウ**へ、ショートカットキーか「修飾キー＋タッチパッドのスワイプ」で切り替えるツールです。macOS の `Cmd+`` ` や BetterTouchTool の「同じアプリのウィンドウを巡回」に当たる操作を、**GNOME（Wayland / X11）** と **Windows** で使えます。本体は Rust 製のネイティブバイナリで、Wayland で他に手段がない部分だけを小さな GNOME Shell 拡張が受け持ちます。
+**いま使っているアプリの別ウィンドウ**へ、ショートカットキーか「修飾キー＋タッチパッドのスワイプ」で切り替えるツールです。macOS の `Cmd+`` ` や BetterTouchTool の「同じアプリのウィンドウを巡回」に当たる操作を、**GNOME（Wayland / X11）**、**KDE Plasma**、**Sway・Hyprland・niri**、**Windows** で使えます。本体は Rust 製のネイティブバイナリで、Wayland で他に手段がない部分だけを小さな GNOME Shell 拡張または KWin スクリプトが受け持ちます。
 
 [English README](README.md)
 
 - **ショートカット**: 既定は `Super+Alt+N`（次）/ `Super+Alt+P`（前）。設定で変更できます。
 - **GNOME のスワイプ**: `Ctrl` を押しながら 3 本指で左右にスワイプ、または `Alt` を押しながら 3 本指で上下にスワイプ（設定で変更できます）。登録した組み合わせ（指の本数＋修飾キー）だけを GNOME から横取りするので、修飾キーなしの 3 本指スワイプは今まで通りワークスペース切り替えとアクティビティ画面に使えます。指を離さずに動かし続けると何枚も進み、戻すと戻ります。
 - **Windows のスワイプ**: Windows Precision Touchpad なら、GNOME と同じ「修飾キー＋3 本指スワイプ」が使えます。ただし Windows 標準の 3 / 4 本指ジェスチャーは先にオフにする必要があります（後述）。
+- **その他のデスクトップのスワイプ**: 省略可能な `--features libinput` 付きでビルドすると、KDE・Sway/Hyprland/niri・X11 のウィンドウマネージャーでは libinput から直接スワイプを読み取れます（後述）。GNOME では拡張を使う経路が優先です。
 - **切り替え先の表示**: 切り替えるたびに、ウィンドウのタイトルと「アプリ · 2 / 5」（GNOME ではアプリのアイコンも）を画面中央に一瞬表示します。スワイプで何枚も進むときに今どこにいるかが分かります。Windows では daemon 経由のときに表示されます。
 - **並び順**: `stable`（固定順で全ウィンドウを巡回）、`position`（画面の左から右）、`mru`（Alt+Tab と同じ動き。1 回押すと直近 2 枚を往復し、修飾キーを押したまま続けて押すと古い方へ進み、離したところで確定する）。
 - **他のツールからも使える**: `window-jump next` / `window-jump prev` は普通のコマンドなので、GNOME のカスタムショートカット、AutoHotkey、keyd、マウスのユーティリティなどにも割り当てられます。
@@ -27,6 +28,8 @@ window-jump@hjosugi.github.io               EnumWindows, SetForegroundWindow,
 ```
 
 Wayland では普通のプログラムが他のアプリのウィンドウを列挙・フォーカスしたり、グローバルなキーや GNOME が使うタッチパッドジェスチャーを受け取ったりできません。拡張は GNOME Shell の中で動き、その部分だけをセッションバスで提供します。どのウィンドウに切り替えるか、スワイプが何を意味するか、設定ファイルなどのロジックはすべて Rust 側にあります。daemon が終了すると、登録したキーやスワイプはその場で解放されます。
+
+KDE Plasma では小さな KWin スクリプトが拡張の役割を果たします（[KDE Plasma](#kde-plasma) を参照）。ホットキーはデスクトップの GlobalShortcuts ポータルから受け取るため、`window-jump daemon` もそのまま使えます。
 
 ## インストール
 
@@ -99,13 +102,96 @@ GNOME 拡張は `gnome-extension/window-jump@hjosugi.github.io` ディレクト�
 | `window-jump daemon [-v]` | 設定したホットキーとスワイプを待ち受ける。 |
 | `window-jump list [--json]` | アプリごとにウィンドウを一覧表示。 |
 | `window-jump activate <id>` | ID を指定して 1 枚フォーカス。 |
-| `window-jump doctor` | 設定・拡張・ウィンドウ一覧をまとめて確認。 |
+| `window-jump doctor` | 設定・バックエンド・ウィンドウ一覧をまとめて確認。 |
 | `window-jump config init\|path\|check` | 設定ファイルの作成 / 場所 / 検証。 |
 | `window-jump autostart enable\|disable` | ログイン時の daemon 自動起動。 |
 
 ### daemon を使わない場合
 
 コマンドを好きなショートカットツールに割り当てます。GNOME なら **設定 → キーボード → ショートカットの表示とカスタマイズ → カスタムショートカット** でコマンドに `window-jump next` を指定します（ウィンドウの列挙とフォーカスのため、GNOME では拡張は引き続き必要です）。
+
+## Sway・Hyprland・niri
+
+Sway・Hyprland・niri はウィンドウ一覧とフォーカスを独自の IPC で公開しているため、拡張も daemon もなしで動きます。`SWAYSOCK`・`HYPRLAND_INSTANCE_SIGNATURE`・`NIRI_SOCKET` からコンポジタを判別し、ソケットが無い場合は `XDG_CURRENT_DESKTOP` から分かりやすく案内します。`window-jump list`・`next`・`prev`・`activate`・`doctor` はそのまま使えます。
+
+これらのコンポジタにはグローバルホットキーの共通 API がないため、`window-jump daemon` の代わりにコンポジタ側の設定でコマンドを割り当てます。
+
+Sway（`~/.config/sway/config`）:
+
+```
+bindsym $mod+n exec window-jump next
+bindsym $mod+p exec window-jump prev
+```
+
+Hyprland（`~/.config/hypr/hyprland.conf`）:
+
+```
+bind = SUPER, N, exec, window-jump next
+bind = SUPER, P, exec, window-jump prev
+```
+
+niri（`~/.config/niri/config.kdl`）:
+
+```
+binds {
+    MOD+N { spawn "window-jump" "next"; }
+    MOD+P { spawn "window-jump" "prev"; }
+}
+```
+
+`window-jump daemon` はホットキーには不要です（実行するとコンポジタ設定への割り当てを促すメッセージを出します）。省略可能な `libinput` フィーチャー付きでビルドすると、タッチパッドのスワイプのために daemon を動かし続けます（次節）。無い場合はメッセージを出すだけです。切り替え先の表示は今のところ GNOME / Windows 向けです。`window-jump doctor` が判別したコンポジタ名を表示します。
+
+## KDE Plasma
+
+Plasma は GNOME Shell 拡張に対応していません。代わりに window-jump は小さな KWin スクリプトを `$XDG_RUNTIME_DIR/window-jump/` に書き出し、`org.kde.KWin.Scripting` 経由でプロセスごとの名前で読み込みます。スクリプトは `workspace.windowList()` を専用のセッションバスサービスへ送り、返ってきたフォーカス指示を実行します。システム設定へのインストールや有効化は不要で、`window-jump` コマンド（または daemon）が動いている間だけ存在し、終了時にアンロードされます。`window-jump list`・`next`・`prev`・`activate`・`doctor` はそのまま使え、`doctor` は検出したセッションと KWin スクリプトが利用できるかを表示します。MRU 順は KWin のスタッキング順によるベストエフォートです。
+
+`window-jump daemon` はホットキーを GlobalShortcuts ポータルから受け取り（デスクトップが確認ダイアログを表示します）、ウィンドウの列挙とフォーカスには KWin ブリッジを使います。`xdg-desktop-portal-kde` が必要です。ポータルが使えない場合、KDE では daemon がグローバルホットキーを登録できません。**システム設定 → ショートカット** で `window-jump next` / `window-jump prev` をコマンドのショートカットとして割り当て、daemon は使わないでください。タッチパッドのスワイプと切り替え先の表示は今のところ GNOME / Windows 向けで、KDE ではウィンドウの列挙とフォーカスのみです。
+
+ブリッジは通常は自動で後片付けされます。window-jump が強制終了された場合、読み込んだスクリプトはポーリングを止めますが KWin が再起動するまで登録されたまま残ります。ログアウトしてログインし直すか（この方法で読み込んだ KWin スクリプトは永続化されません）、読み込んだプロセスの pid を付けてアンロードします。
+
+```sh
+qdbus6 org.kde.KWin /Scripting unloadScript window-jump-kde-bridge-<pid>
+```
+
+生成ファイルは次のように削除できます。
+
+```sh
+rm -f "$XDG_RUNTIME_DIR"/window-jump/kde-bridge-*.js
+```
+
+## GlobalShortcuts ポータル（KDE、GNOME 48 以降）
+
+通常 `window-jump daemon` は GNOME 拡張経由でホットキーを登録します。代わりにデスクトップへ登録させるには、`WINDOW_JUMP_HOTKEYS=portal` を指定します。
+
+```sh
+WINDOW_JUMP_HOTKEYS=portal window-jump daemon
+```
+
+デスクトップが確認ダイアログを表示し、割り当てを記憶します。KDE では daemon のホットキーをこのポータルから受け取ります（上記の KWin スクリプトはウィンドウ一覧とフォーカス用です）。GNOME 48 以降も同じポータルに対応しています。GNOME ではウィンドウ一覧・HUD・スワイプに引き続き拡張を使い、ホットキーだけをポータルへ移します。未指定なら GNOME は従来どおり拡張のグラブを使い、それ以外のデスクトップはポータルを自動で試します（Sway・Hyprland・niri では上記のコンポジタ設定による割り当てが通常です）。ポータルの有無とアプリ ID（`io.github.hjosugi.WindowJump`）の登録結果は `window-jump doctor` で確認できます。アプリ ID を必要とするデスクトップでは、`.desktop` ファイル名と一致していれば受理されます。ポータルのセッションは 1 回しかバインドできないため、ホットキーの変更は daemon の再起動後に反映されます。
+
+## libinput ジェスチャー（KDE、Sway・Hyprland・niri、X11）
+
+GNOME では拡張、Windows では Precision Touchpad がスワイプを担当します。それ以外のデスクトップでは、省略可能な `libinput` フィーチャーを付けてビルドすると、libinput-gestures のように libinput から直接ジェスチャーを読めます。
+
+```sh
+cargo install --locked --path . --features libinput   # チェックアウトから
+# または
+cargo build --release --features libinput
+```
+
+`input` クレートは libinput と libudev を使うため、ビルドには開発用ファイルが必要です（Debian/Ubuntu なら `libinput-dev libudev-dev pkg-config`、Fedora なら `libinput-devel libudev-devel`、このリポジトリでは `nix develop`）。
+
+`/dev/input/event*` を読むには、ユーザーが `input` グループに入っている必要があります。
+
+```sh
+sudo usermod -aG input "$USER"
+```
+
+ログアウトしてログインし直すと反映されます。`window-jump doctor` の `gestures` 行に、フィーチャーが組み込まれているか、タッチパッドが見つかったか、`/dev/input` を読めるかが表示されます。`input` グループに入るとキーボードを含むすべての入力デバイスを読めるようになる点に注意してください。それが許容できない場合は、対象を絞った udev ルールを使ってください。
+
+あとは通常どおり daemon を動かします。Sway・Hyprland・niri ではホットキーは従来どおりコンポジタ設定から、KDE などのポータル対応デスクトップでは GlobalShortcuts から登録します。daemon は設定した `[[swipe]]` をタッチパッドから処理します。GNOME では拡張を使い続けてください。拡張はスワイプを横取りできるので、シェル側でも同じ操作が起きません。
+
+libinput はコンポジタが同じジェスチャーを見るのを止められません。window-jump は横取りしないため、コンポジタ側でもワークスペース切り替えやウィンドウ移動など、その指に割り当てられた動作が同時に起きる可能性があります。コンポジタが使っていない修飾キー＋指の本数（既定の `Ctrl`＋3 本指はたいてい安全です）を使うか、コンポジタ側のジェスチャーをオフにしてください。Windows Precision Touchpad と同じ制約です。
 
 ## 設定
 
@@ -133,7 +219,7 @@ action = "next"
 keys = "Super+Alt+P"
 action = "prev"
 
-[[swipe]]                 # GNOME / Windows（Precision Touchpad）
+[[swipe]]                 # GNOME / Windows（Precision Touchpad）/ libinput ビルド
 fingers = 3               # 3〜5
 modifiers = ["ctrl"]
 direction = "left"        # left | right | up | down

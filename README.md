@@ -2,9 +2,10 @@
 
 Switch between the windows **of the app you are in**, with a hotkey or a
 modifier + touchpad swipe — like `Cmd+`` ` on macOS or the "cycle windows of
-the current app" action in BetterTouchTool, for **GNOME (Wayland and X11)** and
-**Windows**. Written in Rust; a small GNOME Shell extension bridges to the
-compositor where Wayland allows nothing else.
+the current app" action in BetterTouchTool, for **GNOME (Wayland and X11)**,
+**KDE Plasma**, **Sway, Hyprland and niri**, and **Windows**. Written in Rust;
+a small GNOME Shell extension or KWin script bridges to the compositor where
+Wayland allows nothing else.
 
 [日本語の README はこちら](README.ja.md)
 
@@ -17,6 +18,10 @@ compositor where Wayland allows nothing else.
 - **Swipes on Windows**: the same modifier + three-finger swipe works on a
   Windows Precision Touchpad; Windows' own three/four-finger gestures must be
   turned off first (see below).
+- **Swipes elsewhere**: an optional `--features libinput` build reads swipes
+  straight from libinput on KDE, Sway/Hyprland/niri and X11 window managers
+  (see [libinput gestures](#libinput-gestures-kde-swayhyprlandniri-x11)).
+  On GNOME the extension path is preferred.
 - **Overlay**: after each jump the window title and "App · 2 / 5" (plus the
   app icon on GNOME) show briefly in the middle of the screen, so you can
   follow where you are while scrubbing. On Windows this needs the daemon.
@@ -48,6 +53,10 @@ grab global keys or see the touchpad gestures GNOME uses for itself. The
 extension runs inside GNOME Shell and offers exactly that on the session bus;
 all the logic (which window is next, what a swipe means, the config) is in the
 Rust program. Everything the daemon registered is dropped the moment it exits.
+
+On KDE Plasma a small KWin script plays the extension's role (see
+[KDE Plasma](#kde-plasma)); hotkeys come from the desktop's GlobalShortcuts
+portal, so `window-jump daemon` works there too.
 
 ## Install
 
@@ -147,7 +156,7 @@ directory: copy it to `~/.local/share/gnome-shell/extensions/`.
 | `window-jump daemon [-v]` | Serve the configured hotkeys and swipes. |
 | `window-jump list [--json]` | Show windows grouped by app. |
 | `window-jump activate <id>` | Focus one window by id. |
-| `window-jump doctor` | Check config, extension and window list. |
+| `window-jump doctor` | Check config, backend and window list. |
 | `window-jump config init\|path\|check` | Write / locate / validate the config file. |
 | `window-jump autostart enable\|disable` | Start the daemon at login. |
 
@@ -156,6 +165,148 @@ directory: copy it to `~/.local/share/gnome-shell/extensions/`.
 Bind the commands to any shortcut tool instead. GNOME: **Settings → Keyboard →
 View and Customise Shortcuts → Custom Shortcuts**, command `window-jump next`.
 (The extension is still needed on GNOME, for listing and focusing windows.)
+
+## Sway, Hyprland, niri
+
+Sway, Hyprland and niri expose their window lists and focus over their own
+IPC, so window-jump works there without an extension and without the daemon.
+It detects the compositor from `SWAYSOCK`, `HYPRLAND_INSTANCE_SIGNATURE` or
+`NIRI_SOCKET`, falling back to `XDG_CURRENT_DESKTOP` to explain a missing
+socket. `window-jump list`, `next`, `prev`, `activate` and `doctor` work as
+usual.
+
+Global hotkeys have no portable API on these compositors, so bind the command
+in the compositor's own config instead of running `window-jump daemon`.
+
+Sway (`~/.config/sway/config`):
+
+```
+bindsym $mod+n exec window-jump next
+bindsym $mod+p exec window-jump prev
+```
+
+Hyprland (`~/.config/hypr/hyprland.conf`):
+
+```
+bind = SUPER, N, exec, window-jump next
+bind = SUPER, P, exec, window-jump prev
+```
+
+niri (`~/.config/niri/config.kdl`):
+
+```
+binds {
+    MOD+N { spawn "window-jump" "next"; }
+    MOD+P { spawn "window-jump" "prev"; }
+}
+```
+
+`window-jump daemon` is not needed for hotkeys on these compositors; it
+prints a reminder to bind the commands in the compositor config. Built with the
+optional `libinput` feature it stays running for touchpad swipes (next
+section); without it, it only prints the reminder. The overlay is a
+GNOME/Windows feature for now. `window-jump doctor` names the compositor it
+detected.
+
+## KDE Plasma
+
+Plasma does not support GNOME Shell extensions. Instead, window-jump writes a
+small KWin script to `$XDG_RUNTIME_DIR/window-jump/` and loads it on demand
+through `org.kde.KWin.Scripting` under a per-process name. The script sends
+`workspace.windowList()` over a private session-bus service and applies the
+focus command that comes back. Nothing is installed in System Settings and
+nothing is enabled there: the script exists only while the `window-jump`
+command (or the daemon) is running, and is unloaded again when it exits.
+`window-jump list`, `next`, `prev`, `activate` and `doctor` work as usual, and
+`doctor` reports the detected session and whether KWin scripting is reachable.
+MRU order is best effort, taken from KWin's stacking order.
+
+`window-jump daemon` takes its hotkeys from the
+[GlobalShortcuts portal](#globalshortcuts-portal-kde-gnome-48) (the desktop
+shows a confirmation dialog), and uses the KWin bridge for listing and
+focusing windows. This needs `xdg-desktop-portal-kde` running. If the portal is
+unavailable, the daemon cannot grab global hotkeys on KDE: bind
+`window-jump next` / `window-jump prev` as command shortcuts in **System
+Settings → Shortcuts** instead, and do not run the daemon. Touchpad swipes and
+the overlay are GNOME/Windows features for now; KDE only lists and focuses
+windows.
+
+The bridge is normally cleaned up automatically. If window-jump was killed
+hard, its script stops polling but stays registered until KWin restarts. Log
+out and back in (KWin scripts loaded this way are not persistent), or unload it
+with the pid of the process that loaded it:
+
+```sh
+qdbus6 org.kde.KWin /Scripting unloadScript window-jump-kde-bridge-<pid>
+```
+
+The generated file can be removed with:
+
+```sh
+rm -f "$XDG_RUNTIME_DIR"/window-jump/kde-bridge-*.js
+```
+
+## GlobalShortcuts portal (KDE, GNOME 48+)
+
+Normally `window-jump daemon` grabs hotkeys through the GNOME extension. To let
+the desktop register them instead, set `WINDOW_JUMP_HOTKEYS=portal`:
+
+```sh
+WINDOW_JUMP_HOTKEYS=portal window-jump daemon
+```
+
+The desktop then shows a confirmation dialog and remembers the bindings. On
+KDE this is how the daemon gets its hotkeys; the KWin script described above is
+only for window listing and focus, and GNOME 48+ implements the same portal. On
+GNOME the extension is still used for window listing, the HUD and swipes — only
+the hotkeys move to the portal. When the variable is unset, GNOME keeps using
+the extension's grabs and other desktops try the portal automatically; on
+Sway, Hyprland and niri the compositor config bindings above are the usual
+choice. `window-jump doctor` reports whether the portal is available and whether the
+app id (`io.github.hjosugi.WindowJump`) was registered; desktops that require it
+accept the id when it matches a `.desktop` file. Changing the hotkey list takes
+effect after a daemon restart, since a portal session is bound only once.
+
+## libinput gestures (KDE, Sway/Hyprland/niri, X11)
+
+GNOME's extension and Windows Precision Touchpads provide swipes out of the
+box. Elsewhere the daemon can read gestures directly from libinput, like
+libinput-gestures, if window-jump is built with the optional `libinput` feature:
+
+```sh
+cargo install --locked --path . --features libinput   # from a checkout
+# or
+cargo build --release --features libinput
+```
+
+The `input` crate uses libinput and libudev, so the development files are
+needed to build (`libinput-dev libudev-dev pkg-config` on Debian/Ubuntu,
+`libinput-devel libudev-devel` on Fedora, or `nix develop` in this repository).
+
+Reading `/dev/input/event*` needs the user in the `input` group:
+
+```sh
+sudo usermod -aG input "$USER"
+```
+
+Log out and back in for the new group to take effect. `window-jump doctor` has
+a `gestures` line: whether the feature is compiled in, whether a touchpad was
+found, and whether `/dev/input` is readable. Group membership lets your user
+read every input device, keyboards included; use a narrower udev rule instead
+if that trade-off is not acceptable.
+
+Then run the daemon as usual. On Sway, Hyprland and niri the hotkeys still come
+from the compositor config; on KDE and other portal desktops from
+GlobalShortcuts. The daemon serves the configured `[[swipe]]` bindings from the
+touchpad. On GNOME keep using the extension: it can claim swipes, so the shell
+does not also act on them.
+
+libinput cannot stop the compositor from seeing the same gesture. window-jump
+does not intercept it, so the compositor may switch workspace, move a window
+or do whatever else it has bound to those fingers at the same time. Use a
+modifier + finger count the compositor does not use for its own gestures (the
+default `Ctrl` + three fingers is usually safe), or turn the compositor
+gesture off. This is the same limitation as Windows Precision Touchpad input.
 
 ## Configuration
 
@@ -185,7 +336,7 @@ action = "next"
 keys = "Super+Alt+P"
 action = "prev"
 
-[[swipe]]                 # GNOME; Windows with a Precision Touchpad
+[[swipe]]                 # GNOME; Windows and libinput builds elsewhere
 fingers = 3               # 3–5
 modifiers = ["ctrl"]
 direction = "left"        # left | right | up | down

@@ -278,11 +278,13 @@ keys = "Super+Alt+P"
 action = "prev"
 
 # Touchpad swipes, held together with modifier keys: on GNOME via the shell
-# extension, on Windows from a Precision Touchpad's raw HID input. On GNOME a
-# claimed swipe is taken away from the shell, so Ctrl or Alt + three fingers
-# no longer switch workspace or open the overview, while plain three fingers
-# still do. On Windows, turn the built-in three/four-finger gestures off
-# first.
+# extension, on Windows from a Precision Touchpad's raw HID input, and on other
+# desktops from libinput when window-jump is built with --features libinput.
+# On GNOME a claimed swipe is taken away from the shell, so Ctrl or Alt + three
+# fingers no longer switch workspace or open the overview, while plain three
+# fingers still do. Windows and libinput cannot intercept a gesture: turn the
+# built-in (compositor) three/four-finger gestures off, or use modifiers the
+# desktop does not use.
 #
 # Each [[swipe]] is one combination: `fingers` (3 to 5), `modifiers` (any of
 # "ctrl", "alt", "shift", "super"; at least one is wise), `direction`
