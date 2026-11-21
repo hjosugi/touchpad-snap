@@ -102,6 +102,11 @@ or through dconf) and run `window-jump autostart enable`. Without NixOS:
    set e.g. *Three-finger swipe left* to **Custom shortcut** and press
    `Win+Alt+N`; *right* to `Win+Alt+P`.
 
+`window-jumpw.exe` shows a notification-area icon. Its menu reports how many
+hotkeys were registered (and names any another app already took), and offers
+**Reload config**, **Open config file**, **Start at login** and **Quit** — no
+Task Manager needed to stop the daemon.
+
 Windows are grouped by executable (`notepad.exe`, `Code.exe`…); UWP apps are
 looked up behind their ApplicationFrameHost frame. Windows on other virtual
 desktops are not included yet.
