@@ -192,7 +192,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         right: WIDTH - 24,
                         bottom: 62,
                     };
-                    DrawTextW(dc, title.as_mut_ptr(), title.len() as i32, &mut r, flags);
+                    // An empty Vec's pointer is dangling (0x2) and DrawTextW reads it
+                    // even for a zero length, which crashed the daemon: WM_PAINT can
+                    // arrive before anything was shown.
+                    if !title.is_empty() {
+                        DrawTextW(dc, title.as_mut_ptr(), title.len() as i32, &mut r, flags);
+                    }
 
                     let detail_font = font(17, FW_NORMAL as i32);
                     SelectObject(dc, detail_font);
@@ -203,7 +208,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         right: WIDTH - 24,
                         bottom: HEIGHT - 14,
                     };
-                    DrawTextW(dc, detail.as_mut_ptr(), detail.len() as i32, &mut r, flags);
+                    if !detail.is_empty() {
+                        DrawTextW(dc, detail.as_mut_ptr(), detail.len() as i32, &mut r, flags);
+                    }
 
                     SelectObject(dc, old);
                     DeleteObject(title_font);

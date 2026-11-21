@@ -47,24 +47,6 @@ public static class Win {
         }
         return sent;
     }
-    [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
-    [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
-    [DllImport("user32.dll")] static extern bool PeekMessage(out MSG m, IntPtr h, uint min, uint max, uint remove);
-    [DllImport("user32.dll", SetLastError = true)] public static extern bool PostThreadMessage(uint thread, uint msg, IntPtr w, IntPtr l);
-    [StructLayout(LayoutKind.Sequential)] public struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int x; public int y; }
-    // DIAGNOSTIC: does a hotkey registered by this very thread fire on SendInput?
-    public static string SelfHotkey(params byte[] keys) {
-        if (!RegisterHotKey(IntPtr.Zero, 77, 0x4000 | 0x1 | 0x2, 0x4D)) return "register failed " + Marshal.GetLastWin32Error();
-        Chord(keys);
-        var until = DateTime.Now.AddSeconds(3);
-        MSG m;
-        while (DateTime.Now < until) {
-            if (PeekMessage(out m, IntPtr.Zero, 0, 0, 1) && m.message == 0x0312) { UnregisterHotKey(IntPtr.Zero, 77); return "fired"; }
-            System.Threading.Thread.Sleep(20);
-        }
-        UnregisterHotKey(IntPtr.Zero, 77);
-        return "not fired";
-    }
     public static bool HudVisible() {
         var h = FindWindow("window-jump-hud", null);
         return h != IntPtr.Zero && IsWindowVisible(h);
@@ -152,26 +134,11 @@ try {
         -RedirectStandardError $log -RedirectStandardOutput (Join-Path $work 'daemon.out') -PassThru
     WaitFor 'daemon registration' { (Test-Path $log) -and (Select-String -Path $log -Pattern 'registered 1 hotkey' -Quiet) }
     Ok 'daemon registered Ctrl+Alt+N'
+    # It must still be running a moment later (it once died at the first
+    # paint of its overlay window).
     Start-Sleep -Seconds 3
     $daemon.Refresh()
-    Write-Host ("DIAGNOSTIC after 3 s, daemon exited: {0} code: {1}" -f $daemon.HasExited, $(if ($daemon.HasExited) { '0x{0:X8}' -f $daemon.ExitCode } else { '-' }))
-    if ($daemon.HasExited) {
-        $cdb = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-        Write-Host "DIAGNOSTIC cdb: $cdb"
-        if ($cdb) {
-            $out = Join-Path $work 'cdb.txt'
-            $script = Join-Path $work 'cdb-script.txt'
-            Set-Content -Path $script -Encoding ascii -Value @(
-                'sxe -c ".lastevent;.ecxr;kp 40;q" *',
-                'g'
-            )
-            $dbg = Start-Process -FilePath $cdb.FullName -ArgumentList @('-G', '-y', (Split-Path $Bin), '-cf', $script, $Bin, '--config', $cfg, 'daemon') `
-                -RedirectStandardOutput $out -PassThru
-            if (-not $dbg.WaitForExit(30000)) { Stop-Process -Id $dbg.Id -Force }
-            Write-Host 'DIAGNOSTIC cdb output:'
-            Get-Content $out | Select-Object -Last 70 | ForEach-Object { Write-Host "CDB $_" }
-        }
-    }
+    if ($daemon.HasExited) { Fail ('the daemon exited with 0x{0:X8}' -f $daemon.ExitCode) }
 
     & $Bin activate $n[0].id
     WaitFor 'first Notepad focused' { (Focused) -eq $n[0].id }
@@ -179,12 +146,8 @@ try {
     # anything: type into the focused Notepad and read it back.
     $sent = [Win]::Chord(0x51)  # Q
     WaitFor "typed key to reach Notepad (SendInput accepted $sent of 2)" { [Win]::NotepadText([IntPtr]$n[0].id) -match 'q' } 5
-    Write-Host "DIAGNOSTIC self hotkey Ctrl+Alt+M: $([Win]::SelfHotkey(0x11, 0x12, 0x4D))"
     $sent = [Win]::Chord(0x11, 0x12, 0x4E)  # Ctrl, Alt, N
-    Write-Host "SendInput accepted $sent of 6 events for Ctrl+Alt+N"
-    Start-Sleep -Seconds 2
-    $daemon.Refresh()
-    Write-Host ("DIAGNOSTIC daemon exited: {0} code: {1}" -f $daemon.HasExited, $(if ($daemon.HasExited) { '0x{0:X8}' -f $daemon.ExitCode } else { '-' }))
+    if ($sent -ne 6) { Fail "SendInput accepted only $sent of 6 events for Ctrl+Alt+N" }
     WaitFor 'Ctrl+Alt+N -> second Notepad' { (Focused) -eq $n[1].id }
     WaitFor 'overlay shown' { [Win]::HudVisible() } 5
     if (Snapshot | Where-Object { $_.wm_class -eq 'window-jump-hud' }) { Fail 'the overlay shows up in the window list' }
