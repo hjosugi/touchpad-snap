@@ -248,10 +248,12 @@ mod tests {
     fn shipped_template_matches_the_generated_unit() {
         let template =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("contrib/systemd/touchpad-snap.service");
-        assert_eq!(
-            std::fs::read_to_string(template).unwrap(),
-            unit_file("touchpad-snap")
-        );
+        // Git on Windows checks the template out with CRLF; the generated
+        // unit always uses LF.
+        let template = std::fs::read_to_string(template)
+            .unwrap()
+            .replace("\r\n", "\n");
+        assert_eq!(template, unit_file("touchpad-snap"));
     }
 
     #[test]
