@@ -155,6 +155,19 @@ try {
     Start-Sleep -Seconds 3
     $daemon.Refresh()
     Write-Host ("DIAGNOSTIC after 3 s, daemon exited: {0} code: {1}" -f $daemon.HasExited, $(if ($daemon.HasExited) { '0x{0:X8}' -f $daemon.ExitCode } else { '-' }))
+    if ($daemon.HasExited) {
+        $cdb = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+        Write-Host "DIAGNOSTIC cdb: $cdb"
+        if ($cdb) {
+            $out = Join-Path $work 'cdb.txt'
+            $cmds = 'sxe -c ".ecxr;kp 40;q" av; sxe -c ".ecxr;kp 40;q" c000041d; sxe -c "kp 40;q" c0000409; g'
+            $dbg = Start-Process -FilePath $cdb.FullName -ArgumentList @('-G', '-y', (Split-Path $Bin), '-c', "`"$cmds`"", $Bin, '--config', $cfg, 'daemon') `
+                -RedirectStandardOutput $out -PassThru
+            if (-not $dbg.WaitForExit(30000)) { Stop-Process -Id $dbg.Id -Force }
+            Write-Host 'DIAGNOSTIC cdb output:'
+            Get-Content $out | Select-Object -Last 70 | ForEach-Object { Write-Host "CDB $_" }
+        }
+    }
 
     & $Bin activate $n[0].id
     WaitFor 'first Notepad focused' { (Focused) -eq $n[0].id }
