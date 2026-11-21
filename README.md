@@ -103,8 +103,19 @@ or through dconf) and run `window-jump autostart enable`. Without NixOS:
    `Win+Alt+N`; *right* to `Win+Alt+P`.
 
 Windows are grouped by executable (`notepad.exe`, `Code.exe`…); UWP apps are
-looked up behind their ApplicationFrameHost frame. Windows on other virtual
-desktops are not included yet.
+looked up behind their ApplicationFrameHost frame.
+
+Windows on other virtual desktops are included when `workspace = "all"` (the
+default) and skipped when it is `"current"`. The current desktop is `ws 0`;
+other desktops get positive numbers. Jumping to such a window is best effort:
+Windows has no documented API to switch desktops, so window-jump sends
+`Win+Ctrl+Left/Right` (at most eight steps each way) and reports an error if
+the window cannot be reached. Suspended UWP windows stay hidden.
+
+Manual test: create a second desktop with `Win+Ctrl+D`, open a second Notepad
+there (or move one with Task View), return with `Win+Ctrl+Left`, then run
+`window-jump list` (the second Notepad shows a positive `ws`) and
+`window-jump next` from the first Notepad.
 
 ### From source
 
@@ -194,6 +205,8 @@ cargo build --all-targets && ./test/e2e/gnome.sh
                                # end to end in a throw-away headless GNOME Shell:
                                # real windows, hotkeys typed on a virtual keyboard
 pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe   # on Windows
+pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe -VirtualDesktops
+                               # also covers a window on a second virtual desktop
 nix flake check                # Nix build (runs cargo test)
 ```
 

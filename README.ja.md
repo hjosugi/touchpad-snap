@@ -75,7 +75,11 @@ environment.systemPackages = [
    ```
 3. タッチパッド: **設定 → Bluetooth とデバイス → タッチパッド → 高度なジェスチャー** で、たとえば「3 本指で左にスワイプ」を **カスタム ショートカット** にして `Win+Alt+N` を、右に `Win+Alt+P` を割り当てます。
 
-ウィンドウは実行ファイル（`notepad.exe`、`Code.exe` など）単位でまとめます。UWP アプリは ApplicationFrameHost の枠の裏にある本体のプロセスで判定します。別の仮想デスクトップのウィンドウはまだ対象外です。
+ウィンドウは実行ファイル（`notepad.exe`、`Code.exe` など）単位でまとめます。UWP アプリは ApplicationFrameHost の枠の裏にある本体のプロセスで判定します。
+
+別の仮想デスクトップのウィンドウも、`workspace = "all"`（既定）なら対象に含まれ、`"current"` なら除外されます。いまのデスクトップが `ws 0`、ほかのデスクトップが正の番号です。別デスクトップのウィンドウへのジャンプはベストエフォートです。デスクトップを切り替える公開 API がないため、`Win+Ctrl+左/右` を最大 8 回ずつ送り、届かなければエラーを表示します。中断された UWP ウィンドウは表示されません。
+
+手動テスト: `Win+Ctrl+D` で 2 つ目のデスクトップを作り、そこで 2 つ目の Notepad を開き（またはタスク ビューで移動し）、`Win+Ctrl+左` で戻ってから `window-jump list`（2 つ目の Notepad が正の `ws`）と、1 つ目の Notepad での `window-jump next` を確認します。
 
 ### ソースから
 
@@ -156,6 +160,8 @@ cargo build --all-targets && ./test/e2e/gnome.sh
                                # 使い捨ての headless GNOME Shell での e2e テスト:
                                # 本物のウィンドウと、仮想キーボードで押したホットキー
 pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe   # Windows 上で
+pwsh test/e2e/windows.ps1 -Bin target/debug/window-jump.exe -VirtualDesktops
+                               # 2 つ目の仮想デスクトップ上のウィンドウも確認
 nix flake check                # Nix ビルド（cargo test を含む）
 ```
 
