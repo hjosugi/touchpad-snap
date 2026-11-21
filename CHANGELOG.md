@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- The daemon reloads `config.toml` when it changes (checked every two
+  seconds) and registers the new hotkeys and swipes without a restart. An
+  invalid edit is reported once and the previous config stays in effect; a
+  removed file means the defaults. (#4)
+
 ## [0.1.0] - 2026-11-21
 
 First release.

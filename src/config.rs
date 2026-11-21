@@ -190,6 +190,7 @@ pub fn load(path: &Path) -> Result<Config> {
 /// The commented starter file written by `window-jump config init`.
 pub const TEMPLATE: &str = r#"# window-jump configuration.
 # Every setting is optional; what is shown here are the defaults.
+# A running daemon picks up changes within about two seconds.
 
 # How the windows of the focused app are ordered when cycling:
 #   "stable"   fixed order (creation order); next/prev walk every window

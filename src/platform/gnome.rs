@@ -12,6 +12,7 @@
 //! See gnome-extension/README.md for the protocol.
 
 use std::sync::mpsc;
+use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail};
 use zbus::blocking::{Connection, MessageIterator, Proxy};
@@ -138,11 +139,9 @@ enum Incoming {
     Owner(bool),
 }
 
-pub fn run_daemon(
-    cfg: &Config,
-    hotkeys: &[Hotkey],
-    handle: &mut dyn FnMut(&dyn Backend, Event),
-) -> Result<()> {
+pub fn run_daemon(cfg: &Config, hotkeys: &[Hotkey], handle: &mut super::Handler) -> Result<()> {
+    let mut cfg = cfg.clone();
+    let mut hotkeys = hotkeys.to_vec();
     let gnome = Gnome::connect()?;
     match gnome
         .conn
@@ -194,26 +193,55 @@ pub fn run_daemon(
         }
     });
 
-    if let Err(e) = gnome.register(cfg, hotkeys) {
+    if let Err(e) = gnome.register(&cfg, &hotkeys) {
         eprintln!("window-jump: waiting for the GNOME Shell extension: {e:#}");
     }
 
-    for incoming in rx {
+    let mut last_tick = Instant::now();
+    loop {
+        let wait = super::TICK.saturating_sub(last_tick.elapsed());
+        let incoming = match rx.recv_timeout(wait) {
+            Ok(incoming) => Some(incoming),
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+        // Ticks are due by the clock, not by silence, so a stream of swipe
+        // events cannot starve them.
+        let mut changed = None;
+        if last_tick.elapsed() >= super::TICK {
+            last_tick = Instant::now();
+            changed = handle(&gnome, Event::Tick);
+        }
         match incoming {
-            Incoming::Owner(true) => {
+            Some(Incoming::Owner(true)) => {
                 // The shell restarted or the extension was re-enabled; it has
                 // forgotten our hotkeys and claims.
-                if let Err(e) = gnome.register(cfg, hotkeys) {
+                if let Err(e) = gnome.register(&cfg, &hotkeys) {
                     eprintln!("window-jump: registering with the GNOME extension failed: {e:#}");
                 }
             }
-            Incoming::Owner(false) => {
+            Some(Incoming::Owner(false)) => {
                 eprintln!("window-jump: the GNOME extension went away; waiting for it to return");
             }
-            Incoming::Signal(msg) => {
+            Some(Incoming::Signal(msg)) => {
                 if let Some(event) = parse_signal(&msg) {
-                    handle(&gnome, event);
+                    changed = changed.or(handle(&gnome, event));
                 }
+            }
+            None => {}
+        }
+        if let Some(new) = changed {
+            match new.validate() {
+                Ok(parsed) => {
+                    cfg = new;
+                    hotkeys = parsed;
+                    if let Err(e) = gnome.register(&cfg, &hotkeys) {
+                        eprintln!(
+                            "window-jump: registering with the GNOME extension failed: {e:#}"
+                        );
+                    }
+                }
+                Err(e) => eprintln!("window-jump: ignoring an invalid config: {e:#}"),
             }
         }
     }
