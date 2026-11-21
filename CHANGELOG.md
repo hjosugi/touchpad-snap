@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-11-21
 
 ### Added
 
@@ -16,6 +16,18 @@
   overlay. (#5)
 - Windows: the same overlay from the daemon, as a layered, click-through,
   topmost window that never takes focus. (#5)
+
+### Changed
+
+- The Nix package no longer installs `window-jumpw` on Linux (it is the
+  Windows console-less daemon).
+
+### Tests
+
+- The Windows end-to-end test now starts the daemon, types its hotkey with
+  `SendInput` and checks the jump and the overlay (#20). The GNOME one types
+  hotkeys on a virtual keyboard, rewrites the config under a running daemon,
+  and runs on GNOME 46, 48, 49, 50 and 51.
 
 ## [0.1.0] - 2026-11-21
 
