@@ -107,6 +107,16 @@ GNOME 拡張は `gnome-extension/window-jump@hjosugi.github.io` ディレクト�
 
 コマンドを好きなショートカットツールに割り当てます。GNOME なら **設定 → キーボード → ショートカットの表示とカスタマイズ → カスタムショートカット** でコマンドに `window-jump next` を指定します（ウィンドウの列挙とフォーカスのため、GNOME では拡張は引き続き必要です）。
 
+### GlobalShortcuts ポータル（KDE、GNOME 48 以降）
+
+通常 `window-jump daemon` は GNOME 拡張経由でホットキーを登録します。代わりにデスクトップへ登録させるには、`WINDOW_JUMP_HOTKEYS=portal` を指定します。
+
+```sh
+WINDOW_JUMP_HOTKEYS=portal window-jump daemon
+```
+
+デスクトップが確認ダイアログを表示し、割り当てを記憶します。KDE では KWin スクリプトが不要で、GNOME 48 以降も同じポータルに対応しています。GNOME ではウィンドウ一覧・HUD・スワイプに引き続き拡張を使い、ホットキーだけをポータルへ移します。未指定なら GNOME は従来どおり拡張のグラブを使い、それ以外のデスクトップはポータルを自動で試します。ポータルの有無とアプリ ID（`io.github.hjosugi.WindowJump`）の登録結果は `window-jump doctor` で確認できます。アプリ ID を必要とするデスクトップでは、`.desktop` ファイル名と一致していれば受理されます。ポータルのセッションは 1 回しかバインドできないため、ホットキーの変更は daemon の再起動後に反映されます。
+
 ## 設定
 
 `window-jump config init` でコメント付きのファイルを `~/.config/window-jump/config.toml`（Windows は `%APPDATA%\window-jump\config.toml`）に作ります。項目はすべて省略可能で、既定値は次の通りです。

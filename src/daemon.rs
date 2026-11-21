@@ -253,9 +253,13 @@ pub fn run(cfg: Config, config_path: PathBuf, verbose: bool) -> Result<()> {
     let hotkeys = cfg.validate()?;
     let mut handler = Handler::new(cfg.clone(), session::default_path(), verbose)
         .watch_config(config_path.clone());
-    platform::run_daemon(&cfg, &hotkeys, &config_path, &mut |backend, event| {
-        handler.handle(backend, event)
-    })
+    platform::run_daemon(
+        &cfg,
+        &hotkeys,
+        &config_path,
+        verbose,
+        &mut |backend, event| handler.handle(backend, event),
+    )
 }
 
 #[cfg(test)]

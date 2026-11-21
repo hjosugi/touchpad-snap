@@ -7,6 +7,8 @@
 
 use std::path::Path;
 
+#[cfg(target_os = "linux")]
+use anyhow::Context;
 use anyhow::Result;
 
 use crate::config::{Claim, Config};
@@ -16,6 +18,8 @@ use crate::model::Snapshot;
 
 #[cfg(target_os = "linux")]
 pub mod gnome;
+#[cfg(target_os = "linux")]
+pub mod portal;
 #[cfg(windows)]
 pub mod windows;
 #[cfg(windows)]
@@ -82,6 +86,59 @@ pub fn connect() -> Result<Box<dyn Backend>> {
 /// changed and the platform has to register its hotkeys and swipes again.
 pub type Handler<'a> = dyn FnMut(&dyn Backend, Event) -> Option<Config> + 'a;
 
+/// Environment variable choosing where Linux hotkeys come from. `portal`
+/// selects the XDG GlobalShortcuts portal; unset keeps GNOME's extension
+/// grabs when running GNOME, and tries the portal elsewhere.
+#[cfg(target_os = "linux")]
+pub const HOTKEY_SOURCE_ENV: &str = "WINDOW_JUMP_HOTKEYS";
+
+/// Where global hotkeys are registered on Linux.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeySource {
+    /// The window-jump GNOME Shell extension (`SetAccelerators`).
+    Gnome,
+    /// `org.freedesktop.portal.GlobalShortcuts`.
+    Portal,
+}
+
+/// Chooses the hotkey source from [`HOTKEY_SOURCE_ENV`] and the desktop name
+/// (`XDG_CURRENT_DESKTOP`). Pure so the decision is unit-tested.
+#[cfg(target_os = "linux")]
+pub fn hotkey_source(requested: Option<&str>, desktop: Option<&str>) -> HotkeySource {
+    match requested.map(str::trim) {
+        Some("portal") | Some("globalshortcuts") => HotkeySource::Portal,
+        Some("extension") | Some("gnome") => HotkeySource::Gnome,
+        _ if is_gnome(desktop) => HotkeySource::Gnome,
+        _ => HotkeySource::Portal,
+    }
+}
+
+/// Whether `XDG_CURRENT_DESKTOP` names GNOME (possibly as one of several
+/// desktops, e.g. `ubuntu:GNOME`).
+#[cfg(target_os = "linux")]
+pub fn is_gnome(desktop: Option<&str>) -> bool {
+    desktop.is_some_and(|desktop| {
+        desktop
+            .split(':')
+            .any(|part| part.eq_ignore_ascii_case("gnome"))
+    })
+}
+
+/// Holds the daemon's session-bus name so a second daemon refuses to start.
+#[cfg(target_os = "linux")]
+pub(crate) fn claim_daemon_name(conn: &zbus::blocking::Connection) -> Result<()> {
+    use zbus::fdo::RequestNameFlags;
+    const DAEMON_NAME: &str = "org.hjosugi.WindowJump.Daemon";
+    match conn.request_name_with_flags(DAEMON_NAME, RequestNameFlags::DoNotQueue.into()) {
+        Err(zbus::Error::NameTaken) => {
+            anyhow::bail!("another window-jump daemon is already running")
+        }
+        Err(e) => Err(e).context("claiming the daemon bus name"),
+        Ok(_) => Ok(()),
+    }
+}
+
 /// Registers the configured hotkeys and swipes, then calls `handle` for every
 /// event until the process is stopped. `cfg` must have passed
 /// [`Config::validate`], which also produced `hotkeys`. `config_path` is the
@@ -90,20 +147,68 @@ pub fn run_daemon(
     cfg: &Config,
     hotkeys: &[Hotkey],
     config_path: &Path,
+    verbose: bool,
     handle: &mut Handler,
 ) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         let _ = config_path;
-        gnome::run_daemon(cfg, hotkeys, handle)
+        let requested = std::env::var(HOTKEY_SOURCE_ENV).ok();
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
+        let gnome = is_gnome(desktop.as_deref());
+        match hotkey_source(requested.as_deref(), desktop.as_deref()) {
+            HotkeySource::Gnome => gnome::run_daemon(cfg, hotkeys, verbose, handle),
+            // On GNOME the extension still serves swipes and the HUD; only
+            // the hotkey grabs move to the portal.
+            HotkeySource::Portal if gnome => {
+                gnome::run_daemon_with_portal(cfg, hotkeys, verbose, handle)
+            }
+            HotkeySource::Portal => portal::run_hotkeys_with(cfg, hotkeys, verbose, handle),
+        }
     }
     #[cfg(windows)]
     {
-        windows::run_daemon(cfg, hotkeys, config_path, handle)
+        windows::run_daemon(cfg, hotkeys, config_path, verbose, handle)
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let _ = (cfg, hotkeys, config_path, handle);
+        let _ = (cfg, hotkeys, config_path, verbose, handle);
         anyhow::bail!("window-jump supports GNOME (Linux) and Windows only, for now")
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn portal_is_opt_in_on_gnome_and_the_default_elsewhere() {
+        assert_eq!(hotkey_source(None, Some("GNOME")), HotkeySource::Gnome);
+        assert_eq!(
+            hotkey_source(None, Some("ubuntu:GNOME")),
+            HotkeySource::Gnome
+        );
+        assert_eq!(hotkey_source(None, Some("KDE")), HotkeySource::Portal);
+        assert_eq!(hotkey_source(None, None), HotkeySource::Portal);
+    }
+
+    #[test]
+    fn the_environment_can_override_the_desktop_default() {
+        assert_eq!(
+            hotkey_source(Some("portal"), Some("GNOME")),
+            HotkeySource::Portal
+        );
+        assert_eq!(
+            hotkey_source(Some(" portal "), Some("GNOME")),
+            HotkeySource::Portal
+        );
+        assert_eq!(
+            hotkey_source(Some("extension"), Some("KDE")),
+            HotkeySource::Gnome
+        );
+        assert_eq!(
+            hotkey_source(Some("nonsense"), Some("GNOME")),
+            HotkeySource::Gnome
+        );
     }
 }

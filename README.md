@@ -155,6 +155,25 @@ Bind the commands to any shortcut tool instead. GNOME: **Settings → Keyboard �
 View and Customise Shortcuts → Custom Shortcuts**, command `window-jump next`.
 (The extension is still needed on GNOME, for listing and focusing windows.)
 
+### GlobalShortcuts portal (KDE, GNOME 48+)
+
+Normally `window-jump daemon` grabs hotkeys through the GNOME extension. To let
+the desktop register them instead, set `WINDOW_JUMP_HOTKEYS=portal`:
+
+```sh
+WINDOW_JUMP_HOTKEYS=portal window-jump daemon
+```
+
+The desktop then shows a confirmation dialog and remembers the bindings. KDE
+needs no KWin script for this, and GNOME 48+ implements the same portal. On
+GNOME the extension is still used for window listing, the HUD and swipes — only
+the hotkeys move to the portal. When the variable is unset, GNOME keeps using
+the extension's grabs, while other desktops try the portal automatically.
+`window-jump doctor` reports whether the portal is available and whether the
+app id (`io.github.hjosugi.WindowJump`) was registered; desktops that require it
+accept the id when it matches a `.desktop` file. Changing the hotkey list takes
+effect after a daemon restart, since a portal session is bound only once.
+
 ## Configuration
 
 `window-jump config init` writes a commented file to
