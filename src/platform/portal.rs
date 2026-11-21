@@ -1,9 +1,10 @@
 //! Global hotkeys through the XDG GlobalShortcuts portal.
 //!
 //! `org.freedesktop.portal.GlobalShortcuts` is implemented by KDE Plasma and
-//! by GNOME 48 and newer. It gives us hotkeys on KDE without a KWin script and
-//! an alternative to the GNOME extension's accelerator grabs: the desktop
-//! shows a confirmation dialog and keeps the trigger strings itself.
+//! by GNOME 48 and newer. It gives us hotkeys on KDE (whose window list comes
+//! from the KWin script in [`super::kde`]) and an alternative to the GNOME
+//! extension's accelerator grabs: the desktop shows a confirmation dialog and
+//! keeps the trigger strings itself.
 //!
 //! The portal belongs to the session bus:
 //!

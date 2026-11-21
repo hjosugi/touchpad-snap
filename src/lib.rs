@@ -1,5 +1,6 @@
 //! window-jump: switch between windows of the same app with hotkeys and
-//! touchpad swipes, on GNOME (via a small shell extension) and Windows.
+//! touchpad swipes, on GNOME (via a small shell extension), KDE Plasma (via a
+//! KWin script), Sway/Hyprland/niri and Windows.
 //!
 //! The platform-neutral core — [`cycle`] (which window to pick),
 //! [`gesture`] (when a swipe counts), [`hotkey`] (key syntax) and

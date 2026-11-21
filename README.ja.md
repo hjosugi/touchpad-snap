@@ -1,6 +1,6 @@
 # window-jump
 
-**いま使っているアプリの別ウィンドウ**へ、ショートカットキーか「修飾キー＋タッチパッドのスワイプ」で切り替えるツールです。macOS の `Cmd+`` ` や BetterTouchTool の「同じアプリのウィンドウを巡回」に当たる操作を、**GNOME（Wayland / X11）**、**Sway・Hyprland・niri**、**Windows** で使えます。本体は Rust 製のネイティブバイナリで、Wayland で他に手段がない部分だけを小さな GNOME Shell 拡張が受け持ちます。
+**いま使っているアプリの別ウィンドウ**へ、ショートカットキーか「修飾キー＋タッチパッドのスワイプ」で切り替えるツールです。macOS の `Cmd+`` ` や BetterTouchTool の「同じアプリのウィンドウを巡回」に当たる操作を、**GNOME（Wayland / X11）**、**KDE Plasma**、**Sway・Hyprland・niri**、**Windows** で使えます。本体は Rust 製のネイティブバイナリで、Wayland で他に手段がない部分だけを小さな GNOME Shell 拡張または KWin スクリプトが受け持ちます。
 
 [English README](README.md)
 
@@ -27,6 +27,8 @@ window-jump@hjosugi.github.io               EnumWindows, SetForegroundWindow,
 ```
 
 Wayland では普通のプログラムが他のアプリのウィンドウを列挙・フォーカスしたり、グローバルなキーや GNOME が使うタッチパッドジェスチャーを受け取ったりできません。拡張は GNOME Shell の中で動き、その部分だけをセッションバスで提供します。どのウィンドウに切り替えるか、スワイプが何を意味するか、設定ファイルなどのロジックはすべて Rust 側にあります。daemon が終了すると、登録したキーやスワイプはその場で解放されます。
+
+KDE Plasma では小さな KWin スクリプトが拡張の役割を果たします（[KDE Plasma](#kde-plasma) を参照）。ホットキーはデスクトップの GlobalShortcuts ポータルから受け取るため、`window-jump daemon` もそのまま使えます。
 
 ## インストール
 
@@ -99,7 +101,7 @@ GNOME 拡張は `gnome-extension/window-jump@hjosugi.github.io` ディレクト�
 | `window-jump daemon [-v]` | 設定したホットキーとスワイプを待ち受ける。 |
 | `window-jump list [--json]` | アプリごとにウィンドウを一覧表示。 |
 | `window-jump activate <id>` | ID を指定して 1 枚フォーカス。 |
-| `window-jump doctor` | 設定・拡張・ウィンドウ一覧をまとめて確認。 |
+| `window-jump doctor` | 設定・バックエンド・ウィンドウ一覧をまとめて確認。 |
 | `window-jump config init\|path\|check` | 設定ファイルの作成 / 場所 / 検証。 |
 | `window-jump autostart enable\|disable` | ログイン時の daemon 自動起動。 |
 
@@ -138,6 +140,24 @@ binds {
 
 `window-jump daemon` は不要です（実行するとコンポジタ設定への割り当てを促すメッセージを出すだけです）。タッチパッドのスワイプと切り替え先の表示は今のところ GNOME / Windows 向けです。`window-jump doctor` が判別したコンポジタ名を表示します。
 
+## KDE Plasma
+
+Plasma は GNOME Shell 拡張に対応していません。代わりに window-jump は小さな KWin スクリプトを `$XDG_RUNTIME_DIR/window-jump/` に書き出し、`org.kde.KWin.Scripting` 経由でプロセスごとの名前で読み込みます。スクリプトは `workspace.windowList()` を専用のセッションバスサービスへ送り、返ってきたフォーカス指示を実行します。システム設定へのインストールや有効化は不要で、`window-jump` コマンド（または daemon）が動いている間だけ存在し、終了時にアンロードされます。`window-jump list`・`next`・`prev`・`activate`・`doctor` はそのまま使え、`doctor` は検出したセッションと KWin スクリプトが利用できるかを表示します。MRU 順は KWin のスタッキング順によるベストエフォートです。
+
+`window-jump daemon` はホットキーを GlobalShortcuts ポータルから受け取り（デスクトップが確認ダイアログを表示します）、ウィンドウの列挙とフォーカスには KWin ブリッジを使います。`xdg-desktop-portal-kde` が必要です。ポータルが使えない場合、KDE では daemon がグローバルホットキーを登録できません。**システム設定 → ショートカット** で `window-jump next` / `window-jump prev` をコマンドのショートカットとして割り当て、daemon は使わないでください。タッチパッドのスワイプと切り替え先の表示は今のところ GNOME / Windows 向けで、KDE ではウィンドウの列挙とフォーカスのみです。
+
+ブリッジは通常は自動で後片付けされます。window-jump が強制終了された場合、読み込んだスクリプトはポーリングを止めますが KWin が再起動するまで登録されたまま残ります。ログアウトしてログインし直すか（この方法で読み込んだ KWin スクリプトは永続化されません）、読み込んだプロセスの pid を付けてアンロードします。
+
+```sh
+qdbus6 org.kde.KWin /Scripting unloadScript window-jump-kde-bridge-<pid>
+```
+
+生成ファイルは次のように削除できます。
+
+```sh
+rm -f "$XDG_RUNTIME_DIR"/window-jump/kde-bridge-*.js
+```
+
 ## GlobalShortcuts ポータル（KDE、GNOME 48 以降）
 
 通常 `window-jump daemon` は GNOME 拡張経由でホットキーを登録します。代わりにデスクトップへ登録させるには、`WINDOW_JUMP_HOTKEYS=portal` を指定します。
@@ -146,7 +166,7 @@ binds {
 WINDOW_JUMP_HOTKEYS=portal window-jump daemon
 ```
 
-デスクトップが確認ダイアログを表示し、割り当てを記憶します。KDE では KWin スクリプトが不要で、GNOME 48 以降も同じポータルに対応しています。GNOME ではウィンドウ一覧・HUD・スワイプに引き続き拡張を使い、ホットキーだけをポータルへ移します。未指定なら GNOME は従来どおり拡張のグラブを使い、それ以外のデスクトップはポータルを自動で試します（Sway・Hyprland・niri では上記のコンポジタ設定による割り当てが通常です）。ポータルの有無とアプリ ID（`io.github.hjosugi.WindowJump`）の登録結果は `window-jump doctor` で確認できます。アプリ ID を必要とするデスクトップでは、`.desktop` ファイル名と一致していれば受理されます。ポータルのセッションは 1 回しかバインドできないため、ホットキーの変更は daemon の再起動後に反映されます。
+デスクトップが確認ダイアログを表示し、割り当てを記憶します。KDE では daemon のホットキーをこのポータルから受け取ります（上記の KWin スクリプトはウィンドウ一覧とフォーカス用です）。GNOME 48 以降も同じポータルに対応しています。GNOME ではウィンドウ一覧・HUD・スワイプに引き続き拡張を使い、ホットキーだけをポータルへ移します。未指定なら GNOME は従来どおり拡張のグラブを使い、それ以外のデスクトップはポータルを自動で試します（Sway・Hyprland・niri では上記のコンポジタ設定による割り当てが通常です）。ポータルの有無とアプリ ID（`io.github.hjosugi.WindowJump`）の登録結果は `window-jump doctor` で確認できます。アプリ ID を必要とするデスクトップでは、`.desktop` ファイル名と一致していれば受理されます。ポータルのセッションは 1 回しかバインドできないため、ホットキーの変更は daemon の再起動後に反映されます。
 
 ## 設定
 
