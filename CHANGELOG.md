@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.1] - 2026-11-22
+
+### Added
+
+- `touchpad-snap autostart enable --systemd` writes and enables a
+  `~/.config/systemd/user/touchpad-snap.service` user unit
+  (`PartOf=graphical-session.target`, `Restart=on-failure`) and
+  `autostart disable --systemd` removes it. The Linux release archive ships the
+  unit as `touchpad-snap.service`. (#19)
+- Nix flake modules `nixosModules.touchpad-snap` and
+  `homeManagerModules.touchpad-snap`: `services.touchpad-snap` installs the
+  package, writes `config.toml` from `settings`, runs the daemon as a systemd
+  user service, and can enable the GNOME extension. (#13)
+
 ## [0.5.0] - 2026-11-22
 
 ### Changed

@@ -81,24 +81,126 @@ portal, so `touchpad-snap daemon` works there too.
    touchpad-snap daemon &             # for this session
    ```
 
+On Linux, `touchpad-snap autostart enable --systemd` writes a
+`~/.config/systemd/user/touchpad-snap.service` user unit instead and enables it.
+systemd starts it with the graphical session, restarts it if it crashes
+(`Restart=on-failure`), and collects its output in the journal:
+`systemctl --user status touchpad-snap`, `journalctl --user -u touchpad-snap`.
+Remove it with `touchpad-snap autostart disable --systemd`. Use either the XDG
+entry or the systemd unit, not both. The release tarball also ships the unit as
+`touchpad-snap.service` for package installs.
+
 Supported GNOME Shell versions: 46–51. CI runs the end-to-end test on 46 (Ubuntu 24.04), 48 (Debian 13), 49 (Fedora 43), 50 (Fedora 44) and the latest on Arch Linux (51 at the time of writing); 47 is not tested.
 
 ### NixOS / Nix flake
 
+The flake exports a NixOS module and a Home Manager module, each as
+`default` and `touchpad-snap`:
+
 ```nix
 # flake.nix
-inputs.touchpad-snap.url = "github:hjosugi/touchpad-snap";
+{
+  inputs.touchpad-snap.url = "github:hjosugi/touchpad-snap";
 
-# configuration.nix (with `touchpad-snap` passed in through specialArgs)
+  outputs = { self, nixpkgs, touchpad-snap, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      modules = [
+        touchpad-snap.nixosModules.default
+        ./configuration.nix
+      ];
+    };
+  };
+}
+```
+
+```nix
+# configuration.nix
+services.touchpad-snap = {
+  enable = true;
+  settings = {
+    order = "mru";
+    hotkey = [ { keys = "Super+Alt+N"; action = "next"; } ];
+  };
+};
+```
+
+This:
+
+- installs the `touchpad-snap` package and runs `touchpad-snap daemon` as a
+  systemd **user** service, bound to `graphical-session.target` with
+  `Restart=on-failure`;
+- renders `settings` (the normal TOML schema) to
+  `/etc/touchpad-snap/config.toml` and starts the daemon with
+  `--config /etc/touchpad-snap/config.toml`;
+- installs the GNOME Shell extension and adds `touchpad-snap@hjosugi.github.io`
+  to the **system default** of `org.gnome.shell.enabled-extensions` through
+  `programs.dconf.profiles.user.databases`.
+
+Options: `enable` (default `false`), `package`, `settings` (default `{}`),
+`systemd.enable` (default `true`) and `gnome.enable` (default `true`). When
+`gnome.enable` is true, `gnome.extensionPackage` chooses the extension
+package. Set `systemd.enable = false` to manage the daemon yourself, or
+`gnome.enable = false` on a non-GNOME desktop.
+
+The dconf database is a *default* behind `user-db:user`. A user who has
+already written `enabled-extensions` (for example by toggling extensions in
+the Extensions app) keeps their own value and the system default is ignored.
+Log out and back in after the first switch, then either enable the extension
+once:
+
+```sh
+gnome-extensions enable touchpad-snap@hjosugi.github.io
+```
+
+or clear the per-user key so the system default applies again:
+
+```sh
+dconf reset /org/gnome/shell/enabled-extensions
+```
+
+If you do not want to use the module, the packages are still exported
+manually:
+
+```nix
 environment.systemPackages = [
   touchpad-snap.packages.${pkgs.stdenv.hostPlatform.system}.touchpad-snap
   touchpad-snap.packages.${pkgs.stdenv.hostPlatform.system}.gnome-shell-extension
 ];
 ```
 
-Then enable the extension (`gnome-extensions enable touchpad-snap@hjosugi.github.io`
-or through dconf) and run `touchpad-snap autostart enable`. Without NixOS:
-`nix run github:hjosugi/touchpad-snap -- doctor`.
+Then enable the extension and run `touchpad-snap autostart enable` as usual.
+Outside NixOS: `nix run github:hjosugi/touchpad-snap -- doctor`.
+
+#### Home Manager
+
+```nix
+{
+  imports = [ inputs.touchpad-snap.homeManagerModules.default ];
+
+  services.touchpad-snap = {
+    enable = true;
+    settings = {
+      order = "mru";
+      hotkey = [ { keys = "Super+Alt+N"; action = "next"; } ];
+    };
+  };
+}
+```
+
+The option names match the NixOS module. Home Manager renders the config to
+`$XDG_CONFIG_HOME/touchpad-snap/config.toml` (usually
+`~/.config/touchpad-snap/config.toml`), which is the path the daemon reads by
+default, so the user service runs plain `touchpad-snap daemon`.
+`gnome.enable` uses Home Manager's `programs.gnome-shell.extensions`, which
+also writes `org/gnome/shell/enabled-extensions`. That list is managed as a
+whole: add any other extensions you use to `programs.gnome-shell.extensions`
+too, rather than expecting the module to append to the existing list.
+
+Historically the program was called **window-jump**, and the binary copies
+`~/.config/window-jump/config.toml` to
+`~/.config/touchpad-snap/config.toml` on first run. Both modules write the
+new file themselves (and NixOS passes an explicit `--config`), so that
+automatic copy does not happen; move any old settings into `settings`.
 
 ### Windows 10 / 11
 
@@ -163,7 +265,8 @@ same; every name changed with it. After installing touchpad-snap as above:
   gnome-extensions enable touchpad-snap@hjosugi.github.io
   ```
 - **Start at login**: `touchpad-snap autostart enable` replaces window-jump's
-  entry. On Windows, quit window-jump from its tray icon first.
+  entry. On Windows, quit window-jump from its tray icon first. With
+  `--systemd`, an old `window-jump.service` user unit is removed as well.
 - **Portal hotkeys**: the variable is now `TOUCHPAD_SNAP_HOTKEYS`
   (`WINDOW_JUMP_HOTKEYS` is still read), and the desktop asks once more to
   confirm the bindings, as the app id changed with the name.
@@ -182,7 +285,7 @@ same; every name changed with it. After installing touchpad-snap as above:
 | `touchpad-snap activate <id>` | Focus one window by id. |
 | `touchpad-snap doctor` | Check config, backend and window list. |
 | `touchpad-snap config init\|path\|check` | Write / locate / validate the config file. |
-| `touchpad-snap autostart enable\|disable` | Start the daemon at login. |
+| `touchpad-snap autostart enable\|disable [--systemd]` | Start the daemon at login (XDG entry by default, systemd user unit with `--systemd`). |
 
 ### Without the daemon
 
@@ -414,10 +517,14 @@ cargo build --all-targets && ./test/e2e/gnome.sh
 pwsh test/e2e/windows.ps1 -Bin target/debug/touchpad-snap.exe   # on Windows
 pwsh test/e2e/windows.ps1 -Bin target/debug/touchpad-snap.exe -VirtualDesktops
                                # also covers a window on a second virtual desktop
+nix build .#checks.x86_64-linux.module-eval
+                               # evaluates the NixOS module, its generated
+                               # config and the user unit (no KVM)
 nix build .#checks.x86_64-linux.vm-touchpad -L
                                # a full GNOME session in a VM (needs KVM),
                                # swiped on a virtual touchpad
-nix flake check                # all Nix checks: the build (runs cargo test) and the VM test
+nix flake check                # all Nix checks: the build (runs cargo test),
+                               # module-eval and the VM test
 ```
 
 The e2e test never touches your running desktop: it starts its own

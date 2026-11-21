@@ -1,6 +1,6 @@
 [package]
 name = "touchpad-snap"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Switch between windows of the same app with hotkeys and touchpad swipes (GNOME, Windows)"

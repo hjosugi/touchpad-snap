@@ -50,6 +50,7 @@ jobs:
           name="touchpad-snap-${TAG}-${{ matrix.target }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/touchpad-snap" README.md README.ja.md LICENSE "dist/$name/"
+          cp contrib/systemd/touchpad-snap.service "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -rf "dist/$name"
       - name: Package (Windows)
