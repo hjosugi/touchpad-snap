@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 
 use crate::config::{self, Config};
 use crate::cycle::{self, Order, Pick, Session, Step, WorkspaceScope};
-use crate::{autostart, daemon, legacy, platform, session};
+use crate::{autostart, daemon, legacy, platform, session, systemd};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -92,8 +92,16 @@ enum ConfigCommand {
 
 #[derive(Subcommand, Debug)]
 enum AutostartCommand {
-    Enable,
-    Disable,
+    Enable {
+        /// Use a systemd user service instead of the XDG autostart entry (Linux)
+        #[arg(long)]
+        systemd: bool,
+    },
+    Disable {
+        /// Remove the systemd user service instead of the XDG autostart entry (Linux)
+        #[arg(long)]
+        systemd: bool,
+    },
 }
 
 fn parse_id(s: &str) -> Result<u64, String> {
@@ -212,8 +220,10 @@ fn dispatch(cli: Cli) -> Result<()> {
         },
         Command::Autostart { command } => {
             let msg = match command {
-                AutostartCommand::Enable => autostart::enable()?,
-                AutostartCommand::Disable => autostart::disable()?,
+                AutostartCommand::Enable { systemd: true } => systemd::enable()?,
+                AutostartCommand::Enable { systemd: false } => autostart::enable()?,
+                AutostartCommand::Disable { systemd: true } => systemd::disable()?,
+                AutostartCommand::Disable { systemd: false } => autostart::disable()?,
             };
             println!("{msg}");
             Ok(())
@@ -361,6 +371,11 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
         problems += 1;
         println!("startup  ERROR {leftover}");
     }
+    #[cfg(target_os = "linux")]
+    if let Some(leftover) = systemd::leftover() {
+        problems += 1;
+        println!("startup  ERROR {leftover}");
+    }
 
     if problems > 0 {
         bail!("{problems} problem(s) found");
@@ -386,6 +401,26 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(Cli::try_parse_from(["touchpad-snap", "next", "--order", "nope"]).is_err());
+    }
+
+    #[test]
+    fn parses_systemd_autostart_flag() {
+        let cli =
+            Cli::try_parse_from(["touchpad-snap", "autostart", "enable", "--systemd"]).unwrap();
+        match cli.command {
+            Command::Autostart {
+                command: AutostartCommand::Enable { systemd: true },
+            } => {}
+            other => panic!("{other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["touchpad-snap", "autostart", "disable"]).unwrap();
+        match cli.command {
+            Command::Autostart {
+                command: AutostartCommand::Disable { systemd: false },
+            } => {}
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -17,3 +17,4 @@ pub mod legacy;
 pub mod model;
 pub mod platform;
 pub mod session;
+pub mod systemd;

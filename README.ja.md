@@ -51,6 +51,8 @@ KDE Plasma では小さな KWin スクリプトが拡張の役割を果たしま
    touchpad-snap daemon &             # 今のセッション用
    ```
 
+Linux では `touchpad-snap autostart enable --systemd` を使うと、XDG の代わりに `~/.config/systemd/user/touchpad-snap.service` を作成して有効化します。systemd がグラフィカルセッションと一緒に起動し、クラッシュ時は `Restart=on-failure` で再起動します。ログは `journalctl --user -u touchpad-snap`、状態は `systemctl --user status touchpad-snap` で確認できます。削除は `touchpad-snap autostart disable --systemd` です。XDG と systemd はどちらか一方だけを使ってください。リリースの tarball にはパッケージ用の `touchpad-snap.service` も同梱されています。
+
 対応する GNOME Shell: 46〜51。CI では 46（Ubuntu 24.04）、48（Debian 13）、49（Fedora 43）、50（Fedora 44）と Arch Linux の最新版（現時点で 51）で e2e テストを実行しています。47 は未テストです。
 
 ### NixOS / Nix flake
@@ -199,7 +201,7 @@ touchpad-snap は、バージョン 0.5 より前は **window-jump** という�
   gnome-extensions disable window-jump@hjosugi.github.io
   gnome-extensions enable touchpad-snap@hjosugi.github.io
   ```
-- **ログイン時の起動**: `touchpad-snap autostart enable` が window-jump の登録を置き換えます。Windows では、先にタスクトレイのアイコンから window-jump を終了してください。
+- **ログイン時の起動**: `touchpad-snap autostart enable` が window-jump の登録を置き換えます。Windows では、先にタスクトレイのアイコンから window-jump を終了してください。`--systemd` を付けると、古い `window-jump.service` ユーザーユニットも削除します。
 - **ポータル経由のホットキー**: 環境変数は `TOUCHPAD_SNAP_HOTKEYS` になりました（`WINDOW_JUMP_HOTKEYS` も引き続き読みます）。アプリ ID も名前と一緒に変わったので、デスクトップが割り当ての確認をもう一度表示します。
 - `touchpad-snap doctor` を実行すると、window-jump のうちまだ動いているものが分かります。
 - 古いバイナリ（`cargo uninstall window-jump`、または `window-jump.exe` と `window-jumpw.exe` を削除）と `~/.local/share/gnome-shell/extensions/window-jump@hjosugi.github.io` は消して構いません。
@@ -214,7 +216,7 @@ touchpad-snap は、バージョン 0.5 より前は **window-jump** という�
 | `touchpad-snap activate <id>` | ID を指定して 1 枚フォーカス。 |
 | `touchpad-snap doctor` | 設定・バックエンド・ウィンドウ一覧をまとめて確認。 |
 | `touchpad-snap config init\|path\|check` | 設定ファイルの作成 / 場所 / 検証。 |
-| `touchpad-snap autostart enable\|disable` | ログイン時の daemon 自動起動。 |
+| `touchpad-snap autostart enable\|disable [--systemd]` | ログイン時の daemon 自動起動（既定は XDG、`--systemd` で systemd ユーザーサービス）。 |
 
 ### daemon を使わない場合
 

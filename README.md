@@ -81,6 +81,15 @@ portal, so `touchpad-snap daemon` works there too.
    touchpad-snap daemon &             # for this session
    ```
 
+On Linux, `touchpad-snap autostart enable --systemd` writes a
+`~/.config/systemd/user/touchpad-snap.service` user unit instead and enables it.
+systemd starts it with the graphical session, restarts it if it crashes
+(`Restart=on-failure`), and collects its output in the journal:
+`systemctl --user status touchpad-snap`, `journalctl --user -u touchpad-snap`.
+Remove it with `touchpad-snap autostart disable --systemd`. Use either the XDG
+entry or the systemd unit, not both. The release tarball also ships the unit as
+`touchpad-snap.service` for package installs.
+
 Supported GNOME Shell versions: 46–51. CI runs the end-to-end test on 46 (Ubuntu 24.04), 48 (Debian 13), 49 (Fedora 43), 50 (Fedora 44) and the latest on Arch Linux (51 at the time of writing); 47 is not tested.
 
 ### NixOS / Nix flake
@@ -256,7 +265,8 @@ same; every name changed with it. After installing touchpad-snap as above:
   gnome-extensions enable touchpad-snap@hjosugi.github.io
   ```
 - **Start at login**: `touchpad-snap autostart enable` replaces window-jump's
-  entry. On Windows, quit window-jump from its tray icon first.
+  entry. On Windows, quit window-jump from its tray icon first. With
+  `--systemd`, an old `window-jump.service` user unit is removed as well.
 - **Portal hotkeys**: the variable is now `TOUCHPAD_SNAP_HOTKEYS`
   (`WINDOW_JUMP_HOTKEYS` is still read), and the desktop asks once more to
   confirm the bindings, as the app id changed with the name.
@@ -275,7 +285,7 @@ same; every name changed with it. After installing touchpad-snap as above:
 | `touchpad-snap activate <id>` | Focus one window by id. |
 | `touchpad-snap doctor` | Check config, backend and window list. |
 | `touchpad-snap config init\|path\|check` | Write / locate / validate the config file. |
-| `touchpad-snap autostart enable\|disable` | Start the daemon at login. |
+| `touchpad-snap autostart enable\|disable [--systemd]` | Start the daemon at login (XDG entry by default, systemd user unit with `--systemd`). |
 
 ### Without the daemon
 
