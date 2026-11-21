@@ -17,8 +17,8 @@
 # a sed cannot do (reading the old config directory, removing the old
 # autostart entry, noticing the old extension) is a separate commit.
 #
-# Running it twice is harmless. This script deletes nothing but itself is
-# meant to be removed by the pull request that applies it.
+# Run it once, before that commit (src/legacy.rs must keep the old name), and
+# drop this file in the pull request that applies it.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 

@@ -50,6 +50,7 @@ use super::{Backend, Event};
 use crate::config::{Claim, Config};
 use crate::gesture::Phase;
 use crate::hotkey::{Hotkey, Mods};
+use crate::legacy;
 use crate::model::{Snapshot, Window};
 
 pub struct Win32 {
@@ -625,13 +626,23 @@ pub fn run_daemon(
     handle: &mut super::Handler,
 ) -> Result<()> {
     // One daemon per session: a second would fail every RegisterHotKey anyway.
+    // That includes a daemon of the old name; taking its mutex as well also
+    // keeps one from starting later. Both are deliberately leaked: held
+    // until the process exits.
     let name = wide("Local\\touchpad-snap-daemon");
+    let old_name = wide(legacy::DAEMON_MUTEX);
     unsafe {
         let mutex = CreateMutexW(null_mut(), 0, name.as_ptr());
         if mutex.is_null() || GetLastError() == ERROR_ALREADY_EXISTS {
             bail!("another touchpad-snap daemon is already running");
         }
-        // Deliberately leaked: held until the process exits.
+        CreateMutexW(null_mut(), 0, old_name.as_ptr());
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            bail!(
+                "{} (this program's old name) is still running: quit it from its tray icon first",
+                legacy::NAME
+            );
+        }
     }
 
     let mut cfg = cfg.clone();

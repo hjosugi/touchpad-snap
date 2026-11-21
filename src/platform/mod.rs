@@ -35,6 +35,11 @@ pub trait Backend {
     }
     /// One line for `touchpad-snap doctor`.
     fn describe(&self) -> String;
+    /// What an installation under the old name (see [`crate::legacy`]) still
+    /// has running here and how to get rid of it, for `touchpad-snap doctor`.
+    fn leftovers(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// How often the platform loops send [`Event::Tick`].

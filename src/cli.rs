@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 
 use crate::config::{self, Config};
 use crate::cycle::{self, Order, Pick, Session, Step, WorkspaceScope};
-use crate::{autostart, daemon, platform, session};
+use crate::{autostart, daemon, legacy, platform, session};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -149,6 +149,23 @@ where
 
 fn dispatch(cli: Cli) -> Result<()> {
     let config_path = cli.config.clone().unwrap_or_else(config::default_path);
+    if cli.config.is_none() {
+        // First run after the rename: carry window-jump's settings over.
+        let old = legacy::config_path();
+        match legacy::import_config(&old, &config_path) {
+            Ok(true) => eprintln!(
+                "touchpad-snap: copied the settings of {} from {} to {}",
+                legacy::NAME,
+                old.display(),
+                config_path.display()
+            ),
+            Ok(false) => {}
+            Err(e) => eprintln!(
+                "touchpad-snap: could not carry over the settings of {}: {e:#}",
+                legacy::NAME
+            ),
+        }
+    }
     match cli.command {
         Command::Next(args) => jump(&config_path, Step::Next, args),
         Command::Prev(args) => jump(&config_path, Step::Prev, args),
@@ -303,6 +320,10 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
         }
         Ok(backend) => {
             println!("backend  {}", backend.describe());
+            for leftover in backend.leftovers() {
+                problems += 1;
+                println!("backend  ERROR {leftover}");
+            }
             match backend.snapshot() {
                 Err(e) => {
                     problems += 1;
@@ -327,6 +348,11 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
                 }
             }
         }
+    }
+
+    if let Some(leftover) = autostart::leftover() {
+        problems += 1;
+        println!("startup  ERROR {leftover}");
     }
 
     if problems > 0 {

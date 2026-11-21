@@ -24,6 +24,7 @@ use super::{Backend, Event};
 use crate::config::{Claim, Config};
 use crate::gesture::Phase;
 use crate::hotkey::{Hotkey, Mods};
+use crate::legacy;
 use crate::model::Snapshot;
 
 pub const BUS_NAME: &str = "io.github.hjosugi.TouchpadSnap";
@@ -58,7 +59,7 @@ impl Gnome {
     pub fn protocol_version(&self) -> Result<u32> {
         self.proxy
             .get_property::<u32>("ProtocolVersion")
-            .map_err(explain)
+            .map_err(|e| self.explain(e))
     }
 
     /// Pushes hotkeys and swipe claims to the extension. It keeps them only
@@ -90,7 +91,7 @@ impl Gnome {
         let failed: Vec<String> = self
             .proxy
             .call("SetAccelerators", &(bindings,))
-            .map_err(explain)?;
+            .map_err(|e| self.explain(e))?;
         for accel in &failed {
             eprintln!(
                 "touchpad-snap: could not grab {accel}: GNOME or another app already uses it (check Settings → Keyboard → Shortcuts)"
@@ -100,7 +101,7 @@ impl Gnome {
         let claims: Vec<(u32, u32)> = cfg.claims().iter().map(|c| (c.fingers, c.mods.0)).collect();
         self.proxy
             .call_method("SetSwipeClaims", &(claims,))
-            .map_err(explain)?;
+            .map_err(|e| self.explain(e))?;
 
         eprintln!(
             "touchpad-snap: registered {} hotkey(s) and {} swipe claim(s) with GNOME Shell",
@@ -113,12 +114,15 @@ impl Gnome {
 
 impl Backend for Gnome {
     fn snapshot(&self) -> Result<Snapshot> {
-        let json: String = self.proxy.call("List", &()).map_err(explain)?;
+        let json: String = self.proxy.call("List", &()).map_err(|e| self.explain(e))?;
         serde_json::from_str(&json).context("parsing the window list from the GNOME extension")
     }
 
     fn activate(&self, id: u64) -> Result<()> {
-        let ok: bool = self.proxy.call("Activate", &(id,)).map_err(explain)?;
+        let ok: bool = self
+            .proxy
+            .call("Activate", &(id,))
+            .map_err(|e| self.explain(e))?;
         if !ok {
             bail!("window {id} is gone");
         }
@@ -136,7 +140,7 @@ impl Backend for Gnome {
             Ok(_) => Ok(()),
             // A protocol 1 extension: no overlay, and nothing to complain about.
             Err(e) if e.to_string().contains("UnknownMethod") => Ok(()),
-            Err(e) => Err(explain(e)),
+            Err(e) => Err(self.explain(e)),
         }
     }
 
@@ -146,19 +150,51 @@ impl Backend for Gnome {
             Err(e) => format!("GNOME Shell extension not reachable: {e:#}"),
         }
     }
+
+    fn leftovers(&self) -> Vec<String> {
+        if !self.legacy_extension_enabled() {
+            return Vec::new();
+        }
+        vec![format!(
+            "the GNOME Shell extension of {}, this program's old name, is still enabled: gnome-extensions disable {}",
+            legacy::NAME,
+            legacy::EXTENSION_UUID
+        )]
+    }
 }
 
-/// Turns "nobody owns the name" into advice.
-fn explain(e: zbus::Error) -> anyhow::Error {
-    let text = e.to_string();
-    if text.contains("ServiceUnknown") || text.contains("NameHasNoOwner") {
+impl Gnome {
+    /// Turns "nobody owns the name" into advice.
+    fn explain(&self, e: zbus::Error) -> anyhow::Error {
+        let text = e.to_string();
+        if !(text.contains("ServiceUnknown") || text.contains("NameHasNoOwner")) {
+            return anyhow::Error::new(e);
+        }
+        if self.legacy_extension_enabled() {
+            return anyhow!(
+                "the GNOME Shell extension of {old}, this program's old name, is enabled instead of touchpad-snap's.\n  \
+                 Switch with: gnome-extensions disable {old_uuid} && gnome-extensions enable {EXTENSION_UUID}\n  \
+                 (If the new one is not found, log out and back in first: GNOME on Wayland only discovers new extensions at login.)",
+                old = legacy::NAME,
+                old_uuid = legacy::EXTENSION_UUID,
+            );
+        }
         anyhow!(
             "the touchpad-snap GNOME Shell extension is not running.\n  \
              Enable it with: gnome-extensions enable {EXTENSION_UUID}\n  \
              (After installing it for the first time, log out and back in: GNOME on Wayland only discovers new extensions at login.)"
         )
-    } else {
-        anyhow::Error::new(e)
+    }
+
+    /// Whether the extension of the old name still owns its bus name.
+    fn legacy_extension_enabled(&self) -> bool {
+        let Ok(bus) = zbus::blocking::fdo::DBusProxy::new(&self.conn) else {
+            return false;
+        };
+        let Ok(name) = zbus::names::BusName::try_from(legacy::BUS_NAME) else {
+            return false;
+        };
+        bus.name_has_owner(name).unwrap_or(false)
     }
 }
 

@@ -12,6 +12,7 @@ pub mod cycle;
 pub mod daemon;
 pub mod gesture;
 pub mod hotkey;
+pub mod legacy;
 pub mod model;
 pub mod platform;
 pub mod session;

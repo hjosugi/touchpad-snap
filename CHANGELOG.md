@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed to touchpad-snap.** The program is growing from a window switcher
+  into a binder of touchpad gestures and shortcuts to actions, and the name
+  now says so. Everything follows: the repository, the binaries
+  (`touchpad-snap`, `touchpad-snapw.exe`), the GNOME Shell extension
+  (`touchpad-snap@hjosugi.github.io`), its D-Bus name
+  (`io.github.hjosugi.TouchpadSnap`), the config directory and the autostart
+  entry. Upgrading: the old config file is copied over on first use,
+  `autostart enable` replaces the old entry, the GNOME extension has to be
+  switched by hand, and `doctor` reports what is left of window-jump. See
+  "Upgrading from window-jump" in the README. (#31)
+
 ### Added
 
 - Default swipes: Alt + three fingers up / down jump to the next / previous
