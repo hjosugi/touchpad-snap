@@ -10,9 +10,10 @@ Wayland allows nothing else.
 [日本語の README はこちら](README.ja.md)
 
 - **Hotkeys**: `Super+Alt+N` / `Super+Alt+P` by default (configurable).
-- **Swipes on GNOME**: hold `Ctrl` and swipe with three fingers. Only the
+- **Swipes on GNOME**: hold `Ctrl` and swipe left or right with three
+  fingers, or hold `Alt` and swipe up or down (configurable). Only the
   swipes you claim (fingers + modifiers) are taken from GNOME; a plain
-  three-finger swipe still switches workspace. Keep the fingers down and keep
+  three-finger swipe still switches workspace or opens the overview. Keep the fingers down and keep
   moving to step through several windows; move back to step back.
 - **Swipes on Windows**: the same modifier + three-finger swipe works on a
   Windows Precision Touchpad; Windows' own three/four-finger gestures must be
@@ -113,7 +114,8 @@ or through dconf) and run `window-jump autostart enable`. Without NixOS:
    modern laptops have one). Turn off the built-in **Three-finger gestures** and
    **Four-finger gestures** under **Settings → Bluetooth & devices → Touchpad**
    (set them to *Nothing*), then use the same `[[swipe]]` bindings as on GNOME:
-   with the default config, hold `Ctrl` and swipe three fingers left or right.
+   with the default config, hold `Ctrl` and swipe three fingers left or right,
+   or hold `Alt` and swipe them up or down.
    Windows' own gestures still fire if they stay enabled; raw input cannot
    intercept them, so both actions would happen.
 
@@ -345,8 +347,23 @@ fingers = 3
 modifiers = ["ctrl"]
 direction = "right"
 action = "prev"
+
+[[swipe]]
+fingers = 3
+modifiers = ["alt"]       # any of ctrl, alt, shift, super
+direction = "up"
+action = "next"
+
+[[swipe]]
+fingers = 3
+modifiers = ["alt"]
+direction = "down"
+action = "prev"
 ```
 
+Each `[[swipe]]` is one combination of fingers, modifiers and direction, so
+any of them can be changed, removed or added; once the file has a `[[swipe]]`
+(or `[[hotkey]]`), only the ones in the file apply.
 `hotkey = []` / `swipe = []` turn them off. The daemon picks up changes to the
 file within about two seconds; an invalid edit is reported in its log and the
 previous config stays in effect.
@@ -383,8 +400,9 @@ The e2e test never touches your running desktop: it starts its own
 gnome-shell with its own D-Bus, HOME and dconf. That shell reads no input
 devices, so the touchpad path is tested in the VM instead: a uinput touchpad
 plays three-finger swipes through libinput, mutter and GNOME Shell, and the
-test checks that Ctrl + three fingers jumps without switching workspace while
-plain three fingers still switch it. See
+test checks that Ctrl + three fingers left and Alt + three fingers up/down
+jump without switching workspace or opening the overview, while plain three
+fingers still do both. See
 [gnome-extension/README.md](gnome-extension/README.md) for the D-Bus protocol.
 CI runs all of the above on GNOME 46, 48, 49, 50 and 51 (Ubuntu, Debian, Fedora and Arch containers), in the NixOS VM, and on Windows Server 2022.
 

@@ -76,9 +76,7 @@ pub enum Event {
 pub fn connect() -> Result<Box<dyn Backend>> {
     #[cfg(target_os = "linux")]
     {
-        if is_gnome(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref())
-            || gnome::Gnome::extension_available()
-        {
+        if is_gnome(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref()) {
             return Ok(Box::new(gnome::Gnome::connect()?));
         }
         // Plasma does not run the GNOME extension; a KWin script loaded on

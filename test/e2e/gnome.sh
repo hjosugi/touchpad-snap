@@ -82,8 +82,8 @@ grab=$(call SetAccelerators "[('<Super><Alt>n', 'hotkey:0'), ('<Alt>Tab', 'hotke
 call SetSwipeClaims "[(uint32 3, uint32 2)]" >/dev/null || fail "SetSwipeClaims failed"
 ok "SetAccelerators grabs free keys and reports taken ones; SetSwipeClaims accepted"
 
-# The daemon, with the default config (no file): Super+Alt+N/P and
-# Ctrl + three-finger swipes. Release what the gdbus calls above grabbed by
+# The daemon, with the default config (no file): Super+Alt+N/P, Ctrl +
+# three fingers left/right and Alt + three fingers up/down. Release what the gdbus calls above grabbed by
 # letting the daemon take over (a new caller replaces the previous one).
 wj config check >/dev/null || fail "config check failed"
 daemon_log="$E2E_ROOT/daemon.log"
@@ -91,8 +91,8 @@ e2e_extra_logs+=("$daemon_log")
 wj daemon --verbose >"$daemon_log" 2>&1 &
 daemon_pid=$!
 e2e_pids+=($daemon_pid)
-wait_for "daemon registration" 15 grep -q "registered 2 hotkey(s) and 1 swipe claim(s)" "$daemon_log"
-ok "daemon registered its hotkeys and swipe claim"
+wait_for "daemon registration" 15 grep -q "registered 2 hotkey(s) and 2 swipe claim(s)" "$daemon_log"
+ok "daemon registered its hotkeys and swipe claims"
 
 # Hotkeys, typed on a virtual keyboard, go through the shell, the extension
 # and the daemon.
@@ -113,14 +113,24 @@ swipe 1 3 2 -70.0 0.0
 swipe 1 3 2 -60.0 0.0
 swipe 2 3 2 0.0 0.0
 wait_for "swipe left → second editor" 15 focus_is "${editors[1]}"
-# A swipe with an unclaimed modifier set does nothing.
+# A swipe with an unclaimed modifier set (Shift) does nothing, nor does a
+# claimed one in a direction without a binding (Alt + left).
 sleep 0.5
+swipe 0 3 1 0.0 0.0
+swipe 1 3 1 -300.0 0.0
+swipe 2 3 1 0.0 0.0
 swipe 0 3 4 0.0 0.0
 swipe 1 3 4 -300.0 0.0
 swipe 2 3 4 0.0 0.0
 sleep 0.5
 focus_is "${editors[1]}" || fail "a swipe without a binding moved focus"
-ok "swipes: Ctrl + three fingers left jumps, unbound swipes do not"
+# Alt + three fingers up (negative dy) is "next" too: on to the first editor.
+swipe 0 3 4 0.0 0.0
+swipe 1 3 4 0.0 -130.0
+swipe 2 3 4 0.0 0.0
+wait_for "Alt + swipe up → first editor" 15 focus_is "${editors[0]}"
+grep -q "swipe Up with 3 fingers" "$daemon_log" || fail "daemon did not log the swipe up"
+ok "swipes: Ctrl + left and Alt + up jump, unbound swipes do not"
 
 # Editing the config while the daemon runs: the new hotkey takes over within
 # a couple of seconds, without a restart.
@@ -130,7 +140,7 @@ cat > "$XDG_CONFIG_HOME/window-jump/config.toml" <<'TOML'
 keys = "Ctrl+Alt+J"
 action = "next"
 TOML
-wait_for "daemon to reload the config" 15 grep -q "registered 1 hotkey(s) and 1 swipe claim(s)" "$daemon_log"
+wait_for "daemon to reload the config" 15 grep -q "registered 1 hotkey(s) and 2 swipe claim(s)" "$daemon_log"
 grep -q "reloaded .*config.toml" "$daemon_log" || fail "daemon did not log the reload"
 focus_on "${editors[0]}"
 press_keys Control_L Alt_L j || fail "injecting Ctrl+Alt+J failed"
@@ -142,7 +152,7 @@ press_keys Control_L Alt_L j || fail "injecting Ctrl+Alt+J failed"
 wait_for "Ctrl+Alt+J still works → first editor" 15 focus_is "${editors[0]}"
 # Removing the file brings back the defaults (Super+Alt+N/P).
 rm "$XDG_CONFIG_HOME/window-jump/config.toml"
-wait_for "daemon back on the defaults" 15 bash -c "grep -c 'registered 2 hotkey(s) and 1 swipe claim(s)' '$daemon_log' | grep -qx 2"
+wait_for "daemon back on the defaults" 15 bash -c "grep -c 'registered 2 hotkey(s) and 2 swipe claim(s)' '$daemon_log' | grep -qx 2"
 ok "config reload: new hotkey active without a restart, broken edits ignored, removal restores defaults"
 
 # Alt+Tab-style sessions with order = "mru": presses while Super+Alt stays

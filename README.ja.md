@@ -5,7 +5,7 @@
 [English README](README.md)
 
 - **ショートカット**: 既定は `Super+Alt+N`（次）/ `Super+Alt+P`（前）。設定で変更できます。
-- **GNOME のスワイプ**: `Ctrl` を押しながら 3 本指でスワイプ。登録した組み合わせ（指の本数＋修飾キー）だけを GNOME から横取りするので、修飾キーなしの 3 本指スワイプは今まで通りワークスペース切り替えに使えます。指を離さずに動かし続けると何枚も進み、戻すと戻ります。
+- **GNOME のスワイプ**: `Ctrl` を押しながら 3 本指で左右にスワイプ、または `Alt` を押しながら 3 本指で上下にスワイプ（設定で変更できます）。登録した組み合わせ（指の本数＋修飾キー）だけを GNOME から横取りするので、修飾キーなしの 3 本指スワイプは今まで通りワークスペース切り替えとアクティビティ画面に使えます。指を離さずに動かし続けると何枚も進み、戻すと戻ります。
 - **Windows のスワイプ**: Windows Precision Touchpad なら、GNOME と同じ「修飾キー＋3 本指スワイプ」が使えます。ただし Windows 標準の 3 / 4 本指ジェスチャーは先にオフにする必要があります（後述）。
 - **その他のデスクトップのスワイプ**: 省略可能な `--features libinput` 付きでビルドすると、KDE・Sway/Hyprland/niri・X11 のウィンドウマネージャーでは libinput から直接スワイプを読み取れます（後述）。GNOME では拡張を使う経路が優先です。
 - **切り替え先の表示**: 切り替えるたびに、ウィンドウのタイトルと「アプリ · 2 / 5」（GNOME ではアプリのアイコンも）を画面中央に一瞬表示します。スワイプで何枚も進むときに今どこにいるかが分かります。Windows では daemon 経由のときに表示されます。
@@ -76,7 +76,7 @@ environment.systemPackages = [
    .\window-jump.exe autostart enable   # ログイン時に window-jumpw.exe（コンソール窓なし）を起動
    .\window-jumpw.exe                    # 今すぐ起動
    ```
-3. タッチパッド（任意）: スワイプには **Windows Precision Touchpad** が必要です（最近のノート PC はほぼ対応）。**設定 → Bluetooth とデバイス → タッチパッド** で **3 本指のジェスチャー** と **4 本指のジェスチャー** をオフ（*何もしない*）にしてから、GNOME と同じ `[[swipe]]` 設定を使います。既定では `Ctrl` を押しながら 3 本指で左右にスワイプします。Windows 標準のジェスチャーを有効にしたままだと、そちらも同時に反応します（生の HID 入力からは横取りできません）。
+3. タッチパッド（任意）: スワイプには **Windows Precision Touchpad** が必要です（最近のノート PC はほぼ対応）。**設定 → Bluetooth とデバイス → タッチパッド** で **3 本指のジェスチャー** と **4 本指のジェスチャー** をオフ（*何もしない*）にしてから、GNOME と同じ `[[swipe]]` 設定を使います。既定では `Ctrl` を押しながら 3 本指で左右に、または `Alt` を押しながら 3 本指で上下にスワイプします。Windows 標準のジェスチャーを有効にしたままだと、そちらも同時に反応します（生の HID 入力からは横取りできません）。
 
 `window-jumpw.exe` はタスクトレイ（通知領域）にアイコンを表示します。メニューには登録できたホットキーの数（他のアプリに取られて登録できなかったものはその名前）と、**Reload config**（設定の再読み込み）、**Open config file**（設定ファイルを開く）、**Start at login**（ログイン時に起動、現在の状態にチェック）、**Quit**（終了）が並びます。終了するためにタスク マネージャーを開く必要はありません。
 
@@ -230,8 +230,21 @@ fingers = 3
 modifiers = ["ctrl"]
 direction = "right"
 action = "prev"
+
+[[swipe]]
+fingers = 3
+modifiers = ["alt"]       # ctrl / alt / shift / super を組み合わせられる
+direction = "up"
+action = "next"
+
+[[swipe]]
+fingers = 3
+modifiers = ["alt"]
+direction = "down"
+action = "prev"
 ```
 
+`[[swipe]]` 1 つが「指の本数・修飾キー・方向」の組み合わせ 1 つです。書き換えるのも、消すのも、足すのも自由です。ファイルに `[[swipe]]`（または `[[hotkey]]`）を 1 つでも書くと、ファイルに書いたものだけが有効になります。
 `hotkey = []` / `swipe = []` で無効にできます。daemon はファイルの変更を 2 秒ほどで取り込みます。書き間違えた場合はログに出して、それまでの設定のまま動き続けます。
 
 ヒント:
@@ -257,7 +270,7 @@ nix build .#checks.x86_64-linux.vm-touchpad -L
 nix flake check                # Nix のチェック一式: ビルド（cargo test を含む）と VM テスト
 ```
 
-e2e テストは動作中のデスクトップには一切触れません。専用の gnome-shell・D-Bus・HOME・dconf を立ち上げて使い捨てます。この gnome-shell は入力デバイスを読まないため、タッチパッドの経路は VM で確かめます。uinput の仮想タッチパッドから 3 本指スワイプを libinput・mutter・GNOME Shell に流し、Ctrl＋3 本指ではワークスペースが切り替わらずにウィンドウが切り替わること、修飾キーなしの 3 本指では今まで通りワークスペースが切り替わることを確認します。D-Bus プロトコルは [gnome-extension/README.md](gnome-extension/README.md) を参照してください。CI では上記すべてを GNOME 46・48・49・50・51（Ubuntu、Debian、Fedora、Arch のコンテナ）、NixOS の VM、Windows Server 2022 で実行しています。
+e2e テストは動作中のデスクトップには一切触れません。専用の gnome-shell・D-Bus・HOME・dconf を立ち上げて使い捨てます。この gnome-shell は入力デバイスを読まないため、タッチパッドの経路は VM で確かめます。uinput の仮想タッチパッドから 3 本指スワイプを libinput・mutter・GNOME Shell に流し、Ctrl＋3 本指の左スワイプと Alt＋3 本指の上下スワイプでは、ワークスペースもアクティビティ画面も動かずにウィンドウが切り替わること、修飾キーなしの 3 本指では今まで通りどちらも動くことを確認します。D-Bus プロトコルは [gnome-extension/README.md](gnome-extension/README.md) を参照してください。CI では上記すべてを GNOME 46・48・49・50・51（Ubuntu、Debian、Fedora、Arch のコンテナ）、NixOS の VM、Windows Server 2022 で実行しています。
 
 ## ライセンス
 

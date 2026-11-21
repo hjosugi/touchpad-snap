@@ -80,9 +80,9 @@ impl Default for GestureConfig {
 
 impl Default for Config {
     fn default() -> Self {
-        let swipe = |direction, action| SwipeBinding {
+        let swipe = |modifier, direction, action| SwipeBinding {
             fingers: 3,
-            modifiers: vec![Modifier::Ctrl],
+            modifiers: vec![modifier],
             direction,
             action,
         };
@@ -104,10 +104,15 @@ impl Default for Config {
                 },
             ],
             // Content follows the fingers, as with GNOME's workspace swipe:
-            // swiping left brings in the next window.
+            // swiping left (or up) brings in the next window. Two modifiers,
+            // one per axis, so that either hand position works: Ctrl for the
+            // axis GNOME switches workspace on, Alt for the one it opens the
+            // overview on.
             swipes: vec![
-                swipe(SwipeDirection::Left, Step::Next),
-                swipe(SwipeDirection::Right, Step::Prev),
+                swipe(Modifier::Ctrl, SwipeDirection::Left, Step::Next),
+                swipe(Modifier::Ctrl, SwipeDirection::Right, Step::Prev),
+                swipe(Modifier::Alt, SwipeDirection::Up, Step::Next),
+                swipe(Modifier::Alt, SwipeDirection::Down, Step::Prev),
             ],
         }
     }
@@ -275,12 +280,18 @@ action = "prev"
 # Touchpad swipes, held together with modifier keys: on GNOME via the shell
 # extension, on Windows from a Precision Touchpad's raw HID input, and on other
 # desktops from libinput when window-jump is built with --features libinput.
-# On GNOME a claimed swipe is taken away from the shell, so Ctrl + three
-# fingers no longer switches workspace while plain three fingers still does.
-# Windows and libinput cannot intercept a gesture: turn the built-in (compositor)
-# three/four-finger gestures off, or use modifiers the desktop does not use.
+# On GNOME a claimed swipe is taken away from the shell, so Ctrl or Alt + three
+# fingers no longer switch workspace or open the overview, while plain three
+# fingers still do. Windows and libinput cannot intercept a gesture: turn the
+# built-in (compositor) three/four-finger gestures off, or use modifiers the
+# desktop does not use.
+#
+# Each [[swipe]] is one combination: `fingers` (3 to 5), `modifiers` (any of
+# "ctrl", "alt", "shift", "super"; at least one is wise), `direction`
+# ("left", "right", "up", "down") and `action` ("next" or "prev"). Change,
+# remove or add tables freely; as soon as the file has one [[swipe]], only
+# the ones in the file apply. Set `swipe = []` to bind none.
 # Avoid Super alone: releasing it opens the Activities overview (or Start).
-# Set `swipe = []` to bind none.
 [[swipe]]
 fingers = 3
 modifiers = ["ctrl"]
@@ -291,6 +302,18 @@ action = "next"
 fingers = 3
 modifiers = ["ctrl"]
 direction = "right"
+action = "prev"
+
+[[swipe]]
+fingers = 3
+modifiers = ["alt"]
+direction = "up"
+action = "next"
+
+[[swipe]]
+fingers = 3
+modifiers = ["alt"]
+direction = "down"
 action = "prev"
 "#;
 
@@ -346,17 +369,15 @@ mod tests {
     fn claims_and_lookup() {
         let cfg = Config::default();
         let claims = cfg.claims();
-        assert_eq!(
-            claims,
-            vec![Claim {
-                fingers: 3,
-                mods: Mods::CTRL
-            }]
-        );
-        assert_eq!(
-            cfg.swipe_action(claims[0], SwipeDirection::Left),
-            Some(Step::Next)
-        );
-        assert_eq!(cfg.swipe_action(claims[0], SwipeDirection::Up), None);
+        let claim = |mods| Claim { fingers: 3, mods };
+        assert_eq!(claims, vec![claim(Mods::CTRL), claim(Mods::ALT)]);
+        let bound = |mods, direction| cfg.swipe_action(claim(mods), direction);
+        assert_eq!(bound(Mods::CTRL, SwipeDirection::Left), Some(Step::Next));
+        assert_eq!(bound(Mods::CTRL, SwipeDirection::Right), Some(Step::Prev));
+        assert_eq!(bound(Mods::ALT, SwipeDirection::Up), Some(Step::Next));
+        assert_eq!(bound(Mods::ALT, SwipeDirection::Down), Some(Step::Prev));
+        // Each modifier has one axis: the other one is claimed but unbound.
+        assert_eq!(bound(Mods::CTRL, SwipeDirection::Up), None);
+        assert_eq!(bound(Mods::ALT, SwipeDirection::Left), None);
     }
 }
