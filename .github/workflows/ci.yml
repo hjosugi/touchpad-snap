@@ -53,24 +53,59 @@ jobs:
       - run: npm test
 
   gnome-e2e:
-    name: End-to-end (headless GNOME Shell ${{ matrix.gnome }})
+    name: End-to-end (headless GNOME Shell, ${{ matrix.name }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - gnome: 46 (Ubuntu 24.04)
+          - name: Ubuntu 24.04 / GNOME 46
             runner: ubuntu-24.04
+          - name: Debian 13 / GNOME 48
+            runner: ubuntu-latest
+            container: debian:trixie
+          - name: Fedora 43 / GNOME 49
+            runner: ubuntu-latest
+            container: fedora:43
+          - name: Fedora 44 / GNOME 50
+            runner: ubuntu-latest
+            container: fedora:44
+          - name: Arch Linux / latest GNOME
+            runner: ubuntu-latest
+            container: archlinux:latest
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
     steps:
-      - uses: actions/checkout@v7
-      - name: Install GNOME Shell and test clients
+      - name: Install GNOME Shell, test clients and build tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gnome-shell gnome-text-editor gnome-calculator \
-            dbus-daemon dbus-x11 libglib2.0-bin jq fuse3 mesa-utils
+          set -eux
+          if command -v dnf >/dev/null; then
+            dnf install -y --setopt=install_weak_deps=False \
+              gnome-shell gnome-text-editor gnome-calculator \
+              dbus-daemon dbus-tools glib2 jq util-linux fuse3 mesa-dri-drivers mesa-libEGL \
+              gcc git curl tar gzip findutils
+          elif command -v pacman >/dev/null; then
+            pacman -Syu --noconfirm --needed \
+              gnome-shell gnome-text-editor gnome-calculator \
+              dbus glib2 jq util-linux fuse3 mesa gcc git curl
+          elif [ "$(id -u)" = 0 ]; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              gnome-shell gnome-text-editor gnome-calculator \
+              dbus-daemon dbus-bin libglib2.0-bin jq fuse3 util-linux libgl1-mesa-dri libegl1 \
+              gcc libc6-dev git curl ca-certificates
+          else
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              gnome-shell gnome-text-editor gnome-calculator \
+              dbus-daemon dbus-x11 libglib2.0-bin jq fuse3 mesa-utils
+          fi
+          gnome-shell --version
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
       - run: cargo build --locked --all-targets
       - run: ./test/e2e/gnome.sh
 
