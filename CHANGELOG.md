@@ -1,15 +1,6 @@
 # Changelog
 
-## [Unreleased]
-
-### Tests
-
-- A NixOS VM test boots a full GNOME session and swipes on a virtual
-  (uinput) touchpad: Ctrl + three fingers must jump to the app's other window
-  without switching workspace, plain three fingers must still switch it.
-  Runs in CI. (#26)
-
-## [0.3.0] - 2026-11-21
+## [0.3.0] - 2026-11-22
 
 ### Added
 
@@ -34,6 +25,13 @@
   (`window-jump next` from another shortcut tool, hotkeys without
   modifiers). Extension protocol 3 adds the `AcceleratorReleased` signal; with
   an older extension sessions go by time as before. (#6)
+
+### Tests
+
+- A NixOS VM test boots a full GNOME session and swipes on a virtual
+  (uinput) touchpad: Ctrl + three fingers must jump to the app's other window
+  without switching workspace, plain three fingers must still switch it.
+  Runs in CI. (#26)
 
 ## [0.2.0] - 2026-11-21
 
