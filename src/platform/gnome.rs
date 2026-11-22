@@ -31,10 +31,9 @@ pub const OBJECT_PATH: &str = "/io/github/hjosugi/TouchpadSnap";
 pub const INTERFACE: &str = "io.github.hjosugi.TouchpadSnap1";
 /// The extension protocol this binary speaks. Version 2 added ShowHud,
 /// version 3 the AcceleratorReleased signal, version 4 per-app swipe claims
-/// and the app id in the Swipe signal. Older extensions still work, without
-/// the overlay (1), with MRU sessions going by time (2), or without per-app
-/// claims (3).
-pub const PROTOCOL_VERSION: u32 = 4;
+/// and the app id in the Swipe signal, and version 5 SendKeys (the `keys`
+/// action). Older extensions still work, without the features above.
+pub const PROTOCOL_VERSION: u32 = 5;
 pub const EXTENSION_UUID: &str = "touchpad-snap@hjosugi.github.io";
 
 /// Whether an extension of `version` understands app-filtered swipe claims.
@@ -81,16 +80,17 @@ impl Gnome {
         let version = self.protocol_version()?;
         let platform = super::current_platform();
         let claims = cfg.claims_for(&platform);
-        let needs_app_claims = claims.iter().any(|claim| !claim.apps.is_empty());
         if version < PROTOCOL_VERSION {
-            let missing = if version < 2 {
-                "the overlay after a jump, and hotkey sessions that end when the modifiers are released"
-            } else if version < 3 {
-                "hotkey sessions that end when the modifiers are released (they go by time instead)"
-            } else if needs_app_claims {
-                "per-app swipe claims: those swipes are claimed in every app and do nothing outside it"
-            } else {
-                "nothing"
+            let missing = match version {
+                0 | 1 => {
+                    "the overlay after a jump, hotkey sessions that end when the modifiers are released, per-app swipe claims, and the `keys` action"
+                }
+                2 => {
+                    "hotkey sessions that end when the modifiers are released (they go by time instead), per-app swipe claims, and the `keys` action"
+                }
+                3 => "per-app swipe claims and the `keys` action",
+                4 => "the `keys` action",
+                _ => "nothing",
             };
             eprintln!(
                 "touchpad-snap: the GNOME extension is older (protocol {version}, this binary {PROTOCOL_VERSION}); \
@@ -176,6 +176,20 @@ impl Backend for Gnome {
             bail!("window {id} is gone");
         }
         Ok(())
+    }
+
+    fn send_keys(&self, keys: Hotkey, _held: Mods) -> Result<()> {
+        // The extension looks at the real modifier state itself and waits
+        // for the trigger's modifiers to go up (see SendKeys in its README).
+        let args = (keys.key.keysym(), keys.mods.0);
+        match self.proxy.call::<_, _, bool>("SendKeys", &args) {
+            Ok(true) => Ok(()),
+            Ok(false) => bail!("the GNOME Shell extension could not type {keys}"),
+            Err(e) if e.to_string().contains("UnknownMethod") => bail!(
+                "the GNOME Shell extension is too old to send keys (needs protocol 5); update it and log in again"
+            ),
+            Err(e) => Err(self.explain(e)),
+        }
     }
 
     fn show_hud(&self, id: u64, index: usize, total: usize, duration_ms: u64) -> Result<()> {

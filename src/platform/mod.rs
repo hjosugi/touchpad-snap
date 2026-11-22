@@ -13,7 +13,7 @@ use anyhow::Result;
 
 use crate::config::{Claim, Config};
 use crate::gesture::Phase;
-use crate::hotkey::Hotkey;
+use crate::hotkey::{Hotkey, Mods};
 use crate::model::Snapshot;
 use crate::when::PlatformDescription;
 
@@ -43,6 +43,15 @@ pub trait Backend {
     /// `total`). Best effort; backends without an overlay do nothing.
     fn show_hud(&self, _id: u64, _index: usize, _total: usize, _duration_ms: u64) -> Result<()> {
         Ok(())
+    }
+    /// Types `keys` into the focused window. `held` are modifiers that are
+    /// physically down (the trigger's own); `Alt` + swipe sending `Ctrl+Tab`
+    /// has to arrive as `Ctrl+Tab`. A backend that can release keys does so
+    /// while it types and presses them again afterwards (Windows); one that
+    /// cannot types when they come up (GNOME: mutter ignores a virtual
+    /// release of a key the user holds).
+    fn send_keys(&self, _keys: Hotkey, _held: Mods) -> Result<()> {
+        anyhow::bail!("sending keys is not supported on this desktop yet")
     }
     /// One line for `touchpad-snap doctor`.
     fn describe(&self) -> String;

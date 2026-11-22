@@ -172,7 +172,14 @@ focus_on() {
     for _ in 1 2 3 4 5; do
         [[ $(call Activate "uint64 $id") == "(true,)" ]] || fail "Activate($id) returned false"
         for _ in $(seq 20); do
-            focus_is "$id" && return 0
+            if focus_is "$id"; then
+                # A window that was opened moments ago takes focus when it is
+                # mapped, which can be after this activation went through:
+                # focus counts once it has stayed.
+                sleep 0.7
+                focus_is "$id" && return 0
+                break
+            fi
             sleep 0.1
         done
     done

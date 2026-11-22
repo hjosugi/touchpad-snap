@@ -9,7 +9,7 @@ claims. Install it together with the `touchpad-snap` binary.
 machine, app pattern matching), unit-tested with Node: `npm test` at the
 repository root.
 
-## D-Bus protocol (version 4)
+## D-Bus protocol (version 5)
 
 | | |
 |---|---|
@@ -35,6 +35,15 @@ repository root.
 - `ShowHud(t id, u index, u total, u duration_ms) → b ok` — briefly show an
   overlay for a window (app icon, title, "index / total") centred on its
   monitor; a new one replaces the previous. *(Since version 2.)*
+- `SendKeys(u keysym, u mods) → b ok` — type a shortcut into the focused
+  window with a virtual keyboard: `mods` (bits below) down, the key `keysym`
+  (an X keysym, e.g. 0xff09 for Tab) tapped, `mods` up. It returns at once
+  (`true` = accepted) and types when no other modifier is down: a virtual
+  keyboard cannot release a key the user holds (mutter ignores the release),
+  so `Alt` + swipe sending `Ctrl+Tab` goes out when Alt comes up, in the
+  order asked, and is dropped after 3 s if Alt never does. Only the
+  connection that registered hotkeys or swipe claims may call it; anybody else
+  gets `org.freedesktop.DBus.Error.AccessDenied`. *(Since version 5.)*
 - `SetAccelerators(a(ss) bindings) → as failed` — grab
   `(accelerator, action)` pairs, e.g. `("<Super><Alt>n", "hotkey:0")`, for
   the calling connection. Replaces that caller's previous grabs. Returns the
@@ -72,9 +81,9 @@ When the caller's connection closes, its grabs and claims are released.
 
 ### Property
 
-- `ProtocolVersion` (u) — 4. Version 1 had no `ShowHud`, version 2 no
-  `AcceleratorReleased`, version 3 no per-app claims or `app_id` in `Swipe`.
-  The binary works with any of them: on version 3 per-app bindings are
-  claimed in every app (and do nothing in other apps), and it says so at
-  startup. Versions 1–2 additionally go by time for MRU hotkey sessions and
-  have no overlay.
+- `ProtocolVersion` (u) — 5. Version 1 had no `ShowHud`, version 2 no
+  `AcceleratorReleased`, version 3 no per-app claims or `app_id` in `Swipe`,
+  and version 4 no `SendKeys`. The binary works with any of them: on version 3
+  per-app bindings are claimed in every app (and do nothing in other apps),
+  versions 1–2 additionally go by time for MRU hotkey sessions and have no
+  overlay, and versions below 5 report the `keys` action as unavailable.

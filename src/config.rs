@@ -103,40 +103,47 @@ pub enum Action {
         #[serde(default)]
         shell: bool,
     },
+    /// Send a keyboard shortcut to the focused window, e.g. `"Ctrl+W"`. The
+    /// modifiers the trigger itself is held with are released for it.
+    #[serde(rename = "keys")]
+    Keys { keys: String },
 }
 
 impl Action {
     /// Checks the combinations that serde cannot express.
     fn validate(&self) -> Result<(), String> {
-        let Action::Exec { command, shell } = self else {
-            return Ok(());
-        };
-        match command {
-            ExecCommand::Args(args) => {
-                if *shell {
-                    return Err(
-                        "`exec`: a command list runs directly; remove \"shell\": true".into(),
-                    );
-                }
-                if args.is_empty() {
-                    return Err("`exec`: \"command\" must not be an empty list".into());
-                }
-                if args[0].trim().is_empty() {
-                    return Err("`exec`: the program in \"command\" must not be empty".into());
-                }
+        match self {
+            Action::Keys { keys } => {
+                Hotkey::parse(keys).map_err(|e| format!("action `keys`: {e}"))?;
             }
-            ExecCommand::Shell(script) => {
-                if !*shell {
-                    return Err(
-                        "`exec`: a command string needs \"shell\": true; use an argument list \
-                         to run a program directly"
-                            .into(),
-                    );
+            Action::Exec { command, shell } => match command {
+                ExecCommand::Args(args) => {
+                    if *shell {
+                        return Err(
+                            "`exec`: a command list runs directly; remove \"shell\": true".into(),
+                        );
+                    }
+                    if args.is_empty() {
+                        return Err("`exec`: \"command\" must not be an empty list".into());
+                    }
+                    if args[0].trim().is_empty() {
+                        return Err("`exec`: the program in \"command\" must not be empty".into());
+                    }
                 }
-                if script.trim().is_empty() {
-                    return Err("`exec`: \"command\" must not be empty".into());
+                ExecCommand::Shell(script) => {
+                    if !*shell {
+                        return Err(
+                            "`exec`: a command string needs \"shell\": true; use an argument \
+                                 list to run a program directly"
+                                .into(),
+                        );
+                    }
+                    if script.trim().is_empty() {
+                        return Err("`exec`: \"command\" must not be empty".into());
+                    }
                 }
-            }
+            },
+            Action::Next | Action::Prev | Action::Delay { .. } => {}
         }
         Ok(())
     }
@@ -1155,7 +1162,10 @@ fn unsupported_reason(value: &Value) -> Option<String> {
     if let Some(actions) = value.get("actions").and_then(Value::as_array) {
         for action in actions {
             if let Some(kind) = action.get("type").and_then(Value::as_str)
-                && !matches!(kind, "window.next" | "window.prev" | "delay" | "exec")
+                && !matches!(
+                    kind,
+                    "window.next" | "window.prev" | "delay" | "exec" | "keys"
+                )
             {
                 return Some(format!(
                     "action type `{kind}` is not supported by this build; the binding was skipped"
@@ -1426,7 +1436,7 @@ mod tests {
                 "bindings": [
                     {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"when":{"title":"Firefox"},"actions":[{"type":"window.next"}]},
                     {"trigger":{"type":"tap","fingers":3},"actions":[{"type":"window.next"}]},
-                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"actions":[{"type":"keys","keys":"Alt+Tab"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"actions":[{"type":"window.close"}]},
                     {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+L"},"actions":[{"type":"window.next"}]}
                 ]
             }"#,
@@ -1440,6 +1450,28 @@ mod tests {
                 .all(|p| p.severity == Severity::Warning)
         );
         assert!(cfg.report().problems[0].message.contains("when.title"));
+    }
+
+    #[test]
+    fn keys_actions_are_checked_when_loading() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"swipe","fingers":3,"modifiers":["alt"],"direction":"down"},
+                     "actions":[{"type":"keys","keys":"Ctrl+Shift+Tab"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},
+                     "actions":[{"type":"keys","keys":"Ctrl+Hyper+W"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+L"},
+                     "actions":[{"type":"keys","keys":"Ctrl+Nonsense"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.bindings.len(), 1, "{:?}", cfg.report().problems);
+        let errors: Vec<_> = cfg.report().errors().map(|p| p.message.clone()).collect();
+        assert_eq!(errors.len(), 2);
+        assert!(errors[0].contains("Hyper"), "{errors:?}");
+        assert!(errors[1].contains("Nonsense"), "{errors:?}");
+        assert!(errors.iter().all(|e| e.starts_with("action `keys`")));
     }
 
     #[test]

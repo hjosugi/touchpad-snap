@@ -72,6 +72,24 @@
             "command"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Send a keyboard shortcut to the focused window, e.g. `\"Ctrl+W\"`. The\nmodifiers the trigger itself is held with are released for it.",
+          "properties": {
+            "keys": {
+              "type": "string"
+            },
+            "type": {
+              "const": "keys",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "keys"
+          ],
+          "type": "object"
         }
       ]
     },

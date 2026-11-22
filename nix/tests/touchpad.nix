@@ -8,7 +8,8 @@
 #
 #   nix build .#checks.x86_64-linux.vm-touchpad -L      (needs KVM)
 #
-# Asserts that the default swipes jump between the app's windows and leave
+# Asserts that Alt + three fingers left types Ctrl+Shift+N (a new editor
+# window) once Alt is up, and that the default swipes jump between the app's windows and leave
 # GNOME alone (Ctrl + three fingers left: no workspace switch; Alt + three
 # fingers up/down: no overview), that plain three fingers still open the
 # overview and switch workspace in apps without a binding, and that a plain
@@ -39,6 +40,7 @@ let
         { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "right" }, "actions": [ { "type": "window.prev" } ] },
         { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "up" }, "actions": [ { "type": "window.next" } ] },
         { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "down" }, "actions": [ { "type": "window.prev" } ] },
+        { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "left" }, "actions": [ { "type": "keys", "keys": "Ctrl+Shift+N" } ] },
         {
           "trigger": { "type": "swipe", "fingers": 3, "direction": "left" },
           "when": { "app": ["*TextEditor*"] },
@@ -292,5 +294,17 @@ pkgs.testers.runNixOSTest {
         wait_for("plain swipe left -> next workspace", lambda: snapshot()["active_workspace"] == 1, 20)
         assert daemon_log().count("swipe Left") == jumps, "the daemon saw an unclaimed swipe"
         machine.screenshot("after-plain-swipe")
+
+    with subtest("Alt + three fingers left: types Ctrl+Shift+N once Alt is up"):
+        # The keys action: the virtual keyboard cannot release the physical
+        # Alt, so the shortcut waits until the (virtual) hand lets go of it.
+        # With Alt still down it would arrive as Alt+Ctrl+Shift+N and open
+        # nothing.
+        before = len(editors())
+        focus_on(second)
+        machine.succeed("swipe send --mod alt --fingers 3 --dx -40")
+        wait_for("a new editor window from Ctrl+Shift+N", lambda: len(editors()) == before + 1, 30)
+        assert "keys Ctrl+Shift+N" in daemon_log()
+        machine.screenshot("after-keys-swipe")
   '';
 }

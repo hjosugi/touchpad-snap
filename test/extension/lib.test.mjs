@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
 import {
-    Mods, Phase, SwipeClaimer, appMatches, modsFromState, patternMatches,
+    KEYS_WAIT_MS, KeyQueue, MODIFIER_KEYS, Mods, Phase, SwipeClaimer, appMatches,
+    keySequence, modsFromState, patternMatches,
 } from '../../gnome-extension/touchpad-snap@hjosugi.github.io/lib.js';
 
 // Clutter.ModifierType values.
@@ -105,4 +106,69 @@ test('clearing the claims drops a swipe in progress', () => {
     c.setClaims([]);
     assert.equal(c.hasClaims, false);
     assert.equal(c.handle(Phase.UPDATE, 3, Mods.CTRL, [], 1, 0).stop, false);
+});
+
+test('keySequence presses the modifiers around the key and releases them in reverse', () => {
+    const [, CTRL, , SHIFT] = MODIFIER_KEYS.map(([, sym]) => sym);
+    assert.deepEqual(keySequence(0x77, Mods.CTRL), [
+        [CTRL, true], [0x77, true], [0x77, false], [CTRL, false],
+    ]);
+    assert.deepEqual(keySequence(0xff09, Mods.CTRL | Mods.SHIFT), [
+        [CTRL, true], [SHIFT, true], [0xff09, true], [0xff09, false],
+        [SHIFT, false], [CTRL, false],
+    ]);
+    assert.deepEqual(keySequence(0xffbe, 0), [[0xffbe, true], [0xffbe, false]]);
+});
+
+test('KeyQueue types at once when no stray modifier is down', () => {
+    const typed = [];
+    const q = new KeyQueue((sym, mods) => typed.push([sym, mods]));
+    q.push(0x77, Mods.CTRL, 0);
+    assert.equal(q.pump(0, 10), false);
+    assert.deepEqual(typed, [[0x77, Mods.CTRL]]);
+    // A modifier the shortcut uses itself may be down.
+    q.push(0x77, Mods.CTRL, 20);
+    assert.equal(q.pump(Mods.CTRL, 30), false);
+    assert.equal(typed.length, 2);
+});
+
+test('KeyQueue waits for the trigger\'s modifiers to go up, then types', () => {
+    const typed = [];
+    const q = new KeyQueue((sym, mods) => typed.push([sym, mods]));
+    q.push(0xff09, Mods.CTRL, 0);
+    // Alt is held by the swipe: Alt+Ctrl+Tab would be the wrong shortcut.
+    assert.equal(q.pump(Mods.ALT, 25), true);
+    assert.equal(q.pump(Mods.ALT | Mods.CTRL, 50), true);
+    assert.deepEqual(typed, []);
+    assert.equal(q.pump(0, 75), false);
+    assert.deepEqual(typed, [[0xff09, Mods.CTRL]]);
+});
+
+test('KeyQueue keeps the order of a chain while it waits', () => {
+    const typed = [];
+    const q = new KeyQueue((sym, mods) => typed.push([sym, mods]));
+    q.push(0x61, Mods.CTRL, 0);
+    q.push(0x62, 0, 1);
+    q.push(0x63, Mods.SHIFT, 2);
+    assert.equal(q.pump(Mods.SUPER, 10), true);
+    assert.equal(q.pump(0, 20), false);
+    assert.deepEqual(typed, [[0x61, Mods.CTRL], [0x62, 0], [0x63, Mods.SHIFT]]);
+});
+
+test('KeyQueue drops what has waited too long, and goes on with the rest', () => {
+    const typed = [];
+    const dropped = [];
+    const q = new KeyQueue((sym, mods) => typed.push([sym, mods]), item => dropped.push(item.keysym));
+    q.push(0x61, 0, 0);
+    q.push(0x62, Mods.CTRL, KEYS_WAIT_MS - 1);
+    // Alt is still down after the wait: the first goes, the second has
+    // waited only a moment and keeps waiting.
+    assert.equal(q.pump(Mods.ALT, KEYS_WAIT_MS + 1), true);
+    assert.deepEqual(dropped, [0x61]);
+    assert.deepEqual(typed, []);
+    assert.equal(q.pump(0, KEYS_WAIT_MS + 2), false);
+    assert.deepEqual(typed, [[0x62, Mods.CTRL]]);
+    q.push(0x63, 0, 0);
+    q.clear();
+    assert.equal(q.pending, false);
 });
