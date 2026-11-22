@@ -379,9 +379,19 @@ libinput はコンポジタが同じジェスチャーを見るのを止めら�
   （`fingers` は 3〜5、`direction` は left / right / up / down、modifiers は
   `ctrl` / `alt` / `shift` / `super` の組み合わせ）です。
 - `actions` は順番に実行するチェーンです。現在使えるのは `window.next`、
-  `window.prev`、`delay`（`{ "type": "delay", "ms": 100 }`）です。キー送信、
+  `window.prev`、`delay`（`{ "type": "delay", "ms": 100 }`）、`keys`（下記）です。
   `exec`、ウィンドウ・ワークスペース・アプリ操作は今後のリリースです。それらを
   使ったバインディングは警告を出して読み飛ばします。
+- `keys` は、フォーカス中のウィンドウにキーボードショートカットを打ちます
+  （`{ "type": "keys", "keys": "Ctrl+Shift+Tab" }`）。書き方はホットキーと同じで、
+  修飾キーのあとに、英数字、`F1`〜`F24`、矢印、`Tab`、`Space`、`Return`、`Escape`、
+  `Home`、`End`、`PageUp`、`PageDown`、`Backspace`、`Delete`、記号のどれかを書きます。
+  トリガーの修飾キーはショートカットに含まれません。`Alt` を押しながらのスワイプで
+  `Ctrl+Tab` を送れば、`Alt+Ctrl+Tab` ではなく `Ctrl+Tab` として届きます。Windows では
+  そのあいだ修飾キーをいったん離して、打ち終わったら押し直します。GNOME では仮想
+  キーボードが、指で押しているキーを離せないため、修飾キーから指を離したときに
+  打ちます（3 秒を超えて押し続けると捨てます）。GNOME 拡張はプロトコル 4 が必要です
+  （更新後は一度ログインし直してください）。ほかのデスクトップでは未対応と表示します。
 - `name` は任意で、ログと `config check` にだけ使います。
   `enabled: false` にすると、バインディングをファイルに残したまま登録しません。
 - `repeat` は、指を離さずに動かしたとき `gesture.repeat_step` ごとに

@@ -31,8 +31,9 @@ pub const OBJECT_PATH: &str = "/io/github/hjosugi/TouchpadSnap";
 pub const INTERFACE: &str = "io.github.hjosugi.TouchpadSnap1";
 /// The extension protocol this binary speaks. Version 2 added ShowHud,
 /// version 3 the AcceleratorReleased signal. Older extensions still work,
-/// without the overlay (1) or with MRU sessions going by time (2).
-pub const PROTOCOL_VERSION: u32 = 3;
+/// without the overlay (1) or with MRU sessions going by time (2). Version 4
+/// added SendKeys (the `keys` action).
+pub const PROTOCOL_VERSION: u32 = 4;
 pub const EXTENSION_UUID: &str = "touchpad-snap@hjosugi.github.io";
 
 pub struct Gnome {
@@ -73,10 +74,14 @@ impl Gnome {
     fn register(&self, cfg: &Config, hotkeys: &[Hotkey], portal: bool) -> Result<u32> {
         let version = self.protocol_version()?;
         if version < PROTOCOL_VERSION {
-            let missing = if version < 2 {
-                "the overlay after a jump, and hotkey sessions that end when the modifiers are released"
-            } else {
-                "hotkey sessions that end when the modifiers are released (they go by time instead)"
+            let missing = match version {
+                0 | 1 => {
+                    "the overlay after a jump, hotkey sessions that end when the modifiers are released, and the `keys` action"
+                }
+                2 => {
+                    "hotkey sessions that end when the modifiers are released (they go by time instead), and the `keys` action"
+                }
+                _ => "the `keys` action",
             };
             eprintln!(
                 "touchpad-snap: the GNOME extension is older (protocol {version}, this binary {PROTOCOL_VERSION}); \
@@ -149,6 +154,20 @@ impl Backend for Gnome {
             bail!("window {id} is gone");
         }
         Ok(())
+    }
+
+    fn send_keys(&self, keys: Hotkey, _held: Mods) -> Result<()> {
+        // The extension looks at the real modifier state itself and waits
+        // for the trigger's modifiers to go up (see SendKeys in its README).
+        let args = (keys.key.keysym(), keys.mods.0);
+        match self.proxy.call::<_, _, bool>("SendKeys", &args) {
+            Ok(true) => Ok(()),
+            Ok(false) => bail!("the GNOME Shell extension could not type {keys}"),
+            Err(e) if e.to_string().contains("UnknownMethod") => bail!(
+                "the GNOME Shell extension is too old to send keys (needs protocol 4); update it and log in again"
+            ),
+            Err(e) => Err(self.explain(e)),
+        }
     }
 
     fn show_hud(&self, id: u64, index: usize, total: usize, duration_ms: u64) -> Result<()> {

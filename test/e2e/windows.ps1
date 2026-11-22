@@ -195,6 +195,27 @@ try {
     $sent = [Win]::Chord(0x11, 0x12, 0x4E)
     WaitFor 'next press -> back to the first Notepad' { (Focused) -eq $n[0].id }
     Ok 'daemon: held modifiers keep digging past the timeout, release commits'
+
+    # The keys action: Ctrl+Alt+K types W into the focused Notepad. Ctrl and
+    # Alt are down while the hotkey fires and have to be released for the W to
+    # come out plain (Ctrl+Alt+W would type nothing).
+    $reloads = @(Select-String -Path $log -Pattern 'reloaded').Count
+    Set-Content -Path $cfg -Encoding ascii `
+        -Value '{ "bindings": [ { "trigger": { "type": "hotkey", "keys": "Ctrl+Alt+K" }, "actions": [ { "type": "keys", "keys": "W" } ] } ] }'
+    WaitFor 'daemon to load the keys binding' { @(Select-String -Path $log -Pattern 'reloaded').Count -gt $reloads }
+    & $Bin activate $n[0].id
+    WaitFor 'first Notepad focused' { (Focused) -eq $n[0].id }
+    if ([Win]::NotepadText([IntPtr]$n[0].id) -cmatch 'w') { Fail 'the Notepad already has a w in it' }
+    $sent = [Win]::Chord(0x11, 0x12, 0x4B)  # Ctrl, Alt, K
+    if ($sent -ne 6) { Fail "SendInput accepted only $sent of 6 events for Ctrl+Alt+K" }
+    WaitFor 'keys action typed w into Notepad' { [Win]::NotepadText([IntPtr]$n[0].id) -cmatch 'w' } 5
+    if (-not (Select-String -Path $log -Pattern 'keys W' -Quiet)) { Fail 'the daemon did not log the keys action' }
+    # What was held is down again for the real release, but not stuck: a
+    # plain key afterwards is not read as Ctrl+Alt+<key>.
+    $before = [Win]::NotepadText([IntPtr]$n[0].id).Length
+    [void][Win]::Chord(0x45)  # E
+    WaitFor 'no modifier left stuck after the keys action' { [Win]::NotepadText([IntPtr]$n[0].id).Length -gt $before } 5
+    Ok 'daemon: the keys action types W with Ctrl and Alt released, and leaves nothing stuck'
     if ($VirtualDesktops) {
         # A second desktop, with one Notepad on it. Win+Ctrl+D switches to the
         # new desktop, so the Notepad starts there.

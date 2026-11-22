@@ -15,9 +15,9 @@ ok "extension loaded and owns io.github.hjosugi.TouchpadSnap"
 
 version=$(gdbus call --session --dest io.github.hjosugi.TouchpadSnap --object-path /io/github/hjosugi/TouchpadSnap \
     --method org.freedesktop.DBus.Properties.Get io.github.hjosugi.TouchpadSnap1 ProtocolVersion)
-[[ $version == "(<uint32 3>,)" ]] || fail "unexpected protocol version: $version"
+[[ $version == "(<uint32 4>,)" ]] || fail "unexpected protocol version: $version"
 [[ $(list_json | jq '.windows | length') == 0 ]] || fail "expected no windows initially"
-ok "protocol 3, empty list at startup"
+ok "protocol 4, empty list at startup"
 
 e2e_open_clients
 # A window gets its size a moment after it is mapped.
@@ -210,6 +210,33 @@ wait_for "next press → back to the first editor" 15 focus_is "${editors3[0]}"
 ok "hotkey sessions: held modifiers keep digging past the timeout, release commits"
 rm "$XDG_CONFIG_HOME/touchpad-snap/config.json"
 
+# The `keys` action: Super+Alt+K types Ctrl+Shift+N, which opens a new text
+# editor window. It only does if Super and Alt, held for the hotkey, are up
+# by then: Super+Alt+Ctrl+Shift+N opens nothing. (A virtual keyboard cannot
+# release them, so the extension waits for the release.)
+mark_log
+cat > "$XDG_CONFIG_HOME/touchpad-snap/config.json" <<'JSON'
+{ "bindings": [ {
+    "name": "New editor window",
+    "trigger": { "type": "hotkey", "keys": "Super+Alt+K" },
+    "actions": [ { "type": "keys", "keys": "Ctrl+Shift+N" } ]
+} ] }
+JSON
+wait_for "daemon to load the keys binding" 15 logged "reloaded .*config.json"
+focus_on "${editors3[0]}"
+sleep 0.5
+press_keys Super_L Alt_L k || fail "injecting Super+Alt+K failed"
+wait_for "Ctrl+Shift+N typed by the keys action → a fifth window" 30 window_count_is 5
+logged "keys Ctrl+Shift+N" || fail "daemon did not log the keys action"
+list_json | jq -e '[.windows[] | select(.app_id | test("TextEditor"))] | length == 4' >/dev/null \
+    || fail "the new window is not a text editor"
+ok "keys action: Super+Alt+K types Ctrl+Shift+N once Super and Alt are up"
+# Nobody but the registered daemon may type.
+denied=$(call SendKeys "uint32 97" "uint32 0" 2>&1) && fail "SendKeys from another connection was accepted"
+grep -q "AccessDenied" <<<"$denied" || fail "SendKeys from another connection: expected AccessDenied, got: $denied"
+ok "SendKeys refuses callers other than the daemon"
+rm "$XDG_CONFIG_HOME/touchpad-snap/config.json"
+
 # A second daemon refuses to start.
 if tps daemon >"$E2E_ROOT/daemon2.log" 2>&1; then fail "second daemon started"; fi
 grep -q "already running" "$E2E_ROOT/daemon2.log" || fail "second daemon gave no reason"
@@ -217,7 +244,7 @@ ok "second daemon refused"
 
 doctor=$(tps doctor 2>&1) || fail "doctor reported problems: $doctor"
 echo "$doctor"
-grep -q "protocol 3" <<<"$doctor" || fail "doctor does not see the extension"
+grep -q "protocol 4" <<<"$doctor" || fail "doctor does not see the extension"
 ok "doctor"
 
 # What window-jump, this program's old name, can leave behind: its GNOME

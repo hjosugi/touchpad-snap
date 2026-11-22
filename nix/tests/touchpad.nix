@@ -8,7 +8,8 @@
 #
 #   nix build .#checks.x86_64-linux.vm-touchpad -L      (needs KVM)
 #
-# Asserts that the default swipes jump between the app's windows and leave
+# Asserts that Alt + three fingers left types Ctrl+Shift+N (a new editor
+# window) once Alt is up, and that the default swipes jump between the app's windows and leave
 # GNOME alone (Ctrl + three fingers left: no workspace switch; Alt + three
 # fingers up/down: no overview), and that plain three fingers still open the
 # overview and switch workspace.
@@ -24,11 +25,44 @@ let
     libraries = [ pkgs.python3Packages.evdev ];
     flakeIgnore = [ "E501" ];
   } (builtins.readFile ./swipe.py);
-  # One jump per swipe, whatever distance libinput reports.
-  config = pkgs.writeText "touchpad-snap.toml" ''
-    [gesture]
-    repeat_step = 0.0
-  '';
+  # One jump per swipe, whatever distance libinput reports. The default
+  # bindings, plus Alt + three fingers left typing Ctrl+Shift+N.
+  hotkey = keys: action: {
+    trigger = {
+      type = "hotkey";
+      inherit keys;
+    };
+    actions = [ { type = action; } ];
+  };
+  swipeBinding = modifier: direction: actions: {
+    trigger = {
+      type = "swipe";
+      fingers = 3;
+      modifiers = [ modifier ];
+      inherit direction;
+    };
+    inherit actions;
+  };
+  config = pkgs.writeText "touchpad-snap.json" (
+    builtins.toJSON {
+      version = 2;
+      gesture.repeat_step = 0.0;
+      bindings = [
+        (hotkey "Super+Alt+N" "window.next")
+        (hotkey "Super+Alt+P" "window.prev")
+        (swipeBinding "ctrl" "left" [ { type = "window.next"; } ])
+        (swipeBinding "ctrl" "right" [ { type = "window.prev"; } ])
+        (swipeBinding "alt" "up" [ { type = "window.next"; } ])
+        (swipeBinding "alt" "down" [ { type = "window.prev"; } ])
+        (swipeBinding "alt" "left" [
+          {
+            type = "keys";
+            keys = "Ctrl+Shift+N";
+          }
+        ])
+      ];
+    }
+  );
 in
 pkgs.testers.runNixOSTest {
   name = "touchpad-snap-touchpad";
@@ -252,5 +286,17 @@ pkgs.testers.runNixOSTest {
         wait_for("plain swipe left -> next workspace", lambda: snapshot()["active_workspace"] == 1, 20)
         assert daemon_log().count("swipe Left") == jumps, "the daemon saw an unclaimed swipe"
         machine.screenshot("after-plain-swipe")
+
+    with subtest("Alt + three fingers left: types Ctrl+Shift+N once Alt is up"):
+        # The keys action: the virtual keyboard cannot release the physical
+        # Alt, so the shortcut waits until the (virtual) hand lets go of it.
+        # With Alt still down it would arrive as Alt+Ctrl+Shift+N and open
+        # nothing.
+        before = len(editors())
+        focus_on(second)
+        machine.succeed("swipe send --mod alt --fingers 3 --dx -40")
+        wait_for("a new editor window from Ctrl+Shift+N", lambda: len(editors()) == before + 1, 30)
+        assert "keys Ctrl+Shift+N" in daemon_log()
+        machine.screenshot("after-keys-swipe")
   '';
 }

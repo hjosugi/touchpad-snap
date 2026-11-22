@@ -81,6 +81,10 @@ pub enum Action {
     /// Wait before the next action in the chain.
     #[serde(rename = "delay")]
     Delay { ms: u64 },
+    /// Send a keyboard shortcut to the focused window, e.g. `"Ctrl+W"`. The
+    /// modifiers the trigger itself is held with are released for it.
+    #[serde(rename = "keys")]
+    Keys { keys: String },
 }
 
 impl From<Step> for Action {
@@ -731,7 +735,7 @@ fn unsupported_reason(value: &Value) -> Option<String> {
     if let Some(actions) = value.get("actions").and_then(Value::as_array) {
         for action in actions {
             if let Some(kind) = action.get("type").and_then(Value::as_str)
-                && !matches!(kind, "window.next" | "window.prev" | "delay")
+                && !matches!(kind, "window.next" | "window.prev" | "delay" | "keys")
             {
                 return Some(format!(
                     "action type `{kind}` is not supported by this build; the binding was skipped"
@@ -769,6 +773,11 @@ fn compile_bindings(candidates: Vec<(usize, Binding)>, report: &mut LoadReport) 
 }
 
 fn check_binding(binding: &Binding, hotkeys: &[Hotkey]) -> Result<Option<Hotkey>, String> {
+    for action in &binding.actions {
+        if let Action::Keys { keys } = action {
+            Hotkey::parse(keys).map_err(|e| format!("action `keys`: {e}"))?;
+        }
+    }
     match &binding.trigger {
         Trigger::Swipe { fingers, .. } => {
             if !(3..=5).contains(fingers) {
@@ -997,7 +1006,7 @@ mod tests {
                 "bindings": [
                     {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"when":{"app":"Firefox"},"actions":[{"type":"window.next"}]},
                     {"trigger":{"type":"tap","fingers":3},"actions":[{"type":"window.next"}]},
-                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"actions":[{"type":"keys","keys":"Alt+Tab"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"actions":[{"type":"exec","command":["true"]}]},
                     {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+L"},"actions":[{"type":"window.next"}]}
                 ]
             }"#,
@@ -1010,6 +1019,28 @@ mod tests {
                 .warnings()
                 .all(|p| p.severity == Severity::Warning)
         );
+    }
+
+    #[test]
+    fn keys_actions_are_checked_when_loading() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"swipe","fingers":3,"modifiers":["alt"],"direction":"down"},
+                     "actions":[{"type":"keys","keys":"Ctrl+Shift+Tab"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},
+                     "actions":[{"type":"keys","keys":"Ctrl+Hyper+W"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+L"},
+                     "actions":[{"type":"keys","keys":"Ctrl+Nonsense"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.bindings.len(), 1, "{:?}", cfg.report().problems);
+        let errors: Vec<_> = cfg.report().errors().map(|p| p.message.clone()).collect();
+        assert_eq!(errors.len(), 2);
+        assert!(errors[0].contains("Hyper"), "{errors:?}");
+        assert!(errors[1].contains("Nonsense"), "{errors:?}");
+        assert!(errors.iter().all(|e| e.starts_with("action `keys`")));
     }
 
     #[test]

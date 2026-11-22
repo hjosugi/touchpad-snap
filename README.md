@@ -508,9 +508,20 @@ default; an explicit `"bindings": []` turns all bindings off.
   (`fingers` 3–5; `direction` left, right, up or down; modifiers any of
   `ctrl`, `alt`, `shift`, `super`).
 - `actions` is a chain run in order. Today these are `window.next`,
-  `window.prev` and `delay` (`{ "type": "delay", "ms": 100 }`). Keyboard
-  actions, `exec` and window/workspace/app actions are future releases; a
+  `window.prev`, `delay` (`{ "type": "delay", "ms": 100 }`) and `keys`
+  (below). `exec` and window/workspace/app actions are future releases; a
   binding that uses one is skipped with a warning.
+- `keys` types a keyboard shortcut into the focused window,
+  `{ "type": "keys", "keys": "Ctrl+Shift+Tab" }`: the same syntax as hotkeys
+  (modifiers, then a letter, digit, `F1`–`F24`, an arrow, `Tab`, `Space`,
+  `Return`, `Escape`, `Home`, `End`, `PageUp`, `PageDown`, `Backspace`,
+  `Delete` or punctuation). The trigger's own modifiers are not part of the
+  shortcut: `Alt` + swipe sending `Ctrl+Tab` arrives as `Ctrl+Tab`. On Windows
+  they are released for the shortcut and pressed again; on GNOME a virtual
+  keyboard cannot release a key you hold, so the shortcut is typed when you
+  let go of the modifier (and dropped if you hold it for more than 3 s).
+  Needs the GNOME extension with protocol 4 (log in again after updating).
+  Other desktops report the action as unsupported.
 - `name` is optional and is only used in logs and `config check`.
   `enabled: false` keeps a binding in the file without registering it.
 - `repeat` says whether a swipe binding fires again every further

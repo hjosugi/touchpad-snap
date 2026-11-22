@@ -29,9 +29,10 @@ use windows_sys::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, RegisterHotKey,
-    SendInput, UnregisterHotKey, VIRTUAL_KEY, VK_CONTROL, VK_LEFT, VK_LWIN, VK_MENU, VK_RIGHT,
-    VK_RWIN, VK_SHIFT,
+    GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
+    KEYEVENTF_KEYUP, RegisterHotKey, SendInput, UnregisterHotKey, VIRTUAL_KEY, VK_CONTROL,
+    VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RIGHT, VK_RMENU,
+    VK_RSHIFT, VK_RWIN, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, DispatchMessageW, EnumChildWindows, EnumWindows, GW_OWNER, GWL_EXSTYLE,
@@ -49,7 +50,7 @@ use super::windows_tray::{self, Action, HotkeyStatus, Tray};
 use super::{Backend, Event};
 use crate::config::{Claim, Config};
 use crate::gesture::Phase;
-use crate::hotkey::{Hotkey, Mods};
+use crate::hotkey::{Hotkey, Modifier, Mods, Typed, typing_order};
 use crate::legacy;
 use crate::model::{Snapshot, Window};
 
@@ -233,6 +234,10 @@ impl Backend for Win32 {
             duration_ms.min(u32::MAX as u64) as u32,
         );
         Ok(())
+    }
+
+    fn send_keys(&self, keys: Hotkey, held: Mods) -> Result<()> {
+        send_typed(keys, held)
     }
 
     fn describe(&self) -> String {
@@ -513,6 +518,103 @@ fn win_ctrl_chord(key: VIRTUAL_KEY) -> [INPUT; 6] {
         inputs[2 * keys.len() - 1 - i] = key_input(*key, true);
     }
     inputs
+}
+
+/// Types `keys` with `SendInput` while the `held` modifiers are physically
+/// down (see [`typing_order`]). One call, so nothing else can slip between
+/// the events.
+fn send_typed(keys: Hotkey, held: Mods) -> Result<()> {
+    // The keys of each held modifier that are down right now, left or right.
+    let down = |vks: &[VIRTUAL_KEY]| -> Vec<VIRTUAL_KEY> {
+        vks.iter()
+            .copied()
+            .filter(|vk| unsafe { GetAsyncKeyState(*vk as i32) < 0 })
+            .collect()
+    };
+    let held_keys = |m: Modifier| -> Vec<VIRTUAL_KEY> {
+        let found = match m {
+            Modifier::Shift => down(&[VK_LSHIFT, VK_RSHIFT]),
+            Modifier::Ctrl => down(&[VK_LCONTROL, VK_RCONTROL]),
+            Modifier::Alt => down(&[VK_LMENU, VK_RMENU]),
+            Modifier::Super => down(&[VK_LWIN, VK_RWIN]),
+        };
+        // The state could not be read: the generic key is the best guess.
+        if found.is_empty() {
+            vec![generic_vk(m)]
+        } else {
+            found
+        }
+    };
+
+    let mut inputs: Vec<INPUT> = Vec::new();
+    for step in typing_order(keys, held) {
+        match step {
+            Typed::Held(m, pressed) => {
+                for vk in held_keys(m) {
+                    inputs.push(typed_input(vk, !pressed));
+                }
+            }
+            Typed::Target(m, pressed) => inputs.push(typed_input(generic_vk(m), !pressed)),
+            Typed::Key(pressed) => inputs.push(typed_input(keys.key.windows_vk(), !pressed)),
+            Typed::Neutral => {
+                inputs.push(typed_input(VK_NEUTRAL, false));
+                inputs.push(typed_input(VK_NEUTRAL, true));
+            }
+        }
+    }
+    let accepted = unsafe {
+        SendInput(
+            inputs.len() as u32,
+            inputs.as_ptr(),
+            size_of::<INPUT>() as i32,
+        )
+    };
+    if accepted != inputs.len() as u32 {
+        bail!(
+            "Windows accepted {accepted} of {} key events (a window of an elevated program in front blocks them)",
+            inputs.len()
+        );
+    }
+    Ok(())
+}
+
+/// A virtual key that no program uses (`VK__none_`), for the keystroke that
+/// stops a lone Alt or Win from opening a menu.
+const VK_NEUTRAL: VIRTUAL_KEY = 0xE8;
+
+fn generic_vk(m: Modifier) -> VIRTUAL_KEY {
+    match m {
+        Modifier::Shift => VK_SHIFT,
+        Modifier::Ctrl => VK_CONTROL,
+        Modifier::Alt => VK_MENU,
+        Modifier::Super => VK_LWIN,
+    }
+}
+
+/// Keys the keyboard reports with the "extended" prefix: without the flag
+/// the arrows, Home/End, PageUp/PageDown, Insert and Delete arrive as the
+/// numeric keypad's, which do nothing with NumLock on.
+fn is_extended(vk: VIRTUAL_KEY) -> bool {
+    matches!(vk, 0x21..=0x28 | 0x2D | 0x2E | 0x5B | 0x5C | 0xA3 | 0xA5)
+}
+
+fn typed_input(key: VIRTUAL_KEY, up: bool) -> INPUT {
+    let mut flags = if up { KEYEVENTF_KEYUP } else { 0 };
+    if is_extended(key) {
+        flags |= KEYEVENTF_EXTENDEDKEY;
+    }
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: key,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 fn key_input(key: VIRTUAL_KEY, up: bool) -> INPUT {
