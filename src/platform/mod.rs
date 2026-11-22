@@ -176,9 +176,9 @@ pub(crate) fn claim_daemon_name(conn: &zbus::blocking::Connection) -> Result<()>
 }
 
 /// Registers the configured hotkeys and swipes, then calls `handle` for every
-/// event until the process is stopped. `cfg` must have passed
-/// [`Config::validate`], which also produced `hotkeys`. `config_path` is the
-/// file the Windows tray opens and reloads.
+/// event until the process is stopped. `hotkeys` must be [`Config::hotkeys`]
+/// for the same `cfg`. `config_path` is the file the Windows tray opens and
+/// reloads.
 pub fn run_daemon(
     cfg: &Config,
     hotkeys: &[Hotkey],

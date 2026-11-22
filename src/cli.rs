@@ -4,10 +4,10 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 
-use crate::config::{self, Config};
+use crate::config::{self, Config, Source};
 use crate::cycle::{self, Order, Pick, Session, Step, WorkspaceScope};
 use crate::{autostart, daemon, legacy, platform, session, systemd};
 
@@ -20,7 +20,7 @@ use crate::{autostart, daemon, legacy, platform, session, systemd};
                   for the hotkeys and swipes in the config file."
 )]
 struct Cli {
-    /// Config file [default: ~/.config/touchpad-snap/config.toml, %APPDATA%\touchpad-snap\config.toml]
+    /// Config file [default: ~/.config/touchpad-snap/config.json, %APPDATA%\touchpad-snap\config.json]
     #[arg(long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
 
@@ -80,13 +80,21 @@ struct JumpArgs {
 enum ConfigCommand {
     /// Print the config file path
     Path,
-    /// Write a commented default config file
+    /// Write the default config.json
     Init {
         /// Overwrite an existing file
         #[arg(long)]
         force: bool,
     },
-    /// Validate the config file
+    /// Convert the old config.toml next to config.json
+    Import {
+        /// Overwrite an existing config.json
+        #[arg(long)]
+        force: bool,
+    },
+    /// Print the JSON Schema for config.json
+    Schema,
+    /// Validate the config file and list skipped bindings
     Check,
 }
 
@@ -157,15 +165,17 @@ where
 
 fn dispatch(cli: Cli) -> Result<()> {
     let config_path = cli.config.clone().unwrap_or_else(config::default_path);
-    if cli.config.is_none() {
-        // First run after the rename: carry window-jump's settings over.
+    if cli.config.is_none() && !config_path.exists() {
+        // First run after the rename: carry window-jump's settings over as the
+        // old TOML next to config.json, so the usual legacy migration applies.
         let old = legacy::config_path();
-        match legacy::import_config(&old, &config_path) {
+        let toml_path = config::legacy_path(&config_path);
+        match legacy::import_config(&old, &toml_path) {
             Ok(true) => eprintln!(
                 "touchpad-snap: copied the settings of {} from {} to {}",
                 legacy::NAME,
                 old.display(),
-                config_path.display()
+                toml_path.display()
             ),
             Ok(false) => {}
             Err(e) => eprintln!(
@@ -195,28 +205,48 @@ fn dispatch(cli: Cli) -> Result<()> {
                         config_path.display()
                     );
                 }
-                if let Some(dir) = config_path.parent() {
-                    std::fs::create_dir_all(dir)?;
-                }
-                std::fs::write(&config_path, config::TEMPLATE)
-                    .with_context(|| format!("writing {}", config_path.display()))?;
+                config::write(&config_path, &Config::default())?;
                 println!("wrote {}", config_path.display());
                 Ok(())
             }
-            ConfigCommand::Check => {
-                let exists = config_path.exists();
-                let cfg = config::load(&config_path)?;
-                cfg.validate()?;
-                if exists {
-                    println!("{}: ok", config_path.display());
-                } else {
-                    println!(
-                        "{} does not exist; using the defaults",
+            ConfigCommand::Import { force } => {
+                let from = config::legacy_path(&config_path);
+                if !from.exists() {
+                    bail!("{} does not exist", from.display());
+                }
+                if config_path.exists() && !force {
+                    bail!(
+                        "{} already exists (use --force to overwrite)",
                         config_path.display()
                     );
                 }
+                let cfg = config::load_legacy(&from)?;
+                if cfg.report().has_errors() {
+                    for problem in cfg.report().errors() {
+                        eprintln!("{}", problem.describe());
+                    }
+                    bail!(
+                        "{} has bindings that cannot be imported; fix them first",
+                        from.display()
+                    );
+                }
+                for problem in cfg.report().warnings() {
+                    eprintln!("{}", problem.describe());
+                }
+                config::write(&config_path, &cfg)?;
+                println!(
+                    "wrote {} from {} ({} binding(s))",
+                    config_path.display(),
+                    from.display(),
+                    cfg.bindings.len()
+                );
                 Ok(())
             }
+            ConfigCommand::Schema => {
+                print!("{}", config::schema_json());
+                Ok(())
+            }
+            ConfigCommand::Check => config_check(&config_path),
         },
         Command::Autostart { command } => {
             let msg = match command {
@@ -235,10 +265,10 @@ fn dispatch(cli: Cli) -> Result<()> {
 fn jump(config_path: &std::path::Path, step: Step, args: JumpArgs) -> Result<()> {
     let mut cfg = config::load(config_path)?;
     if let Some(order) = args.order {
-        cfg.order = order;
+        cfg.cycle.order = order;
     }
     if let Some(workspace) = args.workspace {
-        cfg.workspace = workspace;
+        cfg.cycle.workspace = workspace;
     }
     let backend = platform::connect()?;
     // A shortcut tool runs us once per press; whether its keys are still held
@@ -253,6 +283,47 @@ fn jump(config_path: &std::path::Path, step: Step, args: JumpArgs) -> Result<()>
         Pick::Jump(_) | Pick::Alone => Ok(()),
         Pick::NoFocus => bail!("no window is focused"),
     }
+}
+
+fn config_check(config_path: &std::path::Path) -> Result<()> {
+    let cfg = Config::load_report(config_path)?;
+    let report = cfg.report();
+    match &report.source {
+        Source::Json(path) => println!(
+            "{}: {} ({} binding(s), {} hotkey(s), {} swipe claim(s))",
+            path.display(),
+            if report.has_errors() {
+                "problems"
+            } else {
+                "ok"
+            },
+            cfg.bindings.len(),
+            cfg.hotkeys().len(),
+            cfg.claims().len()
+        ),
+        Source::Defaults => println!(
+            "{} does not exist; using the defaults",
+            config_path.display()
+        ),
+        Source::LegacyToml(path) => {
+            println!(
+                "{} is loaded in memory from the legacy {}",
+                config_path.display(),
+                path.display()
+            );
+            println!(
+                "note: run `touchpad-snap config import` to write {}",
+                config_path.display()
+            );
+        }
+    }
+    for problem in &report.problems {
+        println!("{}", problem.describe());
+    }
+    if report.has_errors() {
+        bail!("{} binding(s) could not be loaded", report.errors().count());
+    }
+    Ok(())
 }
 
 fn list(json: bool) -> Result<()> {
@@ -302,17 +373,19 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
     let mut problems = 0;
 
     print!("config   {}: ", config_path.display());
-    let cfg = match config::load(config_path).and_then(|c| c.validate().map(|_| c)) {
+    let cfg = match Config::load_report(config_path) {
         Ok(c) => {
+            let label = match &c.report().source {
+                Source::Json(_) => "ok",
+                Source::Defaults => "missing, using defaults",
+                Source::LegacyToml(_) => "legacy config.toml, loaded in memory",
+            };
             println!(
-                "{} ({} hotkey(s), {} swipe(s))",
-                if config_path.exists() {
-                    "ok"
-                } else {
-                    "missing, using defaults"
-                },
-                c.hotkeys.len(),
-                c.swipes.len()
+                "{} ({} binding(s), {} hotkey(s), {} swipe claim(s))",
+                label,
+                c.bindings.len(),
+                c.hotkeys().len(),
+                c.claims().len()
             );
             c
         }
@@ -322,6 +395,16 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
             Config::default()
         }
     };
+    if let Source::LegacyToml(path) = &cfg.report().source {
+        println!(
+            "migration run `touchpad-snap config import` to convert {} to config.json",
+            path.display()
+        );
+    }
+    for problem in &cfg.report().problems {
+        println!("config   {}", problem.describe());
+    }
+    problems += cfg.report().errors().count();
 
     match platform::connect() {
         Err(e) => {

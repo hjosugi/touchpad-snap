@@ -661,7 +661,7 @@ pub fn run_daemon(
     backend.hud = HudWindow::new();
     // Raw input needs a window to target; the touchpad module owns the hidden
     // message-only one. Without a Precision Touchpad it simply never fires.
-    let touchpad = Source::new(!cfg.swipes.is_empty());
+    let touchpad = Source::new(!cfg.claims().is_empty());
     let mut swipe_claim: Option<Claim> = None;
     // A tray that Windows refuses is not fatal: hotkeys must still work.
     let mut tray = Tray::new(&statuses);
@@ -712,19 +712,14 @@ pub fn run_daemon(
             };
         }
         if let Some(new) = changed {
-            match new.validate() {
-                Ok(parsed) => {
-                    (registered, statuses) = register_hotkeys(&parsed, registered);
-                    hotkeys = parsed;
-                    cfg = new;
-                    // A reload can change the claims; the next Begin picks
-                    // them up.
-                    swipe_claim = None;
-                    if let Some(t) = tray.as_ref() {
-                        t.set_status(&statuses);
-                    }
-                }
-                Err(e) => eprintln!("touchpad-snap: ignoring an invalid config: {e:#}"),
+            let parsed = new.hotkeys();
+            (registered, statuses) = register_hotkeys(&parsed, registered);
+            hotkeys = parsed;
+            cfg = new;
+            // A reload can change the claims; the next Begin picks them up.
+            swipe_claim = None;
+            if let Some(t) = tray.as_ref() {
+                t.set_status(&statuses);
             }
         }
 
@@ -737,20 +732,14 @@ pub fn run_daemon(
                 Action::Reload => {
                     // Same path as the two-second file watcher, forced.
                     if let Some(new) = handle(&backend, Event::Reload) {
-                        match new.validate() {
-                            Ok(parsed) => {
-                                let (n, s) = register_hotkeys(&parsed, registered);
-                                registered = n;
-                                statuses = s;
-                                hotkeys = parsed;
-                                cfg = new;
-                                swipe_claim = None;
-                                t.set_status(&statuses);
-                            }
-                            Err(e) => {
-                                eprintln!("touchpad-snap: ignoring an invalid config: {e:#}")
-                            }
-                        }
+                        let parsed = new.hotkeys();
+                        let (n, s) = register_hotkeys(&parsed, registered);
+                        registered = n;
+                        statuses = s;
+                        hotkeys = parsed;
+                        cfg = new;
+                        swipe_claim = None;
+                        t.set_status(&statuses);
                     }
                 }
                 Action::OpenConfig => windows_tray::open_config_file(config_path),

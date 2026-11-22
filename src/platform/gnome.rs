@@ -384,23 +384,18 @@ fn run_daemon_with(
             None => {}
         }
         if let Some(new) = changed {
-            match new.validate() {
-                Ok(parsed) => {
-                    cfg = new;
-                    hotkeys = parsed;
-                    match gnome.register(&cfg, &hotkeys, use_portal) {
-                        Ok(v) => version = v,
-                        Err(e) => eprintln!(
-                            "touchpad-snap: registering with the GNOME extension failed: {e:#}"
-                        ),
-                    }
-                    if use_portal {
-                        eprintln!(
-                            "touchpad-snap: config reloaded; GlobalShortcuts bindings change after a restart"
-                        );
-                    }
+            hotkeys = new.hotkeys();
+            cfg = new;
+            match gnome.register(&cfg, &hotkeys, use_portal) {
+                Ok(v) => version = v,
+                Err(e) => {
+                    eprintln!("touchpad-snap: registering with the GNOME extension failed: {e:#}")
                 }
-                Err(e) => eprintln!("touchpad-snap: ignoring an invalid config: {e:#}"),
+            }
+            if use_portal {
+                eprintln!(
+                    "touchpad-snap: config reloaded; GlobalShortcuts bindings change after a restart"
+                );
             }
         }
     }

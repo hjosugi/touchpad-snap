@@ -3,12 +3,17 @@
 #   services.touchpad-snap = {
 #     enable = true;
 #     settings = {
-#       order = "mru";
-#       hotkey = [ { keys = "Super+Alt+N"; action = "next"; } ];
+#       cycle = { order = "mru"; };
+#       bindings = [
+#         {
+#           trigger = { type = "hotkey"; keys = "Super+Alt+N"; };
+#           actions = [ { type = "window.next"; } ];
+#         }
+#       ];
 #     };
 #   };
 #
-# settings is rendered to $XDG_CONFIG_HOME/touchpad-snap/config.toml, where
+# settings is rendered to $XDG_CONFIG_HOME/touchpad-snap/config.json, where
 # touchpad-snap looks by default. Home Manager's programs.gnome-shell module
 # enables the extension through dconf.
 { self }:
@@ -24,8 +29,8 @@ let
 
   system = pkgs.stdenv.hostPlatform.system;
 
-  toml = pkgs.formats.toml { };
-  configFile = toml.generate "touchpad-snap-config.toml" cfg.settings;
+  json = pkgs.formats.json { };
+  configFile = json.generate "touchpad-snap-config.json" cfg.settings;
 
   extensionUuid =
     cfg.gnome.extensionPackage.extensionUuid or "touchpad-snap@hjosugi.github.io";
@@ -42,23 +47,28 @@ in
     };
 
     settings = lib.mkOption {
-      type = toml.type;
+      type = json.type;
       default = { };
       example = lib.literalExpression ''
         {
-          order = "mru";
-          workspace = "all";
-          hotkey = [
-            { keys = "Super+Alt+N"; action = "next"; }
-            { keys = "Super+Alt+P"; action = "prev"; }
+          cycle = { order = "mru"; workspace = "all"; };
+          bindings = [
+            {
+              trigger = { type = "hotkey"; keys = "Super+Alt+N"; };
+              actions = [ { type = "window.next"; } ];
+            }
+            {
+              trigger = { type = "hotkey"; keys = "Super+Alt+P"; };
+              actions = [ { type = "window.prev"; } ];
+            }
           ];
         }
       '';
       description = ''
-        The contents of {file}`$XDG_CONFIG_HOME/touchpad-snap/config.toml`,
-        in the same TOML schema as a hand-written config file. An empty
-        attribute set writes an empty file, which makes touchpad-snap use
-        its built-in defaults.
+        The contents of {file}`$XDG_CONFIG_HOME/touchpad-snap/config.json`,
+        in the same JSON schema as a hand-written config file (see
+        `schema/config.schema.json`). An empty attribute set writes an empty
+        file, which makes touchpad-snap use its built-in defaults.
       '';
     };
 
@@ -95,7 +105,7 @@ in
       home.packages = [ cfg.package ]
         ++ lib.optional cfg.gnome.enable cfg.gnome.extensionPackage;
 
-      xdg.configFile."touchpad-snap/config.toml".source = configFile;
+      xdg.configFile."touchpad-snap/config.json".source = configFile;
     }
 
     (lib.mkIf cfg.systemd.enable {

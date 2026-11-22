@@ -2,6 +2,7 @@
 //!
 //! Pure functions over a [`Snapshot`]; the backends only list and activate.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{Snapshot, Window};
@@ -26,7 +27,7 @@ impl std::str::FromStr for Step {
 }
 
 /// How the windows of one app are ordered while cycling.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Order {
     /// Fixed order (window creation order on GNOME): next/prev walk the
@@ -42,7 +43,7 @@ pub enum Order {
 }
 
 /// Which windows are candidates.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum WorkspaceScope {
     /// Windows on every workspace; jumping may switch workspace.

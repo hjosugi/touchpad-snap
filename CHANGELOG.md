@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- The configuration is now `config.json`: a list of bindings, each a trigger
+  (swipe or hotkey), an optional `name`/`enabled`/`repeat`/`when`, and an
+  ordered action chain. This release supports `window.next`, `window.prev` and
+  `delay`; `keys`, `exec`, window/workspace actions and `when` conditions follow
+  in the next issues. A malformed or unsupported binding is reported and
+  skipped instead of failing the whole file, and a committed JSON Schema
+  (`schema/config.schema.json`, `touchpad-snap config schema`) documents the
+  format. The old `config.toml` is still read in place; `touchpad-snap config
+  import` writes the JSON version. (#32)
+
 ## [0.5.1] - 2026-11-22
 
 ### Added

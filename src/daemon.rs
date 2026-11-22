@@ -1,11 +1,13 @@
 //! The long-running part: reacts to hotkeys and swipes, and picks up
 //! changes to the config file.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::config::{self, Claim, Config};
+use crate::config::{self, Action, Binding, Claim, Config, Source, Trigger};
 use crate::cycle::{self, Pick, Session, Step};
 use crate::gesture::{Phase, SwipeRecognizer};
 use crate::platform::{self, Backend, Event};
@@ -54,6 +56,33 @@ fn place_in_cycle(
     let list = cycle::candidates(snapshot, target, &cfg.cycle_options());
     let index = list.iter().position(|w| w.id == id)? + 1;
     Some((index, list.len()))
+}
+
+/// Says which bindings were skipped and why, and how to finish a migration.
+fn log_report(cfg: &Config) {
+    for problem in &cfg.report().problems {
+        eprintln!("touchpad-snap: config {}", problem.describe());
+    }
+    if let Source::LegacyToml(path) = &cfg.report().source {
+        eprintln!(
+            "touchpad-snap: using the legacy {} in memory; run `touchpad-snap config import` to write config.json",
+            path.display()
+        );
+    }
+}
+
+/// One line for the verbose log, e.g. `Next` or `delay 100 ms + Prev`.
+fn action_label(binding: &Binding) -> String {
+    binding
+        .actions
+        .iter()
+        .map(|action| match action {
+            Action::Next => "Next".to_string(),
+            Action::Prev => "Prev".to_string(),
+            Action::Delay { ms } => format!("delay {ms} ms"),
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
 }
 
 /// Watches the config file by content: the daemon reads it on every tick
@@ -112,6 +141,8 @@ pub struct Handler {
     claim: Option<Claim>,
     /// Jumps made by the swipe in progress.
     swipe_jumps: usize,
+    /// Non-repeat swipe bindings that already fired during this gesture.
+    fired: HashSet<usize>,
     /// The modifiers of the last (tracked) hotkey are still down.
     held: bool,
     state_path: PathBuf,
@@ -127,6 +158,7 @@ impl Handler {
             recognizer,
             claim: None,
             swipe_jumps: 0,
+            fired: HashSet::new(),
             held: false,
             state_path,
             watch: None,
@@ -164,12 +196,16 @@ impl Handler {
                     (true, false) => Session::Fresh,
                 };
                 self.held = tracked;
-                if let Some(binding) = self.cfg.hotkeys.get(index) {
-                    let step = binding.action;
+                if let Some(binding) = self.cfg.hotkey_binding(index) {
                     if self.verbose {
+                        let keys = match &binding.trigger {
+                            Trigger::Hotkey { keys } => keys.as_str(),
+                            Trigger::Swipe { .. } => "",
+                        };
                         eprintln!(
-                            "touchpad-snap: hotkey {} → {step:?} ({})",
-                            binding.keys,
+                            "touchpad-snap: hotkey {} → {} ({})",
+                            keys,
+                            action_label(binding),
                             match session {
                                 Session::ByTime => "session by time",
                                 Session::Held => "keys still held",
@@ -177,7 +213,7 @@ impl Handler {
                             }
                         );
                     }
-                    self.run(backend, step, session);
+                    self.run_binding(backend, binding, session);
                 }
             }
             Event::Released => {
@@ -196,15 +232,20 @@ impl Handler {
                     self.recognizer.begin();
                     self.claim = Some(claim);
                     self.swipe_jumps = 0;
+                    self.fired.clear();
                 }
                 let claim = self.claim?;
                 if matches!(phase, Phase::Begin | Phase::Update) {
                     for direction in self.recognizer.update(dx, dy) {
-                        if let Some(step) = self.cfg.swipe_action(claim, direction) {
+                        for (index, binding) in self.cfg.swipe_bindings_indexed(claim, direction) {
+                            if !binding.repeats() && !self.fired.insert(index) {
+                                continue;
+                            }
                             if self.verbose {
                                 eprintln!(
-                                    "touchpad-snap: swipe {direction:?} with {} fingers → {step:?}",
-                                    claim.fingers
+                                    "touchpad-snap: swipe {direction:?} with {} fingers → {}",
+                                    claim.fingers,
+                                    action_label(binding)
                                 );
                             }
                             // One swipe is one session: keep going and it
@@ -215,7 +256,7 @@ impl Handler {
                                 Session::Held
                             };
                             self.swipe_jumps += 1;
-                            self.run(backend, step, session);
+                            self.run_binding(backend, binding, session);
                         }
                     }
                 }
@@ -231,10 +272,35 @@ impl Handler {
     /// Takes over a reloaded config and resets gesture state that belonged to
     /// the old one.
     fn adopt(&mut self, cfg: Config) -> Option<Config> {
+        log_report(&cfg);
         self.recognizer = SwipeRecognizer::new(cfg.gesture.threshold, cfg.gesture.repeat_step);
         self.claim = None;
+        self.fired.clear();
         self.cfg = cfg.clone();
         Some(cfg)
+    }
+
+    /// Runs a binding's action chain in order. `session` applies to the first
+    /// window action; further ones in the same chain continue that session.
+    fn run_binding(&self, backend: &dyn Backend, binding: &Binding, session: Session) {
+        let mut session = session;
+        for action in &binding.actions {
+            match action {
+                Action::Next => {
+                    self.run(backend, Step::Next, session);
+                    session = Session::Held;
+                }
+                Action::Prev => {
+                    self.run(backend, Step::Prev, session);
+                    session = Session::Held;
+                }
+                Action::Delay { ms } => {
+                    // Deliberately blocks the daemon thread for now; a delay
+                    // is short and this keeps the action chain in order.
+                    std::thread::sleep(Duration::from_millis(*ms));
+                }
+            }
+        }
     }
 
     fn run(&self, backend: &dyn Backend, step: Step, session: Session) {
@@ -250,7 +316,8 @@ impl Handler {
 }
 
 pub fn run(cfg: Config, config_path: PathBuf, verbose: bool) -> Result<()> {
-    let hotkeys = cfg.validate()?;
+    log_report(&cfg);
+    let hotkeys = cfg.hotkeys();
     let mut handler = Handler::new(cfg.clone(), session::default_path(), verbose)
         .watch_config(config_path.clone());
     platform::run_daemon(
@@ -439,10 +506,8 @@ mod tests {
     fn held_hotkeys_and_swipes_are_sessions() {
         let fake = Fake::new();
         let dir = std::env::temp_dir().join(format!("touchpad-snap-held-{}", std::process::id()));
-        let cfg = Config {
-            order: crate::cycle::Order::Mru,
-            ..Config::default()
-        };
+        let mut cfg = Config::default();
+        cfg.cycle.order = crate::cycle::Order::Mru;
         let mut h = Handler::new(cfg, dir.join("state.json"), false);
 
         // Hold the modifiers and press twice: 1 → 2 → 3. Release, press
@@ -475,10 +540,8 @@ mod tests {
     fn untracked_hotkeys_go_by_time() {
         let fake = Fake::new();
         let dir = std::env::temp_dir().join(format!("touchpad-snap-bytime-{}", std::process::id()));
-        let cfg = Config {
-            order: crate::cycle::Order::Mru,
-            ..Config::default()
-        };
+        let mut cfg = Config::default();
+        cfg.cycle.order = crate::cycle::Order::Mru;
         let mut h = Handler::new(cfg, dir.join("state.json"), false);
         let untracked = Event::Hotkey {
             index: 0,
@@ -515,8 +578,8 @@ mod tests {
         let fake = Fake::new();
         let dir = std::env::temp_dir().join(format!("touchpad-snap-reload-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("config.toml");
-        std::fs::write(&path, "hotkey = []\n").unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, r#"{"bindings":[]}"#).unwrap();
         let cfg = config::load(&path).unwrap();
         let mut h = Handler::new(cfg, dir.join("state.json"), false).watch_config(path.clone());
 
@@ -524,33 +587,38 @@ mod tests {
         assert_eq!(h.handle(&fake, Event::Tick), None);
         // ...but an explicit reload still re-reads it.
         assert_eq!(
-            h.handle(&fake, Event::Reload).map(|c| c.hotkeys.len()),
+            h.handle(&fake, Event::Reload).map(|c| c.hotkeys().len()),
             Some(0)
         );
 
         // A new binding is picked up and handed to the platform.
         std::fs::write(
             &path,
-            "[[hotkey]]\nkeys = \"Ctrl+Alt+J\"\naction = \"prev\"\n",
+            r#"{"bindings":[{"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"actions":[{"type":"window.prev"}]}]}"#,
         )
         .unwrap();
         let new = h.handle(&fake, Event::Tick).expect("reloaded");
-        assert_eq!(new.hotkeys.len(), 1);
-        assert_eq!(h.config().hotkeys[0].keys, "Ctrl+Alt+J");
+        assert_eq!(new.hotkeys().len(), 1);
+        assert_eq!(
+            h.config().hotkey_binding(0).unwrap().trigger,
+            Trigger::Hotkey {
+                keys: "Ctrl+Alt+J".into()
+            }
+        );
         // ...and used: hotkey 0 is now "prev" (1 → 3, wrapping backwards).
         h.handle(&fake, hotkey(0));
         assert_eq!(*fake.activated.borrow(), vec![3]);
 
         // A broken file keeps the previous config, and is not re-reported.
-        std::fs::write(&path, "order = \"sideways\"\n").unwrap();
+        std::fs::write(&path, r#"{"cycle":{"order":"sideways"}}"#).unwrap();
         assert_eq!(h.handle(&fake, Event::Tick), None);
         assert_eq!(h.handle(&fake, Event::Tick), None);
-        assert_eq!(h.config().hotkeys[0].keys, "Ctrl+Alt+J");
+        assert_eq!(h.config().hotkeys().len(), 1);
 
         // Removing the file means the defaults.
         std::fs::remove_file(&path).unwrap();
         let defaults = h.handle(&fake, Event::Tick).expect("defaults");
-        assert_eq!(defaults, Config::default());
+        assert_eq!(defaults.bindings, Config::default().bindings);
 
         // Without a watched path, ticks never reload.
         let mut plain = Handler::new(Config::default(), dir.join("state.json"), false);

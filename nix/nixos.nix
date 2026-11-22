@@ -3,14 +3,19 @@
 #   services.touchpad-snap = {
 #     enable = true;
 #     settings = {
-#       order = "mru";
-#       hotkey = [ { keys = "Super+Alt+N"; action = "next"; } ];
+#       cycle = { order = "mru"; };
+#       bindings = [
+#         {
+#           trigger = { type = "hotkey"; keys = "Super+Alt+N"; };
+#           actions = [ { type = "window.next"; } ];
+#         }
+#       ];
 #     };
 #   };
 #
-# settings is rendered to /etc/touchpad-snap/config.toml. The user service
+# settings is rendered to /etc/touchpad-snap/config.json. The user service
 # reads that file explicitly, so the module never touches
-# ~/.config/touchpad-snap/config.toml.
+# ~/.config/touchpad-snap/config.json.
 { self }:
 {
   config,
@@ -24,8 +29,8 @@ let
 
   system = pkgs.stdenv.hostPlatform.system;
 
-  toml = pkgs.formats.toml { };
-  configFile = toml.generate "touchpad-snap-config.toml" cfg.settings;
+  json = pkgs.formats.json { };
+  configFile = json.generate "touchpad-snap-config.json" cfg.settings;
 
   extensionUuid =
     cfg.gnome.extensionPackage.extensionUuid or "touchpad-snap@hjosugi.github.io";
@@ -42,23 +47,28 @@ in
     };
 
     settings = lib.mkOption {
-      type = toml.type;
+      type = json.type;
       default = { };
       example = lib.literalExpression ''
         {
-          order = "mru";
-          workspace = "all";
-          hotkey = [
-            { keys = "Super+Alt+N"; action = "next"; }
-            { keys = "Super+Alt+P"; action = "prev"; }
+          cycle = { order = "mru"; workspace = "all"; };
+          bindings = [
+            {
+              trigger = { type = "hotkey"; keys = "Super+Alt+N"; };
+              actions = [ { type = "window.next"; } ];
+            }
+            {
+              trigger = { type = "hotkey"; keys = "Super+Alt+P"; };
+              actions = [ { type = "window.prev"; } ];
+            }
           ];
         }
       '';
       description = ''
-        The contents of {file}`/etc/touchpad-snap/config.toml`, in the same
-        TOML schema as a hand-written config file. An empty attribute set
-        writes an empty file, which makes touchpad-snap use its built-in
-        defaults.
+        The contents of {file}`/etc/touchpad-snap/config.json`, in the same
+        JSON schema as a hand-written config file (see
+        `schema/config.schema.json`). An empty attribute set writes an empty
+        file, which makes touchpad-snap use its built-in defaults.
       '';
     };
 
@@ -95,7 +105,7 @@ in
       environment.systemPackages = [ cfg.package ]
         ++ lib.optional cfg.gnome.enable cfg.gnome.extensionPackage;
 
-      environment.etc."touchpad-snap/config.toml".source = configFile;
+      environment.etc."touchpad-snap/config.json".source = configFile;
     }
 
     (lib.mkIf cfg.systemd.enable {
@@ -105,7 +115,7 @@ in
         partOf = [ "graphical-session.target" ];
         after = [ "graphical-session.target" ];
         serviceConfig = {
-          ExecStart = "${cfg.package}/bin/touchpad-snap daemon --config /etc/touchpad-snap/config.toml";
+          ExecStart = "${cfg.package}/bin/touchpad-snap daemon --config /etc/touchpad-snap/config.json";
           Restart = "on-failure";
           RestartSec = 2;
         };

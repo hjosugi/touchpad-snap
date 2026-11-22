@@ -150,23 +150,28 @@ ok "swipes: Ctrl + left and Alt + up jump, unbound swipes do not"
 # Editing the config while the daemon runs: the new hotkey takes over within
 # a couple of seconds, without a restart.
 mkdir -p "$XDG_CONFIG_HOME/touchpad-snap"
-cat > "$XDG_CONFIG_HOME/touchpad-snap/config.toml" <<'TOML'
-[[hotkey]]
-keys = "Ctrl+Alt+J"
-action = "next"
-TOML
-wait_for "daemon to reload the config" 15 grep -q "registered 1 hotkey(s) and 2 swipe claim(s)" "$daemon_log"
-grep -q "reloaded .*config.toml" "$daemon_log" || fail "daemon did not log the reload"
+cat > "$XDG_CONFIG_HOME/touchpad-snap/config.json" <<'JSON'
+{
+  "bindings": [
+    {
+      "trigger": { "type": "hotkey", "keys": "Ctrl+Alt+J" },
+      "actions": [ { "type": "window.next" } ]
+    }
+  ]
+}
+JSON
+wait_for "daemon to reload the config" 15 grep -q "registered 1 hotkey(s) and 0 swipe claim(s)" "$daemon_log"
+grep -q "reloaded .*config.json" "$daemon_log" || fail "daemon did not log the reload"
 focus_on "${editors[0]}"
 press_keys Control_L Alt_L j || fail "injecting Ctrl+Alt+J failed"
 wait_for "Ctrl+Alt+J → second editor" 15 focus_is "${editors[1]}"
 # A broken edit is ignored; the working hotkey stays.
-echo 'order = "sideways"' > "$XDG_CONFIG_HOME/touchpad-snap/config.toml"
+echo '{"cycle":{"order":"sideways"}}' > "$XDG_CONFIG_HOME/touchpad-snap/config.json"
 wait_for "daemon to reject the broken config" 15 grep -q "keeping the previous config" "$daemon_log"
 press_keys Control_L Alt_L j || fail "injecting Ctrl+Alt+J failed"
 wait_for "Ctrl+Alt+J still works → first editor" 15 focus_is "${editors[0]}"
 # Removing the file brings back the defaults (Super+Alt+N/P).
-rm "$XDG_CONFIG_HOME/touchpad-snap/config.toml"
+rm "$XDG_CONFIG_HOME/touchpad-snap/config.json"
 wait_for "daemon back on the defaults" 15 bash -c "grep -c 'registered 2 hotkey(s) and 2 swipe claim(s)' '$daemon_log' | grep -qx 2"
 ok "config reload: new hotkey active without a restart, broken edits ignored, removal restores defaults"
 
@@ -177,10 +182,10 @@ ok "config reload: new hotkey active without a restart, broken edits ignored, re
 mark_log() { log_mark=$(wc -l <"$daemon_log"); }
 logged() { tail -n +$((log_mark + 1)) "$daemon_log" | grep -q "$1"; }
 mark_log
-cat > "$XDG_CONFIG_HOME/touchpad-snap/config.toml" <<'TOML'
-order = "mru"
-TOML
-wait_for "daemon to load order = mru" 15 logged "reloaded .*config.toml"
+cat > "$XDG_CONFIG_HOME/touchpad-snap/config.json" <<'JSON'
+{ "cycle": { "order": "mru" } }
+JSON
+wait_for "daemon to load order = mru" 15 logged "reloaded .*config.json"
 GDK_BACKEND=wayland gnome-text-editor --standalone >"$E2E_ROOT/editor3.log" 2>&1 &
 e2e_pids+=($!)
 wait_for "third text editor window" 30 window_count_is 4
@@ -203,7 +208,7 @@ wait_for "the release to be reported" 15 logged "hotkey modifiers released"
 press_keys Super_L Alt_L n || fail "injecting Super+Alt+N failed"
 wait_for "next press → back to the first editor" 15 focus_is "${editors3[0]}"
 ok "hotkey sessions: held modifiers keep digging past the timeout, release commits"
-rm "$XDG_CONFIG_HOME/touchpad-snap/config.toml"
+rm "$XDG_CONFIG_HOME/touchpad-snap/config.json"
 
 # A second daemon refuses to start.
 if tps daemon >"$E2E_ROOT/daemon2.log" 2>&1; then fail "second daemon started"; fi

@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Modifier bit set. The same bits travel over D-Bus to the GNOME extension
@@ -39,7 +40,7 @@ impl std::ops::BitOrAssign for Mods {
 }
 
 /// A modifier as written in the config file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Modifier {
     Shift,

@@ -6,9 +6,10 @@
 //! set, every further `repeat_step` of travel along it fires again — in
 //! either direction, so moving back scrubs back through the windows.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SwipeDirection {
     Left,
