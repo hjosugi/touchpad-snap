@@ -19,3 +19,4 @@ pub mod model;
 pub mod platform;
 pub mod session;
 pub mod systemd;
+pub mod when;

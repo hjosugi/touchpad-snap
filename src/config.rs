@@ -17,6 +17,7 @@ use serde_json::Value;
 use crate::cycle::{CycleOptions, Order, Step, WorkspaceScope};
 use crate::gesture::SwipeDirection;
 use crate::hotkey::{Hotkey, Modifier, Mods, mods_of};
+use crate::when::{PlatformDescription, TriggerContext, When};
 
 /// Where the committed schema lives; `config schema` prints the same JSON.
 pub const SCHEMA_URL: &str =
@@ -33,16 +34,21 @@ pub struct Binding {
     #[serde(default = "default_true")]
     pub enabled: bool,
     pub trigger: Trigger,
-    /// Future `when` conditions (issue #37). Present but non-null means the
-    /// binding is skipped, not that this build knows what it means.
+    /// Where the binding applies: app, OS, desktop. Empty/absent means
+    /// everywhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub when: Option<Value>,
+    pub when: Option<When>,
     /// Fire again every further `gesture.repeat_step`. Defaults to true when
     /// the chain contains a window cycle action, false otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repeat: Option<bool>,
     /// Run in order.
     pub actions: Vec<Action>,
+    /// Index in the file's `bindings` array, for reports. Not part of the
+    /// file or the schema.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub index: usize,
 }
 
 impl Binding {
@@ -325,6 +331,7 @@ fn default_bindings() -> Vec<Binding> {
         when: None,
         repeat: None,
         actions: vec![action],
+        index: 0,
     };
     let swipe = |name: &str, modifier, direction, action| Binding {
         name: Some(name.into()),
@@ -337,12 +344,13 @@ fn default_bindings() -> Vec<Binding> {
         when: None,
         repeat: None,
         actions: vec![action],
+        index: 0,
     };
     // Content follows the fingers, as with GNOME's workspace swipe: swiping
     // left (or up) brings in the next window. Two modifiers, one per axis, so
     // that either hand position works: Ctrl for the axis GNOME switches
     // workspace on, Alt for the one it opens the overview on.
-    vec![
+    let mut bindings = vec![
         hotkey("Next window of this app", "Super+Alt+N", Action::Next),
         hotkey("Previous window of this app", "Super+Alt+P", Action::Prev),
         swipe(
@@ -369,7 +377,11 @@ fn default_bindings() -> Vec<Binding> {
             SwipeDirection::Down,
             Action::Prev,
         ),
-    ]
+    ];
+    for (index, binding) in bindings.iter_mut().enumerate() {
+        binding.index = index;
+    }
+    bindings
 }
 
 fn default_binding_values() -> Vec<Value> {
@@ -381,10 +393,30 @@ fn default_binding_values() -> Vec<Value> {
 
 /// A swipe claim: which (fingers, modifiers) combinations the GNOME
 /// extension should take away from the shell and forward to us.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+///
+/// `apps` narrows the claim to the focused app on GNOME (empty means every
+/// app). The daemon still chooses the binding by `when`, so another backend
+/// can use a claim for its finger/modifier filter alone.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Claim {
     pub fingers: u32,
     pub mods: Mods,
+    pub apps: Vec<String>,
+}
+
+impl Claim {
+    /// A claim that applies everywhere.
+    pub fn gesture(fingers: u32, mods: Mods) -> Self {
+        Self {
+            fingers,
+            mods,
+            apps: Vec::new(),
+        }
+    }
+
+    pub fn matches_gesture(&self, fingers: u32, mods: Mods) -> bool {
+        self.fingers == fingers && self.mods == mods
+    }
 }
 
 /// Where a loaded config came from.
@@ -576,6 +608,7 @@ impl LegacyConfig {
                     when: None,
                     repeat: None,
                     actions: vec![hotkey.action.into()],
+                    index,
                 },
             ));
         }
@@ -594,6 +627,7 @@ impl LegacyConfig {
                     when: None,
                     repeat: None,
                     actions: vec![swipe.action.into()],
+                    index,
                 },
             ));
         }
@@ -690,41 +724,117 @@ impl Config {
         }
     }
 
-    /// The enabled hotkeys, in binding order. Their indices are what the
-    /// platform backends send back in [`crate::platform::Event::Hotkey`].
+    /// The enabled hotkeys, in binding order. A key bound by several
+    /// conditional bindings appears once. Their indices are what the platform
+    /// backends send back in [`crate::platform::Event::Hotkey`].
     pub fn hotkeys(&self) -> Vec<Hotkey> {
+        let mut hotkeys = Vec::new();
+        for binding in self.bindings.iter().filter(|b| b.enabled) {
+            if let Trigger::Hotkey { keys } = &binding.trigger
+                && let Ok(hotkey) = Hotkey::parse(keys)
+                && !hotkeys.contains(&hotkey)
+            {
+                hotkeys.push(hotkey);
+            }
+        }
+        hotkeys
+    }
+
+    fn hotkey_candidates(&self, hotkey: Hotkey) -> Vec<(usize, &Binding)> {
         self.bindings
             .iter()
-            .filter(|b| b.enabled)
-            .filter_map(|b| match &b.trigger {
-                Trigger::Hotkey { keys } => Hotkey::parse(keys).ok(),
-                Trigger::Swipe { .. } => None,
+            .enumerate()
+            .filter(|(_, b)| {
+                b.enabled
+                    && matches!(&b.trigger, Trigger::Hotkey { keys } if Hotkey::parse(keys).ok() == Some(hotkey))
             })
             .collect()
     }
 
-    /// The enabled binding behind hotkey `index` from [`Config::hotkeys`].
+    /// The binding behind hotkey `index` from [`Config::hotkeys`], ignoring
+    /// `when` conditions. Used where no window is available (portal
+    /// descriptions).
     pub fn hotkey_binding(&self, index: usize) -> Option<&Binding> {
-        self.bindings
-            .iter()
-            .filter(|b| b.enabled && matches!(&b.trigger, Trigger::Hotkey { .. }))
-            .nth(index)
+        let hotkey = self.hotkeys().into_iter().nth(index)?;
+        self.hotkey_candidates(hotkey)
+            .into_iter()
+            .map(|(_, binding)| binding)
+            .next()
     }
 
-    /// The distinct swipe claims, sorted.
+    /// The binding behind hotkey `index` that applies in `context`:
+    /// conditional bindings that match beat unconditional ones, and ties go
+    /// to the first in the file.
+    pub fn hotkey_binding_for(&self, index: usize, context: &TriggerContext) -> Option<&Binding> {
+        let hotkey = self.hotkeys().into_iter().nth(index)?;
+        choose(self.hotkey_candidates(hotkey), context).map(|(_, binding)| binding)
+    }
+
+    /// The distinct swipe claims, sorted. Claims include their app filter for
+    /// GNOME; other backends only use fingers and modifiers.
     pub fn claims(&self) -> Vec<Claim> {
-        let mut claims: Vec<Claim> = self
-            .bindings
-            .iter()
-            .filter(|b| b.enabled)
-            .filter_map(|b| match &b.trigger {
-                Trigger::Swipe {
-                    fingers, modifiers, ..
-                } => Some(Claim {
-                    fingers: *fingers,
-                    mods: mods_of(modifiers),
-                }),
-                Trigger::Hotkey { .. } => None,
+        self.claims_for(&PlatformDescription::current())
+    }
+
+    /// The claims that can fire on `platform`.
+    pub fn claims_for(&self, platform: &PlatformDescription) -> Vec<Claim> {
+        // (fingers, mods, app patterns, everywhere?)
+        let mut groups: Vec<(u32, Mods, Vec<String>, bool)> = Vec::new();
+        for binding in self.bindings.iter().filter(|b| b.enabled) {
+            let Trigger::Swipe {
+                fingers, modifiers, ..
+            } = &binding.trigger
+            else {
+                continue;
+            };
+            let fingers = *fingers;
+            let mods = mods_of(modifiers);
+            match &binding.when {
+                Some(when) if !when.matches_platform(platform) => continue,
+                Some(when) => {
+                    let apps = &when.app;
+                    let everywhere = apps.is_empty();
+                    let entry = match groups
+                        .iter_mut()
+                        .find(|(f, m, _, _)| *f == fingers && *m == mods)
+                    {
+                        Some(entry) => entry,
+                        None => {
+                            groups.push((fingers, mods, Vec::new(), false));
+                            groups.last_mut().expect("just pushed")
+                        }
+                    };
+                    if everywhere {
+                        entry.3 = true;
+                    } else {
+                        for app in apps {
+                            if !entry.2.iter().any(|seen| seen.eq_ignore_ascii_case(app)) {
+                                entry.2.push(app.clone());
+                            }
+                        }
+                    }
+                }
+                None => {
+                    let entry = match groups
+                        .iter_mut()
+                        .find(|(f, m, _, _)| *f == fingers && *m == mods)
+                    {
+                        Some(entry) => entry,
+                        None => {
+                            groups.push((fingers, mods, Vec::new(), false));
+                            groups.last_mut().expect("just pushed")
+                        }
+                    };
+                    entry.3 = true;
+                }
+            }
+        }
+        let mut claims: Vec<Claim> = groups
+            .into_iter()
+            .map(|(fingers, mods, apps, everywhere)| Claim {
+                fingers,
+                mods,
+                apps: if everywhere { Vec::new() } else { apps },
             })
             .collect();
         claims.sort();
@@ -750,8 +860,7 @@ impl Config {
                             modifiers,
                             direction: bound,
                         } => {
-                            *fingers == claim.fingers
-                                && mods_of(modifiers) == claim.mods
+                            claim.matches_gesture(*fingers, mods_of(modifiers))
                                 && *bound == direction
                         }
                         Trigger::Hotkey { .. } => false,
@@ -819,6 +928,33 @@ impl Config {
                 })
             })
     }
+
+    /// The one binding that fires for this swipe in `context`.
+    pub fn swipe_binding_for(
+        &self,
+        claim: Claim,
+        direction: SwipeDirection,
+        context: &TriggerContext,
+    ) -> Option<(usize, &Binding)> {
+        choose(self.swipe_bindings_indexed(claim, direction), context)
+    }
+
+    /// Enabled bindings whose `when` cannot match this machine.
+    pub fn inactive_on(&self, platform: &PlatformDescription) -> Vec<InactiveBinding> {
+        self.bindings
+            .iter()
+            .filter(|b| b.enabled)
+            .filter_map(|binding| {
+                let when = binding.when.as_ref()?;
+                let reason = when.inactive_reason(platform)?;
+                Some(InactiveBinding {
+                    index: binding.index,
+                    name: binding.name.clone(),
+                    reason,
+                })
+            })
+            .collect()
+    }
 }
 
 /// Whether `program` names an executable file, searching `PATH` for a bare
@@ -878,6 +1014,49 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
+/// A binding that can never fire on the machine running the check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InactiveBinding {
+    pub index: usize,
+    pub name: Option<String>,
+    pub reason: String,
+}
+
+impl InactiveBinding {
+    pub fn describe(&self) -> String {
+        let name = self
+            .name
+            .as_deref()
+            .map(|n| format!(" ({n})"))
+            .unwrap_or_default();
+        format!(
+            "bindings[{}]{}: inactive on this machine: {}",
+            self.index, name, self.reason
+        )
+    }
+}
+
+/// Picks the binding for a trigger: the first `when` that matches wins over
+/// unconditional bindings; if none matches, the first unconditional one.
+fn choose<'a>(
+    candidates: impl IntoIterator<Item = (usize, &'a Binding)>,
+    context: &TriggerContext,
+) -> Option<(usize, &'a Binding)> {
+    let mut fallback = None;
+    for (index, binding) in candidates {
+        match &binding.when {
+            Some(when) if when.matches(context) => return Some((index, binding)),
+            Some(_) => {}
+            None => {
+                if fallback.is_none() {
+                    fallback = Some((index, binding));
+                }
+            }
+        }
+    }
+    fallback
+}
+
 fn check_gesture(gesture: &GestureConfig) -> Result<()> {
     if gesture.threshold <= 0.0 || gesture.repeat_step < 0.0 {
         bail!("gesture.threshold must be > 0 and gesture.repeat_step >= 0");
@@ -913,7 +1092,10 @@ fn decode_bindings(values: Vec<Value>, report: &mut LoadReport) -> Vec<(usize, B
     for (index, value) in values.into_iter().enumerate() {
         let name = value.get("name").and_then(Value::as_str).map(str::to_owned);
         match decode_binding(&value) {
-            Ok(binding) => candidates.push((index, binding)),
+            Ok(mut binding) => {
+                binding.index = index;
+                candidates.push((index, binding));
+            }
             Err(issue) => report.problems.push(BindingProblem {
                 index,
                 name,
@@ -926,12 +1108,10 @@ fn decode_bindings(values: Vec<Value>, report: &mut LoadReport) -> Vec<(usize, B
 }
 
 fn decode_binding(value: &Value) -> Result<Binding, DecodeIssue> {
+    if let Some(message) = unsupported_when_key(value) {
+        return Err(DecodeIssue::warning(message));
+    }
     match serde_json::from_value::<Binding>(value.clone()) {
-        Ok(binding) if binding.when.as_ref().is_some_and(|when| !when.is_null()) => {
-            Err(DecodeIssue::warning(
-                "`when` conditions are not supported yet (issue #37); the binding was skipped",
-            ))
-        }
         Ok(binding) => {
             for action in &binding.actions {
                 action.validate().map_err(DecodeIssue::error)?;
@@ -945,14 +1125,23 @@ fn decode_binding(value: &Value) -> Result<Binding, DecodeIssue> {
     }
 }
 
+/// A `when` key this build does not know is a feature of a newer build, not
+/// a typo to fail on.
+fn unsupported_when_key(value: &Value) -> Option<String> {
+    let when = value.get("when")?.as_object()?;
+    for key in when.keys() {
+        if !matches!(key.as_str(), "app" | "not_app" | "os" | "desktop") {
+            return Some(format!(
+                "`when.{key}` is not supported by this build; the binding was skipped"
+            ));
+        }
+    }
+    None
+}
+
 /// Whether a binding that failed to decode uses a feature this build does not
 /// implement, rather than containing a typo.
 fn unsupported_reason(value: &Value) -> Option<String> {
-    if value.get("when").is_some_and(|when| !when.is_null()) {
-        return Some(
-            "`when` conditions are not supported yet (issue #37); the binding was skipped".into(),
-        );
-    }
     if let Some(kind) = value
         .get("trigger")
         .and_then(|trigger| trigger.get("type"))
@@ -981,21 +1170,30 @@ fn unsupported_reason(value: &Value) -> Option<String> {
 /// and dropped; the rest stay.
 fn compile_bindings(candidates: Vec<(usize, Binding)>, report: &mut LoadReport) -> Vec<Binding> {
     let mut bindings = Vec::new();
-    let mut hotkeys: Vec<Hotkey> = Vec::new();
     for (index, binding) in candidates {
         if binding.enabled {
-            match check_binding(&binding, &hotkeys) {
-                Ok(Some(hotkey)) => hotkeys.push(hotkey),
-                Ok(None) => {}
-                Err(message) => {
-                    report.problems.push(BindingProblem {
-                        index,
-                        name: binding.name.clone(),
-                        severity: Severity::Error,
-                        message,
-                    });
+            if let Some(when) = &binding.when {
+                let problems = when.problems();
+                if !problems.is_empty() {
+                    for message in problems {
+                        report.problems.push(BindingProblem {
+                            index,
+                            name: binding.name.clone(),
+                            severity: Severity::Error,
+                            message,
+                        });
+                    }
                     continue;
                 }
+            }
+            if let Err(message) = check_binding(&binding) {
+                report.problems.push(BindingProblem {
+                    index,
+                    name: binding.name.clone(),
+                    severity: Severity::Error,
+                    message,
+                });
+                continue;
             }
         }
         bindings.push(binding);
@@ -1003,7 +1201,7 @@ fn compile_bindings(candidates: Vec<(usize, Binding)>, report: &mut LoadReport) 
     bindings
 }
 
-fn check_binding(binding: &Binding, hotkeys: &[Hotkey]) -> Result<Option<Hotkey>, String> {
+fn check_binding(binding: &Binding) -> Result<(), String> {
     match &binding.trigger {
         Trigger::Swipe { fingers, .. } => {
             if !(3..=5).contains(fingers) {
@@ -1014,14 +1212,10 @@ fn check_binding(binding: &Binding, hotkeys: &[Hotkey]) -> Result<Option<Hotkey>
             }
         }
         Trigger::Hotkey { keys } => {
-            let hotkey = Hotkey::parse(keys)?;
-            if hotkeys.contains(&hotkey) {
-                return Err(format!("hotkey `{keys}` is bound twice"));
-            }
-            return Ok(Some(hotkey));
+            Hotkey::parse(keys)?;
         }
     }
-    Ok(None)
+    Ok(())
 }
 
 /// The old TOML file next to `path` (`config.json` → `config.toml`).
@@ -1230,7 +1424,7 @@ mod tests {
         let cfg = json(
             r#"{
                 "bindings": [
-                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"when":{"app":"Firefox"},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"when":{"title":"Firefox"},"actions":[{"type":"window.next"}]},
                     {"trigger":{"type":"tap","fingers":3},"actions":[{"type":"window.next"}]},
                     {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"actions":[{"type":"keys","keys":"Alt+Tab"}]},
                     {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+L"},"actions":[{"type":"window.next"}]}
@@ -1245,6 +1439,7 @@ mod tests {
                 .warnings()
                 .all(|p| p.severity == Severity::Warning)
         );
+        assert!(cfg.report().problems[0].message.contains("when.title"));
     }
 
     #[test]
@@ -1416,9 +1611,11 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(cfg.bindings.len(), 2);
-        assert_eq!(cfg.report().errors().count(), 2);
-        assert!(cfg.report().errors().any(|p| p.message.contains("twice")));
+        // The same hotkey twice is allowed: `when` can make one conditional,
+        // and the later one is simply shadowed. The two-finger swipe is not.
+        assert_eq!(cfg.bindings.len(), 3);
+        assert_eq!(cfg.hotkeys().len(), 2);
+        assert_eq!(cfg.report().errors().count(), 1);
         assert!(cfg.report().errors().any(|p| p.message.contains("3 to 5")));
     }
 
@@ -1446,7 +1643,7 @@ mod tests {
     fn claims_and_lookup() {
         let cfg = Config::default();
         let claims = cfg.claims();
-        let claim = |mods| Claim { fingers: 3, mods };
+        let claim = |mods| Claim::gesture(3, mods);
         assert_eq!(claims, vec![claim(Mods::CTRL), claim(Mods::ALT)]);
         let bound = |mods, direction| {
             cfg.swipe_bindings(claim(mods), direction)
@@ -1473,6 +1670,187 @@ mod tests {
         // Each modifier has one axis: the other one is claimed but unbound.
         assert!(bound(Mods::CTRL, SwipeDirection::Up).is_empty());
         assert!(bound(Mods::ALT, SwipeDirection::Left).is_empty());
+    }
+
+    fn linux_ctx(app_id: &str, app_name: &str, wm_class: &str) -> TriggerContext {
+        TriggerContext::new(
+            PlatformDescription::new("linux", Some("gnome")),
+            Some(crate::when::AppContext {
+                app_id: app_id.into(),
+                app_name: app_name.into(),
+                wm_class: wm_class.into(),
+            }),
+        )
+    }
+
+    fn firefox() -> TriggerContext {
+        linux_ctx("firefox.desktop", "Firefox", "firefox")
+    }
+
+    fn editor() -> TriggerContext {
+        linux_ctx(
+            "org.gnome.TextEditor.desktop",
+            "Text Editor",
+            "org.gnome.TextEditor",
+        )
+    }
+
+    #[test]
+    fn when_conditions_parse_into_the_binding() {
+        let conditional = binding(serde_json::json!({
+            "trigger": {"type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "down"},
+            "when": {
+                "app": ["firefox", "org.chromium.Chromium"],
+                "not_app": ["*private*"],
+                "os": ["linux"],
+                "desktop": ["gnome", "kde"]
+            },
+            "actions": [{"type": "window.next"}]
+        }));
+        let when = conditional.when.unwrap();
+        assert_eq!(when.app, vec!["firefox", "org.chromium.Chromium"]);
+        assert_eq!(when.not_app, vec!["*private*"]);
+        assert_eq!(when.os, vec!["linux"]);
+        assert_eq!(when.desktop, vec!["gnome", "kde"]);
+        assert!(when.matches(&firefox()));
+        assert!(!when.matches(&editor()));
+        // Empty `when` and an absent `when` behave the same.
+        let empty = binding(serde_json::json!({
+            "trigger": {"type": "hotkey", "keys": "Ctrl+Alt+J"},
+            "when": {},
+            "actions": [{"type": "window.next"}]
+        }));
+        assert!(empty.when.unwrap().is_empty());
+    }
+
+    #[test]
+    fn conditional_swipes_beat_unconditional_ones_and_ties_go_to_file_order() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"swipe","fingers":3,"modifiers":["ctrl"],"direction":"left"},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"swipe","fingers":3,"modifiers":["ctrl"],"direction":"left"},"when":{"app":["Firefox"]},"actions":[{"type":"window.prev"}]},
+                    {"trigger":{"type":"swipe","fingers":3,"modifiers":["ctrl"],"direction":"left"},"when":{"app":["FIRE*"]},"actions":[{"type":"delay","ms":10}]}
+                ]
+            }"#,
+        );
+        let claim = Claim::gesture(3, Mods::CTRL);
+        let left = SwipeDirection::Left;
+        let picked = |ctx: &TriggerContext| {
+            cfg.swipe_binding_for(claim.clone(), left, ctx)
+                .map(|(_, binding)| binding.actions.clone())
+        };
+        // The first matching `when` wins, even though an unconditional one
+        // comes earlier and another conditional one comes later.
+        assert_eq!(picked(&firefox()), Some(vec![Action::Prev]));
+        // No matching condition: the unconditional binding still fires.
+        assert_eq!(picked(&editor()), Some(vec![Action::Next]));
+        // With no focused window, only unconditional bindings can fire.
+        let no_window = TriggerContext::new(PlatformDescription::new("linux", Some("gnome")), None);
+        assert_eq!(picked(&no_window), Some(vec![Action::Next]));
+    }
+
+    #[test]
+    fn conditional_hotkeys_share_one_registered_key() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"ctrl+alt+j"},"when":{"app":["firefox"]},"actions":[{"type":"window.prev"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.hotkeys().len(), 1);
+        let actions = |ctx: &TriggerContext| {
+            cfg.hotkey_binding_for(0, ctx)
+                .map(|binding| binding.actions.clone())
+        };
+        assert_eq!(actions(&firefox()), Some(vec![Action::Prev]));
+        assert_eq!(actions(&editor()), Some(vec![Action::Next]));
+    }
+
+    #[test]
+    fn platform_conditions_select_and_describe_inactive_bindings() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"when":{"os":["windows"]},"actions":[{"type":"window.prev"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"when":{"desktop":["kde"]},"actions":[{"type":"window.prev"}]}
+                ]
+            }"#,
+        );
+        let linux = TriggerContext::new(PlatformDescription::new("linux", Some("gnome")), None);
+        assert_eq!(
+            cfg.hotkey_binding_for(0, &linux)
+                .map(|binding| binding.actions.clone()),
+            Some(vec![Action::Next])
+        );
+        assert!(cfg.hotkey_binding_for(1, &linux).is_none());
+        let windows = TriggerContext::new(PlatformDescription::new("windows", None), None);
+        assert_eq!(
+            cfg.hotkey_binding_for(0, &windows)
+                .map(|binding| binding.actions.clone()),
+            Some(vec![Action::Prev])
+        );
+
+        let inactive = cfg.inactive_on(&PlatformDescription::new("linux", Some("gnome")));
+        assert_eq!(inactive.len(), 2);
+        assert_eq!(inactive[0].index, 0);
+        assert!(inactive[0].reason.contains("windows"));
+        assert_eq!(inactive[1].index, 2);
+        assert!(inactive[1].reason.contains("kde"));
+    }
+
+    #[test]
+    fn claims_carry_app_filters_and_skip_other_platforms() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"swipe","fingers":3,"modifiers":["ctrl"],"direction":"left"},"when":{"app":["Firefox"]},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"swipe","fingers":3,"modifiers":["ctrl"],"direction":"right"},"when":{"app":["Chromium"]},"actions":[{"type":"window.prev"}]},
+                    {"trigger":{"type":"swipe","fingers":3,"modifiers":["alt"],"direction":"up"},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"swipe","fingers":4,"direction":"left"},"when":{"os":["windows"]},"actions":[{"type":"window.next"}]}
+                ]
+            }"#,
+        );
+        let claims = cfg.claims_for(&PlatformDescription::new("linux", Some("gnome")));
+        assert_eq!(
+            claims,
+            vec![
+                Claim {
+                    fingers: 3,
+                    mods: Mods::CTRL,
+                    apps: vec!["Firefox".into(), "Chromium".into()],
+                },
+                Claim::gesture(3, Mods::ALT),
+            ]
+        );
+        // On Windows the four-finger claim exists and the GNOME ones do too,
+        // since they have no OS condition.
+        let windows = cfg.claims_for(&PlatformDescription::new("windows", None));
+        assert!(windows.contains(&Claim::gesture(4, Mods::default())));
+    }
+
+    #[test]
+    fn impossible_conditions_are_errors_and_drop_only_that_binding() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"when":{"os":["macos"]},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"when":{"app":["x"],"not_app":["X"]},"actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+L"},"actions":[{"type":"window.next"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.bindings.len(), 1);
+        assert_eq!(cfg.report().errors().count(), 2);
+        assert!(cfg.report().errors().any(|p| p.message.contains("macos")));
+        assert!(
+            cfg.report()
+                .errors()
+                .any(|p| p.message.contains("can never fire"))
+        );
     }
 
     #[test]

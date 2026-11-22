@@ -107,7 +107,15 @@
           "$ref": "#/$defs/Trigger"
         },
         "when": {
-          "description": "Future `when` conditions (issue #37). Present but non-null means the\nbinding is skipped, not that this build knows what it means."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/When"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the binding applies: app, OS, desktop. Empty/absent means\neverywhere."
         }
       },
       "required": [
@@ -280,6 +288,41 @@
           "type": "object"
         }
       ]
+    },
+    "When": {
+      "additionalProperties": false,
+      "description": "The `when` object of a binding. An empty `When` matches everything.",
+      "properties": {
+        "app": {
+          "description": "Apps this binding applies to (glob, case-insensitive).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "desktop": {
+          "description": "`gnome`, `kde`, `sway`, `hyprland`, `niri` (or `*`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "not_app": {
+          "description": "Apps this binding does not apply to (glob, case-insensitive).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "os": {
+          "description": "`linux`, `windows` (or `*`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
     },
     "WorkspaceScope": {
       "description": "Which windows are candidates.",

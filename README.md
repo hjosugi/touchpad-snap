@@ -13,7 +13,9 @@ Wayland allows nothing else.
 - **Swipes on GNOME**: hold `Ctrl` and swipe left or right with three
   fingers, or hold `Alt` and swipe up or down (configurable). Only the
   swipes you claim (fingers + modifiers) are taken from GNOME; a plain
-  three-finger swipe still switches workspace or opens the overview. Keep the fingers down and keep
+  three-finger swipe still switches workspace or opens the overview. Claims
+  can be limited to an app (see [`when`](#conditions-when)): in other apps
+  the gesture stays GNOME's. Keep the fingers down and keep
   moving to step through several windows; move back to step back.
 - **Swipes on Windows**: the same modifier + three-finger swipe works on a
   Windows Precision Touchpad; Windows' own three/four-finger gestures must be
@@ -516,15 +518,15 @@ default; an explicit `"bindings": []` turns all bindings off.
 - `repeat` says whether a swipe binding fires again every further
   `gesture.repeat_step` while the fingers stay down. When omitted it is true
   for chains containing `window.next` / `window.prev`, false otherwise.
-- `when` is reserved for future conditional bindings. It is parsed, but a
-  non-null `when` makes this build skip the binding with a warning.
+- `when` (optional) restricts a binding to the focused app, the OS and/or the
+  desktop. See [Conditions (`when`)](#conditions-when) below.
 - `cycle`, `gesture` and `hud` work as before: `cycle.order` is `stable`,
   `position` or `mru`; `cycle.workspace` is `all` or `current`;
   `gesture.threshold` is the finger travel before a swipe counts (GNOME's full
   workspace swipe is 400); `gesture.repeat_step` is the further travel per
   extra jump (0 = one jump per swipe); `hud` controls the overlay after a jump.
 
-#### `exec`: run a command
+### `exec`: run a command
 
 `exec` runs a program when its gesture or hotkey fires. Give the program and
 its arguments as a list to run it directly, with no shell to split or expand
@@ -566,16 +568,76 @@ a shell string cannot be checked and is only reported as such.
 **Only run config files you trust.** A config can run any command as you: an
 `exec` action is not sandboxed. Before importing someone else's config, read
 its `exec` actions; the GUI must show them before importing too.
+### Conditions (`when`)
+
+One trigger can do different things depending on where it happens:
+
+```json
+{
+  "bindings": [
+    {
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "down" },
+      "when": { "app": ["firefox", "org.chromium.Chromium"] },
+      "actions": [ { "type": "window.next" } ]
+    },
+    {
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "down" },
+      "actions": [ { "type": "window.prev" } ]
+    }
+  ]
+}
+```
+
+- `app`: app patterns (case-insensitive, `*` is a wildcard) matched against
+  the desktop-file id (`list` prints it as `[org.gnome.TextEditor.desktop]`),
+  the app name and the WM class. On Windows, ids are executable paths
+  (`code.exe`), matched the same way. Matching all three means `firefox`,
+  `Firefox` and `firefox.desktop` all work.
+- `not_app`: apps to exclude, with the same patterns.
+- `os`: `linux` or `windows` (or `*`).
+- `desktop`: `gnome`, `kde`, `sway`, `hyprland`, `niri` (or `*`). This makes
+  one config file work on every machine.
+- An empty or absent `when` applies everywhere. All present conditions must
+  match.
+
+Among enabled bindings with the same trigger, a binding whose `when` matches
+wins over one without `when`; ties go to the first in the file. If none
+matches, nothing fires. The focused app and platform are captured when the
+trigger starts and kept for the whole gesture. Duplicate hotkeys are allowed
+for this reason: bind one key once per app and leave an unconditional fallback.
+
+`config check` reports bindings whose conditions can never fire: an unknown
+`os`/`desktop` value, the same pattern in both `app` and `not_app`, or
+`not_app: ["*"]`. It also lists bindings that are merely inactive on this
+machine (for example a `windows` binding when run on Linux). An app pattern
+that matches no window can only be known at run time and is not reported.
+
+**GNOME claims are per app.** A swipe bound only for Firefox is sent to the
+extension with its app filter: the extension checks the focused app at the
+start of the swipe and leaves the gesture to GNOME in every other app. Plain
+three-finger workspace switching therefore keeps working where your binding
+does not apply. This uses protocol 4; an older extension still runs, but
+app-filtered swipes are then claimed in every app (and do nothing outside
+theirs), and the daemon says so at startup. A `not_app`-only binding cannot be
+expressed as a positive GNOME claim: it is claimed everywhere and does nothing
+in the excluded apps.
+
+Windows' raw touchpad listener cannot hand a gesture back: once the listener
+sees a swipe, Windows' own gesture handling already ran too. Turn Windows'
+three/four-finger gestures off, and use a modifier plus fingers for bindings
+that should not overlap the shell's gestures. The same applies to the optional
+`libinput` backend: it observes swipes without intercepting them, so the
+compositor still acts on the same gesture.
 
 The file is strict inside objects it knows: a typo or an unknown field is an
 error naming the JSON path. Bindings are decoded one by one, though: one bad
 binding is reported and skipped, and the others still load. `config check`
 lists every `bindings[i]` problem, warns about `exec` programs that are not on
 `PATH`, and exits non-zero only for malformed bindings; an unknown
-trigger/action type or a non-null `when` (from a newer build) is a warning, is
-skipped, and does not fail the check. The daemon does the same and keeps
-running with the valid bindings. `config schema` prints the
-JSON Schema generated from the program's types; the committed
+trigger/action type or an unsupported `when` key (from a newer build) is a
+warning, is skipped, and does not fail the check. The daemon does the same and
+keeps running with the valid bindings. `config schema` prints the JSON Schema
+generated from the program's types; the committed
 `schema/config.schema.json` is what the `$schema` line points at, so editors
 can validate and complete the file.
 
