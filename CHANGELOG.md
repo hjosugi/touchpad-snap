@@ -2,17 +2,38 @@
 
 ## [Unreleased]
 
+### Added
+
+- The `keys` action types a keyboard shortcut into the focused window,
+  `{ "type": "keys", "keys": "Ctrl+Shift+Tab" }`, from any swipe or hotkey.
+  The trigger's own modifiers are not part of it: `Alt` + swipe sending
+  `Ctrl+Tab` arrives as `Ctrl+Tab`. Windows releases the held modifiers for it
+  and presses them again; GNOME's virtual keyboard cannot release a key you
+  hold (mutter ignores it), so the extension types the shortcut when the
+  modifier comes up. `Backspace` and `Delete` join the key names. (#33)
+- The `exec` action runs a command, as an argument list or (with
+  `"shell": true`) a shell string, detached from the daemon with the focused
+  window and trigger in its environment; `config check` warns about programs
+  missing from `PATH`. (#34)
+- `when` conditions restrict a binding to apps (`app` / `not_app`, glob
+  patterns), the OS and the desktop; a matching conditional binding beats an
+  unconditional one, ties go to file order. On GNOME the app filter travels
+  with the swipe claim (protocol 4), so a swipe bound for one app stays the
+  shell's everywhere else. (#37)
+
 ### Changed
 
 - The configuration is now `config.json`: a list of bindings, each a trigger
   (swipe or hotkey), an optional `name`/`enabled`/`repeat`/`when`, and an
-  ordered action chain. This release supports `window.next`, `window.prev` and
-  `delay`; `keys`, `exec`, window/workspace actions and `when` conditions follow
-  in the next issues. A malformed or unsupported binding is reported and
-  skipped instead of failing the whole file, and a committed JSON Schema
-  (`schema/config.schema.json`, `touchpad-snap config schema`) documents the
-  format. The old `config.toml` is still read in place; `touchpad-snap config
-  import` writes the JSON version. (#32)
+  ordered action chain (`window.next`, `window.prev`, `delay`, `keys`, `exec`).
+  Window/workspace/app actions follow in the next issues. A malformed or
+  unsupported binding is reported and skipped instead of failing the whole
+  file, and a committed JSON Schema (`schema/config.schema.json`,
+  `touchpad-snap config schema`) documents the format. The old `config.toml`
+  is still read in place; `touchpad-snap config import` writes the JSON
+  version. (#32)
+- GNOME extension protocol 5 combines per-app swipe claims (4) and `SendKeys`
+  (5); older extensions still work without the newer features.
 
 ## [0.5.1] - 2026-11-22
 

@@ -195,6 +195,64 @@ try {
     $sent = [Win]::Chord(0x11, 0x12, 0x4E)
     WaitFor 'next press -> back to the first Notepad' { (Focused) -eq $n[0].id }
     Ok 'daemon: held modifiers keep digging past the timeout, release commits'
+
+    # exec actions: hotkeys run a command detached from the daemon, with the
+    # trigger in its environment. Both the direct (argument list) and shell
+    # forms are covered.
+    $directMarker = Join-Path $work 'exec-direct.txt'
+    $shellMarker = Join-Path $work 'exec-shell.txt'
+    $execCfg = @{
+        bindings = @(
+            @{
+                trigger = @{ type = 'hotkey'; keys = 'Ctrl+Alt+E' }
+                actions = @(
+                    @{ type = 'exec'; command = @('cmd', '/C', "echo direct> $directMarker") }
+                )
+            }
+            @{
+                trigger = @{ type = 'hotkey'; keys = 'Ctrl+Alt+Shift+E' }
+                actions = @(
+                    @{ type = 'exec'; command = "echo %TOUCHPAD_SNAP_TRIGGER%> $shellMarker"; shell = $true }
+                )
+            }
+        )
+    }
+    Set-Content -Path $cfg -Encoding ascii -Value ($execCfg | ConvertTo-Json -Depth 10)
+    WaitFor 'daemon to load the exec bindings' {
+        (Get-Content $log -Raw) -match 'registered 2 hotkey'
+    }
+    $sent = [Win]::Chord(0x11, 0x12, 0x45)  # Ctrl, Alt, E
+    if ($sent -ne 6) { Fail "SendInput accepted only $sent of 6 events for Ctrl+Alt+E" }
+    WaitFor 'exec to create its marker' { (Test-Path $directMarker) -and ((Get-Item $directMarker).Length -gt 0) }
+    $sent = [Win]::Chord(0x11, 0x12, 0x10, 0x45)  # Ctrl, Alt, Shift, E
+    if ($sent -ne 8) { Fail "SendInput accepted only $sent of 8 events for Ctrl+Alt+Shift+E" }
+    WaitFor 'shell exec to write its marker' { (Test-Path $shellMarker) -and ((Get-Item $shellMarker).Length -gt 0) }
+    $triggerSeen = (Get-Content $shellMarker -Raw).Trim()
+    if ($triggerSeen -ne 'hotkey-Ctrl+Alt+Shift+E') {
+        Fail "exec did not receive TOUCHPAD_SNAP_TRIGGER: $triggerSeen"
+    }
+    Ok 'daemon: exec runs an argument list and a shell string with the trigger in its environment'
+
+    # The keys action: Ctrl+Alt+K types W into the focused Notepad. Ctrl and
+    # Alt are down while the hotkey fires and have to be released for the W to
+    # come out plain (Ctrl+Alt+W would type nothing).
+    $reloads = @(Select-String -Path $log -Pattern 'reloaded').Count
+    Set-Content -Path $cfg -Encoding ascii `
+        -Value '{ "bindings": [ { "trigger": { "type": "hotkey", "keys": "Ctrl+Alt+K" }, "actions": [ { "type": "keys", "keys": "W" } ] } ] }'
+    WaitFor 'daemon to load the keys binding' { @(Select-String -Path $log -Pattern 'reloaded').Count -gt $reloads }
+    & $Bin activate $n[0].id
+    WaitFor 'first Notepad focused' { (Focused) -eq $n[0].id }
+    if ([Win]::NotepadText([IntPtr]$n[0].id) -cmatch 'w') { Fail 'the Notepad already has a w in it' }
+    $sent = [Win]::Chord(0x11, 0x12, 0x4B)  # Ctrl, Alt, K
+    if ($sent -ne 6) { Fail "SendInput accepted only $sent of 6 events for Ctrl+Alt+K" }
+    WaitFor 'keys action typed w into Notepad' { [Win]::NotepadText([IntPtr]$n[0].id) -cmatch 'w' } 5
+    if (-not (Select-String -Path $log -Pattern 'keys W' -Quiet)) { Fail 'the daemon did not log the keys action' }
+    # What was held is down again for the real release, but not stuck: a
+    # plain key afterwards is not read as Ctrl+Alt+<key>.
+    $before = [Win]::NotepadText([IntPtr]$n[0].id).Length
+    [void][Win]::Chord(0x45)  # E
+    WaitFor 'no modifier left stuck after the keys action' { [Win]::NotepadText([IntPtr]$n[0].id).Length -gt $before } 5
+    Ok 'daemon: the keys action types W with Ctrl and Alt released, and leaves nothing stuck'
     if ($VirtualDesktops) {
         # A second desktop, with one Notepad on it. Win+Ctrl+D switches to the
         # new desktop, so the Notepad starts there.

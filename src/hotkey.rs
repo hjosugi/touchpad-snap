@@ -111,6 +111,8 @@ pub enum Named {
     Period,
     Slash,
     Backslash,
+    Backspace,
+    Delete,
 }
 
 /// (accepted spellings, GNOME keysym name, Windows virtual-key code).
@@ -164,6 +166,8 @@ const NAMED: &[(&[&str], Named, &str, u16)] = &[
     (&["period", "."], Named::Period, "period", 0xBE),
     (&["slash", "/"], Named::Slash, "slash", 0xBF),
     (&["backslash", "\\"], Named::Backslash, "backslash", 0xDC),
+    (&["backspace"], Named::Backspace, "BackSpace", 0x08),
+    (&["delete", "del"], Named::Delete, "Delete", 0x2E),
 ];
 
 impl Key {
@@ -202,6 +206,43 @@ impl Key {
             Key::Letter(c) | Key::Digit(c) => c.to_string(),
             Key::F(n) => format!("F{n}"),
             Key::Named(n) => Key::row(n).2.to_string(),
+        }
+    }
+
+    /// The X keysym (GNOME's `notify_keyval` takes these): the lowercase
+    /// ASCII code for letters, digits and most punctuation, `0xffxx` for the
+    /// rest.
+    pub fn keysym(self) -> u32 {
+        match self {
+            Key::Letter(c) | Key::Digit(c) => c as u32,
+            Key::F(n) => 0xffbe + (n as u32 - 1),
+            Key::Named(n) => match n {
+                Named::Left => 0xff51,
+                Named::Up => 0xff52,
+                Named::Right => 0xff53,
+                Named::Down => 0xff54,
+                Named::Tab => 0xff09,
+                Named::Space => 0x20,
+                Named::Return => 0xff0d,
+                Named::Escape => 0xff1b,
+                Named::Home => 0xff50,
+                Named::End => 0xff57,
+                Named::PageUp => 0xff55,
+                Named::PageDown => 0xff56,
+                Named::Grave => 0x60,
+                Named::Minus => 0x2d,
+                Named::Equal => 0x3d,
+                Named::BracketLeft => 0x5b,
+                Named::BracketRight => 0x5d,
+                Named::Semicolon => 0x3b,
+                Named::Apostrophe => 0x27,
+                Named::Comma => 0x2c,
+                Named::Period => 0x2e,
+                Named::Slash => 0x2f,
+                Named::Backslash => 0x5c,
+                Named::Backspace => 0xff08,
+                Named::Delete => 0xffff,
+            },
         }
     }
 
@@ -266,6 +307,19 @@ impl Hotkey {
         s
     }
 
+    /// The modifiers of this combination, as the list of single keys to press.
+    pub fn modifier_list(self) -> Vec<Modifier> {
+        [
+            Modifier::Super,
+            Modifier::Ctrl,
+            Modifier::Alt,
+            Modifier::Shift,
+        ]
+        .into_iter()
+        .filter(|m| self.mods.contains(m.bits()))
+        .collect()
+    }
+
     /// `(fsModifiers, vk)` for `RegisterHotKey`, with `MOD_NOREPEAT` set so
     /// holding the keys down does not machine-gun through windows.
     pub fn to_windows(self) -> (u32, u32) {
@@ -289,6 +343,56 @@ impl Hotkey {
         }
         (m, self.key.windows_vk() as u32)
     }
+}
+
+/// One step of typing a shortcut while the trigger's own modifiers are down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Typed {
+    /// A modifier the trigger is held with: released first, pressed again at
+    /// the end, so the user's real release stays the only one applications
+    /// see afterwards.
+    Held(Modifier, bool),
+    /// A modifier of the shortcut itself.
+    Target(Modifier, bool),
+    /// The shortcut's key.
+    Key(bool),
+    /// A tap of a key that means nothing. Windows opens the menu bar after
+    /// a lone Alt and Start after a lone Win; a keystroke in between turns
+    /// that off.
+    Neutral,
+}
+
+/// The steps that type `keys` while `held` modifiers are physically down:
+/// `Alt` + swipe sending `Ctrl+Tab` has to arrive as `Ctrl+Tab`, not
+/// `Alt+Ctrl+Tab`. Only for backends that can release a key the user holds
+/// (Windows); GNOME cannot and waits for the release instead.
+pub fn typing_order(keys: Hotkey, held: Mods) -> Vec<Typed> {
+    let list = |mods: Mods| {
+        Hotkey {
+            mods,
+            key: keys.key,
+        }
+        .modifier_list()
+    };
+    let lone = held.contains(Mods::ALT) || held.contains(Mods::SUPER);
+    let mut steps = Vec::new();
+    if lone {
+        steps.push(Typed::Neutral);
+    }
+    steps.extend(list(held).into_iter().map(|m| Typed::Held(m, false)));
+    steps.extend(list(keys.mods).into_iter().map(|m| Typed::Target(m, true)));
+    steps.extend([Typed::Key(true), Typed::Key(false)]);
+    steps.extend(
+        list(keys.mods)
+            .into_iter()
+            .rev()
+            .map(|m| Typed::Target(m, false)),
+    );
+    steps.extend(list(held).into_iter().map(|m| Typed::Held(m, true)));
+    if lone {
+        steps.push(Typed::Neutral);
+    }
+    steps
 }
 
 impl fmt::Display for Hotkey {
@@ -315,6 +419,90 @@ impl fmt::Display for Hotkey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typing_order_releases_the_held_modifiers_and_restores_them() {
+        let keys = Hotkey::parse("Ctrl+Tab").unwrap();
+        // Nothing held: just the shortcut.
+        assert_eq!(
+            typing_order(keys, Mods::default()),
+            vec![
+                Typed::Target(Modifier::Ctrl, true),
+                Typed::Key(true),
+                Typed::Key(false),
+                Typed::Target(Modifier::Ctrl, false),
+            ]
+        );
+        // Shift held by a trigger: no lone-Alt/Win problem, no neutral taps.
+        assert_eq!(
+            typing_order(keys, Mods::SHIFT),
+            vec![
+                Typed::Held(Modifier::Shift, false),
+                Typed::Target(Modifier::Ctrl, true),
+                Typed::Key(true),
+                Typed::Key(false),
+                Typed::Target(Modifier::Ctrl, false),
+                Typed::Held(Modifier::Shift, true),
+            ]
+        );
+        // Alt held: Alt must not go up or down on its own.
+        let steps = typing_order(keys, Mods::ALT);
+        assert_eq!(steps.first(), Some(&Typed::Neutral));
+        assert_eq!(steps.last(), Some(&Typed::Neutral));
+        assert_eq!(steps[1], Typed::Held(Modifier::Alt, false));
+        assert_eq!(steps[steps.len() - 2], Typed::Held(Modifier::Alt, true));
+    }
+
+    #[test]
+    fn typing_order_leaves_nothing_pressed() {
+        for (keys, held) in [
+            ("Ctrl+Shift+Tab", Mods::ALT),
+            ("Super+L", Mods::CTRL | Mods::ALT),
+            ("F5", Mods::SHIFT | Mods::SUPER),
+            ("Ctrl+W", Mods::CTRL),
+        ] {
+            let mut down: Vec<String> = Vec::new();
+            for step in typing_order(Hotkey::parse(keys).unwrap(), held) {
+                let (name, pressed) = match step {
+                    Typed::Held(m, p) => (format!("held {m:?}"), p),
+                    Typed::Target(m, p) => (format!("target {m:?}"), p),
+                    Typed::Key(p) => ("key".to_string(), p),
+                    Typed::Neutral => continue,
+                };
+                if pressed {
+                    down.push(name);
+                } else {
+                    down.retain(|d| *d != name);
+                }
+            }
+            // Only the held modifiers are down at the end.
+            down.sort();
+            let mut expected: Vec<String> = Hotkey {
+                mods: held,
+                key: Key::Letter('a'),
+            }
+            .modifier_list()
+            .into_iter()
+            .map(|m| format!("held {m:?}"))
+            .collect();
+            expected.sort();
+            assert_eq!(down, expected, "{keys} with {held:?}");
+        }
+    }
+
+    #[test]
+    fn keysyms_match_the_x11_table() {
+        let sym = |spec: &str| Hotkey::parse(spec).unwrap().key.keysym();
+        assert_eq!(sym("n"), 0x6e);
+        assert_eq!(sym("N"), 0x6e, "letters are lowercase keysyms");
+        assert_eq!(sym("0"), 0x30);
+        assert_eq!(sym("F1"), 0xffbe);
+        assert_eq!(sym("F12"), 0xffc9);
+        assert_eq!(sym("Tab"), 0xff09);
+        assert_eq!(sym("Page_Up"), 0xff55);
+        assert_eq!(sym("Backspace"), 0xff08);
+        assert_eq!(sym("Delete"), 0xffff);
+    }
 
     #[test]
     fn parses_and_translates() {

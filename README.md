@@ -13,7 +13,9 @@ Wayland allows nothing else.
 - **Swipes on GNOME**: hold `Ctrl` and swipe left or right with three
   fingers, or hold `Alt` and swipe up or down (configurable). Only the
   swipes you claim (fingers + modifiers) are taken from GNOME; a plain
-  three-finger swipe still switches workspace or opens the overview. Keep the fingers down and keep
+  three-finger swipe still switches workspace or opens the overview. Claims
+  can be limited to an app (see [`when`](#conditions-when)): in other apps
+  the gesture stays GNOME's. Keep the fingers down and keep
   moving to step through several windows; move back to step back.
 - **Swipes on Windows**: the same modifier + three-finger swipe works on a
   Windows Precision Touchpad; Windows' own three/four-finger gestures must be
@@ -508,30 +510,150 @@ default; an explicit `"bindings": []` turns all bindings off.
   (`fingers` 3–5; `direction` left, right, up or down; modifiers any of
   `ctrl`, `alt`, `shift`, `super`).
 - `actions` is a chain run in order. Today these are `window.next`,
-  `window.prev` and `delay` (`{ "type": "delay", "ms": 100 }`). Keyboard
-  actions, `exec` and window/workspace/app actions are future releases; a
+  `window.prev`, `delay` (`{ "type": "delay", "ms": 100 }`), `exec` (below)
+  and `keys` (below). Window/workspace/app actions are future releases; a
   binding that uses one is skipped with a warning.
+- `keys` types a keyboard shortcut into the focused window,
+  `{ "type": "keys", "keys": "Ctrl+Shift+Tab" }`: the same syntax as hotkeys
+  (modifiers, then a letter, digit, `F1`–`F24`, an arrow, `Tab`, `Space`,
+  `Return`, `Escape`, `Home`, `End`, `PageUp`, `PageDown`, `Backspace`,
+  `Delete` or punctuation). The trigger's own modifiers are not part of the
+  shortcut: `Alt` + swipe sending `Ctrl+Tab` arrives as `Ctrl+Tab`. On Windows
+  they are released for the shortcut and pressed again; on GNOME a virtual
+  keyboard cannot release a key you hold, so the shortcut is typed when you
+  let go of the modifier (and dropped if you hold it for more than 3 s).
+  Needs the GNOME extension with protocol 5 (log in again after updating).
+  Other desktops report the action as unsupported.
 - `name` is optional and is only used in logs and `config check`.
   `enabled: false` keeps a binding in the file without registering it.
 - `repeat` says whether a swipe binding fires again every further
   `gesture.repeat_step` while the fingers stay down. When omitted it is true
   for chains containing `window.next` / `window.prev`, false otherwise.
-- `when` is reserved for future conditional bindings. It is parsed, but a
-  non-null `when` makes this build skip the binding with a warning.
+- `when` (optional) restricts a binding to the focused app, the OS and/or the
+  desktop. See [Conditions (`when`)](#conditions-when) below.
 - `cycle`, `gesture` and `hud` work as before: `cycle.order` is `stable`,
   `position` or `mru`; `cycle.workspace` is `all` or `current`;
   `gesture.threshold` is the finger travel before a swipe counts (GNOME's full
   workspace swipe is 400); `gesture.repeat_step` is the further travel per
   extra jump (0 = one jump per swipe); `hud` controls the overlay after a jump.
 
+### `exec`: run a command
+
+`exec` runs a program when its gesture or hotkey fires. Give the program and
+its arguments as a list to run it directly, with no shell to split or expand
+anything:
+
+```json
+{ "type": "exec", "command": ["ghostty", "--working-directory", "~"] }
+```
+
+A single string is run by `sh -c` on Linux and `cmd /C` on Windows, and needs
+`"shell": true`:
+
+```json
+{ "type": "exec", "command": "notify-send \"$TOUCHPAD_SNAP_WINDOW_TITLE\"", "shell": true }
+```
+
+A string without `"shell": true`, or a list with it, is a binding error.
+
+The command is detached: it gets its own process group on Linux and no console
+window on Windows, with stdin at `/dev/null` (or `NUL`). The daemon does not
+wait for it; a separate thread reaps it, and `touchpad-snap daemon --verbose`
+logs its exit status and stderr. The child receives the focused window from
+the moment the trigger started, and the trigger itself:
+
+| Variable | Value |
+| --- | --- |
+| `TOUCHPAD_SNAP_WINDOW_ID` | The focused window's id |
+| `TOUCHPAD_SNAP_APP_ID` | Its app id (`org.gnome.TextEditor.desktop`, an executable path…) |
+| `TOUCHPAD_SNAP_APP_NAME` | The app name |
+| `TOUCHPAD_SNAP_WINDOW_TITLE` | The window title |
+| `TOUCHPAD_SNAP_TRIGGER` | The trigger, e.g. `swipe-3-alt-up` or `hotkey-Super+Alt+N` |
+
+Only the variables a window provides are set; the daemon's own environment is
+never changed. An `exec` binding fires once per swipe unless `"repeat": true`
+(the default stays true for chains containing `window.next` / `window.prev`).
+`config check` warns when the program of an argument list is not on `PATH`;
+a shell string cannot be checked and is only reported as such.
+
+**Only run config files you trust.** A config can run any command as you: an
+`exec` action is not sandboxed. Before importing someone else's config, read
+its `exec` actions; the GUI must show them before importing too.
+### Conditions (`when`)
+
+One trigger can do different things depending on where it happens:
+
+```json
+{
+  "bindings": [
+    {
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "down" },
+      "when": { "app": ["firefox", "org.chromium.Chromium"] },
+      "actions": [ { "type": "window.next" } ]
+    },
+    {
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "down" },
+      "actions": [ { "type": "window.prev" } ]
+    }
+  ]
+}
+```
+
+- `app`: app patterns (case-insensitive, `*` is a wildcard) matched against
+  the desktop-file id (`list` prints it as `[org.gnome.TextEditor.desktop]`),
+  the app name and the WM class. On Windows, ids are executable paths
+  (`code.exe`), matched the same way. Matching all three means `firefox`,
+  `Firefox` and `firefox.desktop` all work.
+- `not_app`: apps to exclude, with the same patterns.
+- `os`: `linux` or `windows` (or `*`).
+- `desktop`: `gnome`, `kde`, `sway`, `hyprland`, `niri` (or `*`). This makes
+  one config file work on every machine.
+- An empty or absent `when` applies everywhere. All present conditions must
+  match.
+
+Among enabled bindings with the same trigger, a binding whose `when` matches
+wins over one without `when`; ties go to the first in the file. If none
+matches, nothing fires. The focused app and platform are captured when the
+trigger starts and kept for the whole gesture. Duplicate hotkeys are allowed
+for this reason: bind one key once per app and leave an unconditional fallback.
+
+`config check` reports bindings whose conditions can never fire: an unknown
+`os`/`desktop` value, the same pattern in both `app` and `not_app`, or
+`not_app: ["*"]`. It also lists bindings that are merely inactive on this
+machine (for example a `windows` binding when run on Linux). An app pattern
+that matches no window can only be known at run time and is not reported.
+
+**GNOME claims are per app.** A swipe bound only for Firefox is sent to the
+extension with its app filter: the extension checks the focused app at the
+start of the swipe and leaves the gesture to GNOME in every other app. Plain
+three-finger workspace switching therefore keeps working where your binding
+does not apply. This uses protocol 4; an older extension still runs, but
+app-filtered swipes are then claimed in every app (and do nothing outside
+theirs), and the daemon says so at startup. A `not_app`-only binding cannot be
+expressed as a positive GNOME claim: it is claimed everywhere and does nothing
+in the excluded apps.
+
+On GNOME a claim is per (fingers, modifiers, app), not per direction: a plain
+three-finger binding for an app claims plain three-finger swipes in every
+direction in that app, so its unbound directions do nothing instead of reaching
+GNOME.
+
+Windows' raw touchpad listener cannot hand a gesture back: once the listener
+sees a swipe, Windows' own gesture handling already ran too. Turn Windows'
+three/four-finger gestures off, and use a modifier plus fingers for bindings
+that should not overlap the shell's gestures. The same applies to the optional
+`libinput` backend: it observes swipes without intercepting them, so the
+compositor still acts on the same gesture.
+
 The file is strict inside objects it knows: a typo or an unknown field is an
 error naming the JSON path. Bindings are decoded one by one, though: one bad
 binding is reported and skipped, and the others still load. `config check`
-lists every `bindings[i]` problem, and exits non-zero only for malformed
-bindings; an unknown trigger/action type or a non-null `when` (from a newer
-build) is a warning, is skipped, and does not fail the check. The daemon does
-the same and keeps running with the valid bindings. `config schema` prints the
-JSON Schema generated from the program's types; the committed
+lists every `bindings[i]` problem, warns about `exec` programs that are not on
+`PATH`, and exits non-zero only for malformed bindings; an unknown
+trigger/action type or an unsupported `when` key (from a newer build) is a
+warning, is skipped, and does not fail the check. The daemon does the same and
+keeps running with the valid bindings. `config schema` prints the JSON Schema
+generated from the program's types; the committed
 `schema/config.schema.json` is what the `$schema` line points at, so editors
 can validate and complete the file.
 

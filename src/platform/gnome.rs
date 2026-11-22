@@ -30,10 +30,16 @@ pub const BUS_NAME: &str = "io.github.hjosugi.TouchpadSnap";
 pub const OBJECT_PATH: &str = "/io/github/hjosugi/TouchpadSnap";
 pub const INTERFACE: &str = "io.github.hjosugi.TouchpadSnap1";
 /// The extension protocol this binary speaks. Version 2 added ShowHud,
-/// version 3 the AcceleratorReleased signal. Older extensions still work,
-/// without the overlay (1) or with MRU sessions going by time (2).
-pub const PROTOCOL_VERSION: u32 = 3;
+/// version 3 the AcceleratorReleased signal, version 4 per-app swipe claims
+/// and the app id in the Swipe signal, and version 5 SendKeys (the `keys`
+/// action). Older extensions still work, without the features above.
+pub const PROTOCOL_VERSION: u32 = 5;
 pub const EXTENSION_UUID: &str = "touchpad-snap@hjosugi.github.io";
+
+/// Whether an extension of `version` understands app-filtered swipe claims.
+pub fn supports_app_claims(version: u32) -> bool {
+    version >= 4
+}
 
 pub struct Gnome {
     conn: Connection,
@@ -72,11 +78,19 @@ impl Gnome {
     /// are cleared).
     fn register(&self, cfg: &Config, hotkeys: &[Hotkey], portal: bool) -> Result<u32> {
         let version = self.protocol_version()?;
+        let platform = super::current_platform();
+        let claims = cfg.claims_for(&platform);
         if version < PROTOCOL_VERSION {
-            let missing = if version < 2 {
-                "the overlay after a jump, and hotkey sessions that end when the modifiers are released"
-            } else {
-                "hotkey sessions that end when the modifiers are released (they go by time instead)"
+            let missing = match version {
+                0 | 1 => {
+                    "the overlay after a jump, hotkey sessions that end when the modifiers are released, per-app swipe claims, and the `keys` action"
+                }
+                2 => {
+                    "hotkey sessions that end when the modifiers are released (they go by time instead), per-app swipe claims, and the `keys` action"
+                }
+                3 => "per-app swipe claims and the `keys` action",
+                4 => "the `keys` action",
+                _ => "nothing",
             };
             eprintln!(
                 "touchpad-snap: the GNOME extension is older (protocol {version}, this binary {PROTOCOL_VERSION}); \
@@ -113,21 +127,34 @@ impl Gnome {
             }
         }
 
-        let claims: Vec<(u32, u32)> = cfg.claims().iter().map(|c| (c.fingers, c.mods.0)).collect();
-        self.proxy
-            .call_method("SetSwipeClaims", &(claims,))
-            .map_err(|e| self.explain(e))?;
+        if supports_app_claims(version) {
+            let wire: Vec<(u32, u32, Vec<String>)> = claims
+                .iter()
+                .map(|c| (c.fingers, c.mods.0, c.apps.clone()))
+                .collect();
+            self.proxy
+                .call_method("SetSwipeClaims", &(wire,))
+                .map_err(|e| self.explain(e))?;
+        } else {
+            // A protocol 3 extension knows only `a(uu)`. Its claim is still
+            // useful without an app filter (and is the best we can do for
+            // per-app bindings there).
+            let wire: Vec<(u32, u32)> = claims.iter().map(|c| (c.fingers, c.mods.0)).collect();
+            self.proxy
+                .call_method("SetSwipeClaims", &(wire,))
+                .map_err(|e| self.explain(e))?;
+        }
 
         if portal {
             eprintln!(
                 "touchpad-snap: registered {} swipe claim(s) with GNOME Shell (hotkeys through the portal)",
-                cfg.claims().len()
+                claims.len()
             );
         } else {
             eprintln!(
                 "touchpad-snap: registered {} hotkey(s) and {} swipe claim(s) with GNOME Shell",
                 hotkeys.len() - failed.len(),
-                cfg.claims().len()
+                claims.len()
             );
         }
         Ok(version)
@@ -149,6 +176,20 @@ impl Backend for Gnome {
             bail!("window {id} is gone");
         }
         Ok(())
+    }
+
+    fn send_keys(&self, keys: Hotkey, _held: Mods) -> Result<()> {
+        // The extension looks at the real modifier state itself and waits
+        // for the trigger's modifiers to go up (see SendKeys in its README).
+        let args = (keys.key.keysym(), keys.mods.0);
+        match self.proxy.call::<_, _, bool>("SendKeys", &args) {
+            Ok(true) => Ok(()),
+            Ok(false) => bail!("the GNOME Shell extension could not type {keys}"),
+            Err(e) if e.to_string().contains("UnknownMethod") => bail!(
+                "the GNOME Shell extension is too old to send keys (needs protocol 5); update it and log in again"
+            ),
+            Err(e) => Err(self.explain(e)),
+        }
     }
 
     fn show_hud(&self, id: u64, index: usize, total: usize, duration_ms: u64) -> Result<()> {
@@ -417,18 +458,41 @@ fn parse_signal(msg: &Message, version: u32, hotkeys: &[Hotkey]) -> Option<Event
         }
         "AcceleratorReleased" => Some(Event::Released),
         "Swipe" => {
-            let (phase, fingers, mods, dx, dy): (u32, u32, u32, f64, f64) =
-                msg.body().deserialize().ok()?;
+            let (phase, fingers, mods, app_id, dx, dy) = if supports_app_claims(version) {
+                let (phase, fingers, mods, app_id, dx, dy): (u32, u32, u32, String, f64, f64) =
+                    msg.body().deserialize().ok()?;
+                (phase, fingers, mods, Some(app_id), dx, dy)
+            } else {
+                let (phase, fingers, mods, dx, dy): (u32, u32, u32, f64, f64) =
+                    msg.body().deserialize().ok()?;
+                (phase, fingers, mods, None, dx, dy)
+            };
             Some(Event::Swipe {
                 phase: Phase::from_u32(phase)?,
                 claim: Claim {
                     fingers,
                     mods: Mods(mods),
+                    apps: Vec::new(),
                 },
+                app_id: app_id.filter(|id| !id.is_empty()),
                 dx,
                 dy,
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn per_app_claims_need_protocol_4() {
+        assert!(!supports_app_claims(1));
+        assert!(!supports_app_claims(2));
+        assert!(!supports_app_claims(3));
+        assert!(supports_app_claims(4));
+        assert!(supports_app_claims(5));
     }
 }

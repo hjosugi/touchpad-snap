@@ -320,6 +320,16 @@ fn config_check(config_path: &std::path::Path) -> Result<()> {
     for problem in &report.problems {
         println!("{}", problem.describe());
     }
+    for problem in cfg.missing_exec_commands() {
+        println!("{}", problem.describe());
+    }
+    if cfg.has_shell_exec() {
+        println!("note: commands run with \"shell\": true are not checked against PATH");
+    }
+    let platform = platform::current_platform();
+    for inactive in cfg.inactive_on(&platform) {
+        println!("{}", inactive.describe());
+    }
     if report.has_errors() {
         bail!("{} binding(s) could not be loaded", report.errors().count());
     }

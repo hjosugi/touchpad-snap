@@ -49,6 +49,47 @@
             "ms"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Run a program, detached from the daemon.",
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/ExecCommand"
+            },
+            "shell": {
+              "default": false,
+              "description": "Run a command string through the shell. Required for a string,\nrejected for an argument list.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "exec",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Send a keyboard shortcut to the focused window, e.g. `\"Ctrl+W\"`. The\nmodifiers the trigger itself is held with are released for it.",
+          "properties": {
+            "keys": {
+              "type": "string"
+            },
+            "type": {
+              "const": "keys",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "keys"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -84,7 +125,15 @@
           "$ref": "#/$defs/Trigger"
         },
         "when": {
-          "description": "Future `when` conditions (issue #37). Present but non-null means the\nbinding is skipped, not that this build knows what it means."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/When"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the binding applies: app, OS, desktop. Empty/absent means\neverywhere."
         }
       },
       "required": [
@@ -116,6 +165,22 @@
         }
       },
       "type": "object"
+    },
+    "ExecCommand": {
+      "anyOf": [
+        {
+          "description": "One string, run by `sh -c` (Unix) or `cmd /C` (Windows). Needs\n`\"shell\": true`.",
+          "type": "string"
+        },
+        {
+          "description": "A program and its arguments, run directly without a shell. The first\nitem is the program.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "The `command` of an [`Action::Exec`]: a program with its arguments, or a\nsingle string for the shell."
     },
     "GestureConfig": {
       "additionalProperties": false,
@@ -241,6 +306,41 @@
           "type": "object"
         }
       ]
+    },
+    "When": {
+      "additionalProperties": false,
+      "description": "The `when` object of a binding. An empty `When` matches everything.",
+      "properties": {
+        "app": {
+          "description": "Apps this binding applies to (glob, case-insensitive).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "desktop": {
+          "description": "`gnome`, `kde`, `sway`, `hyprland`, `niri` (or `*`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "not_app": {
+          "description": "Apps this binding does not apply to (glob, case-insensitive).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "os": {
+          "description": "`linux`, `windows` (or `*`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
     },
     "WorkspaceScope": {
       "description": "Which windows are candidates.",

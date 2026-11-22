@@ -13,8 +13,9 @@ use anyhow::Result;
 
 use crate::config::{Claim, Config};
 use crate::gesture::Phase;
-use crate::hotkey::Hotkey;
+use crate::hotkey::{Hotkey, Mods};
 use crate::model::Snapshot;
+use crate::when::PlatformDescription;
 
 #[cfg(target_os = "linux")]
 pub mod gnome;
@@ -43,6 +44,15 @@ pub trait Backend {
     fn show_hud(&self, _id: u64, _index: usize, _total: usize, _duration_ms: u64) -> Result<()> {
         Ok(())
     }
+    /// Types `keys` into the focused window. `held` are modifiers that are
+    /// physically down (the trigger's own); `Alt` + swipe sending `Ctrl+Tab`
+    /// has to arrive as `Ctrl+Tab`. A backend that can release keys does so
+    /// while it types and presses them again afterwards (Windows); one that
+    /// cannot types when they come up (GNOME: mutter ignores a virtual
+    /// release of a key the user holds).
+    fn send_keys(&self, _keys: Hotkey, _held: Mods) -> Result<()> {
+        anyhow::bail!("sending keys is not supported on this desktop yet")
+    }
     /// One line for `touchpad-snap doctor`.
     fn describe(&self) -> String;
     /// What an installation under the old name (see [`crate::legacy`]) still
@@ -68,10 +78,13 @@ pub enum Event {
     Hotkey { index: usize, tracked: bool },
     /// The modifiers of the last tracked hotkey have all been released.
     Released,
-    /// Motion of a claimed touchpad swipe.
+    /// Motion of a claimed touchpad swipe. `app_id` is the focused app at
+    /// Begin when the platform knows it (GNOME protocol 4+); the daemon
+    /// otherwise snapshots the focused window at Begin.
     Swipe {
         phase: Phase,
         claim: Claim,
+        app_id: Option<String>,
         dx: f64,
         dy: f64,
     },
@@ -159,6 +172,76 @@ pub fn is_gnome(desktop: Option<&str>) -> bool {
             .split([':', ';'])
             .any(|part| part.trim().eq_ignore_ascii_case("gnome"))
     })
+}
+
+/// The `when.desktop` name in an `XDG_CURRENT_DESKTOP` value. Pure so the
+/// platform description is testable without touching the environment.
+pub fn desktop_name(desktop: Option<&str>) -> Option<&'static str> {
+    let desktop = desktop?;
+    for part in desktop.split([':', ';']) {
+        let part = part.trim();
+        if part.eq_ignore_ascii_case("gnome") {
+            return Some("gnome");
+        }
+        if part.eq_ignore_ascii_case("kde") || part.eq_ignore_ascii_case("plasma") {
+            return Some("kde");
+        }
+        if part.eq_ignore_ascii_case("sway") {
+            return Some("sway");
+        }
+        if part.eq_ignore_ascii_case("hyprland") {
+            return Some("hyprland");
+        }
+        if part.eq_ignore_ascii_case("niri") {
+            return Some("niri");
+        }
+    }
+    None
+}
+
+fn current_os() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        std::env::consts::OS
+    }
+}
+
+/// What `when.os` and `when.desktop` are checked against on this machine.
+pub fn current_platform() -> PlatformDescription {
+    static CURRENT: std::sync::OnceLock<PlatformDescription> = std::sync::OnceLock::new();
+    *CURRENT.get_or_init(detect_current_platform)
+}
+
+fn detect_current_platform() -> PlatformDescription {
+    #[cfg(target_os = "linux")]
+    {
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
+        let name = if is_gnome(desktop.as_deref()) {
+            Some("gnome")
+        } else if kde::detect_from_env().detected() {
+            Some("kde")
+        } else if let Some(compositor) = wlroots::desktop_hint_from_env() {
+            Some(match compositor {
+                wlroots::Compositor::Sway => "sway",
+                wlroots::Compositor::Hyprland => "hyprland",
+                wlroots::Compositor::Niri => "niri",
+            })
+        } else if gnome::Gnome::extension_available() {
+            // Some launchers (and test sessions) leave XDG_CURRENT_DESKTOP
+            // unset; a reachable extension is as good a sign as run_daemon uses.
+            Some("gnome")
+        } else {
+            desktop_name(desktop.as_deref())
+        };
+        PlatformDescription::new(current_os(), name)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        PlatformDescription::new(current_os(), None)
+    }
 }
 
 /// Holds the daemon's session-bus name so a second daemon refuses to start.
@@ -258,6 +341,18 @@ mod tests {
         assert!(!is_gnome(Some("sway")));
         assert!(!is_gnome(Some("Hyprland")));
         assert!(!is_gnome(None));
+    }
+
+    #[test]
+    fn desktop_names_map_to_the_when_values() {
+        assert_eq!(desktop_name(Some("ubuntu:GNOME")), Some("gnome"));
+        assert_eq!(desktop_name(Some("KDE")), Some("kde"));
+        assert_eq!(desktop_name(Some("plasma")), Some("kde"));
+        assert_eq!(desktop_name(Some("sway")), Some("sway"));
+        assert_eq!(desktop_name(Some("Hyprland")), Some("hyprland"));
+        assert_eq!(desktop_name(Some("niri")), Some("niri"));
+        assert_eq!(desktop_name(Some("XFCE")), None);
+        assert_eq!(desktop_name(None), None);
     }
 
     #[test]

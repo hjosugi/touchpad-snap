@@ -137,11 +137,11 @@ tps() { "$E2E_BIN" "$@"; }
 press_keys() { "$E2E_INJECT" "$@"; }
 
 # Sends the daemon a Swipe signal as the extension would after claiming a
-# touchpad swipe: swipe <phase> <fingers> <mods> <dx> <dy>
+# touchpad swipe: swipe <phase> <fingers> <mods> <app_id> <dx> <dy>
 swipe() {
     gdbus emit --session --object-path /io/github/hjosugi/TouchpadSnap \
         --signal io.github.hjosugi.TouchpadSnap1.Swipe -- \
-        "uint32 $1" "uint32 $2" "uint32 $3" "$4" "$5" >/dev/null
+        "uint32 $1" "uint32 $2" "uint32 $3" "$4" "$5" "$6" >/dev/null
 }
 
 # Call a method of the extension.
@@ -172,7 +172,14 @@ focus_on() {
     for _ in 1 2 3 4 5; do
         [[ $(call Activate "uint64 $id") == "(true,)" ]] || fail "Activate($id) returned false"
         for _ in $(seq 20); do
-            focus_is "$id" && return 0
+            if focus_is "$id"; then
+                # A window that was opened moments ago takes focus when it is
+                # mapped, which can be after this activation went through:
+                # focus counts once it has stayed.
+                sleep 0.7
+                focus_is "$id" && return 0
+                break
+            fi
             sleep 0.1
         done
     done

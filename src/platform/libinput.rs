@@ -72,13 +72,16 @@ impl SwipeSession {
         mods: crate::hotkey::Mods,
         claims: &[crate::config::Claim],
     ) -> Option<crate::config::Claim> {
-        let claim = crate::config::Claim { fingers, mods };
-        self.claim = claims.contains(&claim).then_some(claim);
-        self.claim
+        let claim = claims
+            .iter()
+            .find(|claim| claim.matches_gesture(fingers, mods))?
+            .clone();
+        self.claim = Some(claim.clone());
+        Some(claim)
     }
 
     fn update(&mut self, dx: f64, dy: f64) -> Option<(crate::config::Claim, f64, f64)> {
-        self.claim.map(|claim| (claim, dx, dy))
+        self.claim.clone().map(|claim| (claim, dx, dy))
     }
 
     /// Finishes a swipe, mapping libinput's cancelled flag onto [`Phase`].
@@ -399,6 +402,7 @@ fn send(
     tx.send(Event::Swipe {
         phase,
         claim,
+        app_id: None,
         dx,
         dy,
     })
@@ -561,7 +565,7 @@ mod tests {
     use crate::hotkey::Mods;
 
     fn claim(fingers: u32, mods: Mods) -> Claim {
-        Claim { fingers, mods }
+        Claim::gesture(fingers, mods)
     }
 
     #[test]

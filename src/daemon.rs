@@ -9,9 +9,13 @@ use anyhow::Result;
 
 use crate::config::{self, Action, Binding, Claim, Config, Source, Trigger};
 use crate::cycle::{self, Pick, Session, Step};
+use crate::exec::{self, ActionContext};
 use crate::gesture::{Phase, SwipeRecognizer};
+use crate::hotkey::{Hotkey, Mods};
+use crate::model::Snapshot;
 use crate::platform::{self, Backend, Event};
 use crate::session;
+use crate::when::{AppContext, PlatformDescription, TriggerContext};
 
 /// Jumps once: list, pick, activate, remember.
 pub fn jump(
@@ -80,6 +84,14 @@ fn action_label(binding: &Binding) -> String {
             Action::Next => "Next".to_string(),
             Action::Prev => "Prev".to_string(),
             Action::Delay { ms } => format!("delay {ms} ms"),
+            Action::Exec { command, shell } => {
+                if *shell {
+                    format!("exec (shell) {}", command.display())
+                } else {
+                    format!("exec {}", command.display())
+                }
+            }
+            Action::Keys { keys } => format!("keys {keys}"),
         })
         .collect::<Vec<_>>()
         .join(" + ")
@@ -133,16 +145,34 @@ impl ConfigWatch {
     }
 }
 
+/// The focused window at the start of a trigger. `app_id` is what GNOME's
+/// extension matched the claim against (protocol 4+); when absent, the
+/// snapshot's focused window supplies all identifiers.
+fn capture_context(backend: &dyn Backend, app_id: Option<&str>) -> TriggerContext {
+    let app = backend
+        .snapshot()
+        .ok()
+        .and_then(|snapshot| snapshot.focused().map(AppContext::from_window))
+        .map(|app| app.with_app_id(app_id));
+    TriggerContext::new(PlatformDescription::current(), app)
+}
+
 /// Turns events into jumps. Kept apart from the platform loop so it can be
 /// tested with a fake backend.
 pub struct Handler {
     cfg: Config,
     recognizer: SwipeRecognizer,
     claim: Option<Claim>,
+    /// The focused app and platform captured when the current trigger
+    /// started; reused for the whole gesture.
+    context: Option<TriggerContext>,
     /// Jumps made by the swipe in progress.
     swipe_jumps: usize,
     /// Non-repeat swipe bindings that already fired during this gesture.
     fired: HashSet<usize>,
+    /// The window list when the current swipe began; `exec` actions use the
+    /// focused window from there, not one snapshot per action.
+    gesture_snapshot: Option<Snapshot>,
     /// The modifiers of the last (tracked) hotkey are still down.
     held: bool,
     state_path: PathBuf,
@@ -157,8 +187,10 @@ impl Handler {
             cfg,
             recognizer,
             claim: None,
+            context: None,
             swipe_jumps: 0,
             fired: HashSet::new(),
+            gesture_snapshot: None,
             held: false,
             state_path,
             watch: None,
@@ -196,7 +228,13 @@ impl Handler {
                     (true, false) => Session::Fresh,
                 };
                 self.held = tracked;
-                if let Some(binding) = self.cfg.hotkey_binding(index) {
+                let context = capture_context(backend, None);
+                if let Some(binding) = self.cfg.hotkey_binding_for(index, &context) {
+                    let snapshot = if binding.has_exec() {
+                        self.context_snapshot(backend)
+                    } else {
+                        None
+                    };
                     if self.verbose {
                         let keys = match &binding.trigger {
                             Trigger::Hotkey { keys } => keys.as_str(),
@@ -213,7 +251,13 @@ impl Handler {
                             }
                         );
                     }
-                    self.run_binding(backend, binding, session);
+                    let held = match &binding.trigger {
+                        Trigger::Hotkey { keys } => {
+                            Hotkey::parse(keys).map(|h| h.mods).unwrap_or_default()
+                        }
+                        Trigger::Swipe { .. } => Mods::default(),
+                    };
+                    self.run_binding(backend, binding, session, snapshot.as_ref(), held);
                 }
             }
             Event::Released => {
@@ -225,44 +269,63 @@ impl Handler {
             Event::Swipe {
                 phase,
                 claim,
+                app_id,
                 dx,
                 dy,
             } => {
                 if phase == Phase::Begin {
                     self.recognizer.begin();
                     self.claim = Some(claim);
+                    self.context = Some(capture_context(backend, app_id.as_deref()));
                     self.swipe_jumps = 0;
                     self.fired.clear();
+                    self.gesture_snapshot = self.context_snapshot(backend);
                 }
-                let claim = self.claim?;
+                let claim = self.claim.clone()?;
                 if matches!(phase, Phase::Begin | Phase::Update) {
+                    let context = self.context.clone().unwrap_or_else(|| TriggerContext {
+                        platform: PlatformDescription::current(),
+                        app: None,
+                    });
                     for direction in self.recognizer.update(dx, dy) {
-                        for (index, binding) in self.cfg.swipe_bindings_indexed(claim, direction) {
-                            if !binding.repeats() && !self.fired.insert(index) {
-                                continue;
-                            }
-                            if self.verbose {
-                                eprintln!(
-                                    "touchpad-snap: swipe {direction:?} with {} fingers → {}",
-                                    claim.fingers,
-                                    action_label(binding)
-                                );
-                            }
-                            // One swipe is one session: keep going and it
-                            // digs further back; lift the fingers to commit.
-                            let session = if self.swipe_jumps == 0 {
-                                Session::Fresh
-                            } else {
-                                Session::Held
-                            };
-                            self.swipe_jumps += 1;
-                            self.run_binding(backend, binding, session);
+                        let Some((index, binding)) =
+                            self.cfg
+                                .swipe_binding_for(claim.clone(), direction, &context)
+                        else {
+                            continue;
+                        };
+                        if !binding.repeats() && !self.fired.insert(index) {
+                            continue;
                         }
+                        if self.verbose {
+                            eprintln!(
+                                "touchpad-snap: swipe {direction:?} with {} fingers → {}",
+                                claim.fingers,
+                                action_label(binding)
+                            );
+                        }
+                        // One swipe is one session: keep going and it
+                        // digs further back; lift the fingers to commit.
+                        let session = if self.swipe_jumps == 0 {
+                            Session::Fresh
+                        } else {
+                            Session::Held
+                        };
+                        self.swipe_jumps += 1;
+                        self.run_binding(
+                            backend,
+                            binding,
+                            session,
+                            self.gesture_snapshot.as_ref(),
+                            claim.mods,
+                        );
                     }
                 }
                 if matches!(phase, Phase::End | Phase::Cancel) {
                     self.recognizer.end();
                     self.claim = None;
+                    self.context = None;
+                    self.gesture_snapshot = None;
                 }
             }
         }
@@ -275,14 +338,44 @@ impl Handler {
         log_report(&cfg);
         self.recognizer = SwipeRecognizer::new(cfg.gesture.threshold, cfg.gesture.repeat_step);
         self.claim = None;
+        self.context = None;
         self.fired.clear();
+        self.gesture_snapshot = None;
         self.cfg = cfg.clone();
         Some(cfg)
     }
 
+    /// The window list for `exec` context, taken once when the trigger
+    /// starts. A failure is not fatal: the command still runs, without the
+    /// window variables.
+    fn context_snapshot(&self, backend: &dyn Backend) -> Option<Snapshot> {
+        match backend.snapshot() {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) => {
+                if self.verbose {
+                    eprintln!(
+                        "touchpad-snap: could not read the focused window for the action context: {error:#}"
+                    );
+                }
+                None
+            }
+        }
+    }
+
     /// Runs a binding's action chain in order. `session` applies to the first
     /// window action; further ones in the same chain continue that session.
-    fn run_binding(&self, backend: &dyn Backend, binding: &Binding, session: Session) {
+    ///
+    /// `held` are the modifiers the trigger is held with (the swipe's, or the
+    /// hotkey's): a `keys` action releases them while it types. `snapshot` is
+    /// the focused window at trigger start, for `exec`.
+    fn run_binding(
+        &self,
+        backend: &dyn Backend,
+        binding: &Binding,
+        session: Session,
+        snapshot: Option<&Snapshot>,
+        held: Mods,
+    ) {
         let mut session = session;
         for action in &binding.actions {
             match action {
@@ -299,6 +392,20 @@ impl Handler {
                     // is short and this keeps the action chain in order.
                     std::thread::sleep(Duration::from_millis(*ms));
                 }
+                Action::Exec { command, shell } => {
+                    let context = ActionContext::at(&binding.trigger, snapshot);
+                    exec::spawn(command, *shell, &context, self.verbose);
+                }
+                Action::Keys { keys } => match Hotkey::parse(keys) {
+                    Ok(hotkey) => {
+                        if let Err(e) = backend.send_keys(hotkey, held) {
+                            eprintln!("touchpad-snap: keys {keys}: {e:#}");
+                        }
+                    }
+                    // Checked when the config is loaded; only a hand-built
+                    // Config gets here.
+                    Err(e) => eprintln!("touchpad-snap: keys: {e}"),
+                },
             }
         }
     }
@@ -343,6 +450,9 @@ mod tests {
         snap: RefCell<Snapshot>,
         activated: RefCell<Vec<u64>>,
         huds: RefCell<Vec<(u64, usize, usize)>>,
+        /// What `send_keys` was asked to type: the shortcut and the
+        /// modifiers held for the trigger.
+        typed: RefCell<Vec<(String, Mods)>>,
     }
 
     impl Fake {
@@ -363,6 +473,7 @@ mod tests {
                 }),
                 activated: RefCell::new(vec![]),
                 huds: RefCell::new(vec![]),
+                typed: RefCell::new(vec![]),
             }
         }
     }
@@ -389,6 +500,10 @@ mod tests {
             self.huds.borrow_mut().push((id, index, total));
             Ok(())
         }
+        fn send_keys(&self, keys: Hotkey, held: Mods) -> Result<()> {
+            self.typed.borrow_mut().push((keys.to_string(), held));
+            Ok(())
+        }
         fn describe(&self) -> String {
             "fake".into()
         }
@@ -404,10 +519,8 @@ mod tests {
     fn swipe(phase: Phase, dx: f64) -> Event {
         Event::Swipe {
             phase,
-            claim: Claim {
-                fingers: 3,
-                mods: Mods::CTRL,
-            },
+            claim: Claim::gesture(3, Mods::CTRL),
+            app_id: None,
             dx,
             dy: 0.0,
         }
@@ -444,15 +557,65 @@ mod tests {
             &fake,
             Event::Swipe {
                 phase: Phase::Update,
-                claim: Claim {
-                    fingers: 3,
-                    mods: Mods::CTRL,
-                },
+                claim: Claim::gesture(3, Mods::CTRL),
+                app_id: None,
                 dx: 0.0,
                 dy: -300.0,
             },
         );
         assert_eq!(fake.activated.borrow().len(), 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn config_with(bindings: serde_json::Value) -> Config {
+        let bindings: Vec<Binding> = serde_json::from_value(bindings).unwrap();
+        Config {
+            bindings,
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn keys_actions_type_the_shortcut_and_name_the_held_modifiers() {
+        let fake = Fake::new();
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-keys-{}", std::process::id()));
+        let cfg = config_with(serde_json::json!([
+            {"trigger": {"type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "down"},
+             "actions": [{"type": "keys", "keys": "Ctrl+Shift+Tab"}]},
+            {"trigger": {"type": "hotkey", "keys": "Super+Alt+K"},
+             "actions": [{"type": "keys", "keys": "Ctrl+N"}, {"type": "delay", "ms": 1}, {"type": "keys", "keys": "Escape"}]}
+        ]));
+        let mut h = Handler::new(cfg, dir.join("state.json"), false);
+        let alt = |phase, dy| Event::Swipe {
+            phase,
+            claim: Claim::gesture(3, Mods::ALT),
+            app_id: None,
+            dx: 0.0,
+            dy,
+        };
+
+        // A swipe down with Alt held: the keys go out, Alt is named as held,
+        // and no window was jumped to.
+        h.handle(&fake, alt(Phase::Begin, 0.0));
+        h.handle(&fake, alt(Phase::Update, 130.0));
+        h.handle(&fake, alt(Phase::End, 0.0));
+        assert_eq!(
+            *fake.typed.borrow(),
+            vec![("Ctrl+Shift+tab".to_string(), Mods::ALT)]
+        );
+        assert!(fake.activated.borrow().is_empty());
+
+        // A hotkey: its own modifiers are the held ones, and the chain runs
+        // in order.
+        fake.typed.borrow_mut().clear();
+        h.handle(&fake, hotkey(0));
+        assert_eq!(
+            *fake.typed.borrow(),
+            vec![
+                ("Ctrl+N".to_string(), Mods::SUPER | Mods::ALT),
+                ("escape".to_string(), Mods::SUPER | Mods::ALT),
+            ]
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -463,10 +626,8 @@ mod tests {
         let mut h = Handler::new(Config::default(), dir.join("state.json"), false);
         let alt = |phase, dy| Event::Swipe {
             phase,
-            claim: Claim {
-                fingers: 3,
-                mods: Mods::ALT,
-            },
+            claim: Claim::gesture(3, Mods::ALT),
+            app_id: None,
             dx: 0.0,
             dy,
         };
@@ -490,15 +651,83 @@ mod tests {
             &fake,
             Event::Swipe {
                 phase: Phase::Update,
-                claim: Claim {
-                    fingers: 3,
-                    mods: Mods::ALT,
-                },
+                claim: Claim::gesture(3, Mods::ALT),
+                app_id: None,
                 dx: -300.0,
                 dy: 0.0,
             },
         );
         assert_eq!(fake.activated.borrow().len(), 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_app_is_captured_at_swipe_begin_for_the_whole_gesture() {
+        let fake = Fake::new();
+        {
+            let mut snap = fake.snap.borrow_mut();
+            for window in &mut snap.windows {
+                window.app_id = "one".into();
+                window.app_name = "One".into();
+                window.wm_class = "one".into();
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-begin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"bindings":[
+                {"trigger":{"type":"swipe","fingers":3,"modifiers":["ctrl"],"direction":"left"},
+                 "when":{"app":["one"]},"actions":[{"type":"window.next"}]},
+                {"trigger":{"type":"swipe","fingers":3,"modifiers":["ctrl"],"direction":"left"},
+                 "when":{"app":["two"]},"actions":[{"type":"delay","ms":0}]}
+            ]}"#,
+        )
+        .unwrap();
+        let cfg = config::load(&path).unwrap();
+        let mut h = Handler::new(cfg, dir.join("state.json"), false);
+
+        let event = |phase, dx| Event::Swipe {
+            phase,
+            claim: Claim::gesture(3, Mods::CTRL),
+            app_id: None,
+            dx,
+            dy: 0.0,
+        };
+        h.handle(&fake, event(Phase::Begin, 0.0));
+        assert_eq!(
+            h.context
+                .as_ref()
+                .and_then(|context| context.app.as_ref())
+                .map(|app| app.app_id.as_str()),
+            Some("one")
+        );
+
+        // Focus (and even the app id) changes mid-gesture; the binding still
+        // comes from the app the gesture started in. (Keeping focus on the
+        // same window isolates the app condition from the jump target.)
+        {
+            let mut snap = fake.snap.borrow_mut();
+            for window in &mut snap.windows {
+                window.app_id = "two".into();
+                window.app_name = "Two".into();
+                window.wm_class = "two".into();
+            }
+        }
+        h.handle(&fake, event(Phase::Update, -130.0));
+        assert_eq!(*fake.activated.borrow(), vec![2]);
+        h.handle(&fake, event(Phase::End, 0.0));
+
+        // A new gesture in the other app picks its binding instead (a no-op
+        // delay, so focus would not change).
+        for window in &mut fake.snap.borrow_mut().windows {
+            window.focused = window.id == 2;
+        }
+        h.handle(&fake, event(Phase::Begin, 0.0));
+        h.handle(&fake, event(Phase::Update, -130.0));
+        h.handle(&fake, event(Phase::End, 0.0));
+        assert_eq!(*fake.activated.borrow(), vec![2]);
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -533,6 +762,67 @@ mod tests {
         h.handle(&fake, swipe(Phase::Update, -130.0));
         h.handle(&fake, swipe(Phase::End, 0.0));
         assert_eq!(fake.activated.borrow()[5..], [1]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exec_swipe_fires_once_unless_repeat() {
+        fn lines(path: &std::path::Path) -> usize {
+            std::fs::read_to_string(path)
+                .map(|text| text.lines().count())
+                .unwrap_or(0)
+        }
+        fn wait_for_lines(path: &std::path::Path, expected: usize) {
+            for _ in 0..100 {
+                if lines(path) >= expected {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            panic!(
+                "{} has {} lines, wanted {expected}",
+                path.display(),
+                lines(path)
+            );
+        }
+
+        let fake = Fake::new();
+        let dir =
+            std::env::temp_dir().join(format!("touchpad-snap-exec-swipe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("marker");
+        let config_for = |repeat: bool| {
+            let path = dir.join(format!("config-{repeat}.json"));
+            let repeat = if repeat { r#", "repeat": true"# } else { "" };
+            std::fs::write(
+                &path,
+                format!(
+                    r#"{{"bindings":[{{"trigger":{{"type":"swipe","fingers":3,"modifiers":["ctrl"],"direction":"left"}},"actions":[{{"type":"exec","command":["sh","-c","echo x >> {}"]}}]{repeat}}}]}}"#,
+                    marker.display()
+                ),
+            )
+            .unwrap();
+            config::load(&path).unwrap()
+        };
+
+        let mut once = Handler::new(config_for(false), dir.join("state.json"), false);
+        once.handle(&fake, swipe(Phase::Begin, 0.0));
+        once.handle(&fake, swipe(Phase::Update, -130.0));
+        once.handle(&fake, swipe(Phase::Update, -230.0));
+        once.handle(&fake, swipe(Phase::End, 0.0));
+        wait_for_lines(&marker, 1);
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(lines(&marker), 1);
+
+        std::fs::remove_file(&marker).unwrap();
+        let mut repeat = Handler::new(config_for(true), dir.join("state.json"), false);
+        repeat.handle(&fake, swipe(Phase::Begin, 0.0));
+        repeat.handle(&fake, swipe(Phase::Update, -130.0));
+        repeat.handle(&fake, swipe(Phase::Update, -230.0));
+        repeat.handle(&fake, swipe(Phase::End, 0.0));
+        wait_for_lines(&marker, 2);
+
         let _ = std::fs::remove_dir_all(dir);
     }
 

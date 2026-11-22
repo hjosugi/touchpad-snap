@@ -8,10 +8,12 @@
 #
 #   nix build .#checks.x86_64-linux.vm-touchpad -L      (needs KVM)
 #
-# Asserts that the default swipes jump between the app's windows and leave
+# Asserts that Alt + three fingers left types Ctrl+Shift+N (a new editor
+# window) once Alt is up, and that the default swipes jump between the app's windows and leave
 # GNOME alone (Ctrl + three fingers left: no workspace switch; Alt + three
-# fingers up/down: no overview), and that plain three fingers still open the
-# overview and switch workspace.
+# fingers up/down: no overview), that plain three fingers still open the
+# overview and switch workspace in apps without a binding, and that a plain
+# swipe bound only for the editor jumps there without leaving the workspace.
 {
   pkgs,
   touchpad-snap,
@@ -24,10 +26,28 @@ let
     libraries = [ pkgs.python3Packages.evdev ];
     flakeIgnore = [ "E501" ];
   } (builtins.readFile ./swipe.py);
-  # One jump per swipe, whatever distance libinput reports.
-  config = pkgs.writeText "touchpad-snap.toml" ''
-    [gesture]
-    repeat_step = 0.0
+  # One jump per swipe, whatever distance libinput reports. The last binding
+  # is app-filtered: plain three fingers left is ours only in the editor, and
+  # stays GNOME's everywhere else.
+  config = pkgs.writeText "touchpad-snap.json" ''
+    {
+      "version": 2,
+      "gesture": { "repeat_step": 0.0 },
+      "bindings": [
+        { "trigger": { "type": "hotkey", "keys": "Super+Alt+N" }, "actions": [ { "type": "window.next" } ] },
+        { "trigger": { "type": "hotkey", "keys": "Super+Alt+P" }, "actions": [ { "type": "window.prev" } ] },
+        { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "left" }, "actions": [ { "type": "window.next" } ] },
+        { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "right" }, "actions": [ { "type": "window.prev" } ] },
+        { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "up" }, "actions": [ { "type": "window.next" } ] },
+        { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "down" }, "actions": [ { "type": "window.prev" } ] },
+        { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "left" }, "actions": [ { "type": "keys", "keys": "Ctrl+Shift+N" } ] },
+        {
+          "trigger": { "type": "swipe", "fingers": 3, "direction": "left" },
+          "when": { "app": ["*TextEditor*"] },
+          "actions": [ { "type": "window.next" } ]
+        }
+      ]
+    }
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -64,6 +84,7 @@ pkgs.testers.runNixOSTest {
       extension
       swipe
       pkgs.gnome-text-editor
+      pkgs.gnome-calculator
       pkgs.libinput
     ];
 
@@ -119,6 +140,11 @@ pkgs.testers.runNixOSTest {
 
     def editors():
         return sorted(w["id"] for w in snapshot()["windows"] if "TextEditor" in w["app_id"])
+
+
+    def calculator():
+        return next((w["id"] for w in snapshot()["windows"]
+                     if "Calculator" in w["app_id"]), 0)
 
 
     def focused():
@@ -189,7 +215,7 @@ pkgs.testers.runNixOSTest {
         machine.wait_for_unit("default.target", "alice")
         machine.wait_for_file("/run/swipe/ready")
         wait_for("GNOME Shell start-up", lambda: shell_eval("Main.layoutManager._startingUp") == "(true, 'false')", 120)
-        wait_for("daemon registration", lambda: "registered 2 hotkey(s) and 2 swipe claim(s)" in daemon_log(), 180)
+        wait_for("daemon registration", lambda: "registered 2 hotkey(s) and 3 swipe claim(s)" in daemon_log(), 180)
         # What the extension sends the daemon and what libinput makes of the
         # virtual devices, shown if something times out.
         machine.succeed(as_alice('dbus-monitor --session "type=signal,interface=io.github.hjosugi.TouchpadSnap1" >/tmp/signals.log 2>&1 &'))
@@ -202,6 +228,9 @@ pkgs.testers.runNixOSTest {
             machine.succeed(as_alice(f"gnome-text-editor --standalone >/tmp/editor{n}.log 2>&1 &"))
             wait_for(f"text editor window {n}", lambda: len(editors()) == n)
         first, second = editors()
+        # A second app, where the editor-only plain swipe must stay GNOME's.
+        machine.succeed(as_alice("gnome-calculator >/tmp/calc.log 2>&1 &"))
+        wait_for("calculator window", lambda: calculator() != 0)
         focus_on(first)
         assert snapshot()["active_workspace"] == 0
 
@@ -236,7 +265,22 @@ pkgs.testers.runNixOSTest {
         assert snapshot()["active_workspace"] == 0
         machine.screenshot("after-alt-swipes")
 
-    with subtest("plain three fingers up: left to GNOME, opens the overview"):
+    with subtest("plain three fingers in the editor: claimed by the app filter and jumps"):
+        jumps = daemon_log().count("swipe Left")
+        focus_on(first)
+        machine.succeed("swipe send --fingers 3 --dx -40")
+        wait_for("plain swipe left in the editor -> second editor", lambda: focused() == second, 20)
+        wait_for("daemon saw the editor's plain swipe",
+                 lambda: daemon_log().count("swipe Left") == jumps + 1, 20)
+        time.sleep(1)
+        assert snapshot()["active_workspace"] == 0, "the app-filtered swipe also switched workspace"
+        machine.screenshot("after-plain-editor-swipe")
+
+    with subtest("plain three fingers up in another app: opens the overview"):
+        # A GNOME claim is per (fingers, modifiers, app), not per direction:
+        # plain swipes stay claimed in the editor in every direction. In an
+        # app without a claim the gesture is the shell's.
+        focus_on(calculator())
         jumps = daemon_log().count("swipe Up")
         machine.succeed("swipe send --fingers 3 --dy -40")
         wait_for("plain swipe up -> overview", overview, 20)
@@ -244,13 +288,26 @@ pkgs.testers.runNixOSTest {
         machine.screenshot("after-plain-swipe-up")
         machine.send_key("esc")
         wait_for("overview closed again", lambda: not overview(), 20)
-        focus_on(second)
 
-    with subtest("plain three fingers: left to GNOME, switches workspace"):
+    with subtest("plain three fingers in another app: left to GNOME, switches workspace"):
+        # The editor-only claim must not steal the calculator's swipe.
+        focus_on(calculator())
         jumps = daemon_log().count("swipe Left")
         machine.succeed("swipe send --fingers 3 --dx -40")
         wait_for("plain swipe left -> next workspace", lambda: snapshot()["active_workspace"] == 1, 20)
         assert daemon_log().count("swipe Left") == jumps, "the daemon saw an unclaimed swipe"
         machine.screenshot("after-plain-swipe")
+
+    with subtest("Alt + three fingers left: types Ctrl+Shift+N once Alt is up"):
+        # The keys action: the virtual keyboard cannot release the physical
+        # Alt, so the shortcut waits until the (virtual) hand lets go of it.
+        # With Alt still down it would arrive as Alt+Ctrl+Shift+N and open
+        # nothing.
+        before = len(editors())
+        focus_on(second)
+        machine.succeed("swipe send --mod alt --fingers 3 --dx -40")
+        wait_for("a new editor window from Ctrl+Shift+N", lambda: len(editors()) == before + 1, 30)
+        assert "keys Ctrl+Shift+N" in daemon_log()
+        machine.screenshot("after-keys-swipe")
   '';
 }
