@@ -331,7 +331,11 @@ class TouchpadSnapService {
 
     _typeKeys(keysym, mods) {
         if (!this._keyboard) {
-            const seat = Clutter.get_default_backend().get_default_seat();
+            // Clutter.get_default_backend() was removed in GNOME Shell 51.
+            const backend = typeof Clutter.get_default_backend === 'function'
+                ? Clutter.get_default_backend()
+                : global.stage.context.get_backend();
+            const seat = backend.get_default_seat();
             this._keyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
         }
         try {
