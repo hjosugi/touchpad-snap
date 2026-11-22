@@ -276,7 +276,11 @@ pkgs.testers.runNixOSTest {
         assert snapshot()["active_workspace"] == 0, "the app-filtered swipe also switched workspace"
         machine.screenshot("after-plain-editor-swipe")
 
-    with subtest("plain three fingers up: left to GNOME, opens the overview"):
+    with subtest("plain three fingers up in another app: opens the overview"):
+        # A GNOME claim is per (fingers, modifiers, app), not per direction:
+        # plain swipes stay claimed in the editor in every direction. In an
+        # app without a claim the gesture is the shell's.
+        focus_on(calculator())
         jumps = daemon_log().count("swipe Up")
         machine.succeed("swipe send --fingers 3 --dy -40")
         wait_for("plain swipe up -> overview", overview, 20)
@@ -284,7 +288,6 @@ pkgs.testers.runNixOSTest {
         machine.screenshot("after-plain-swipe-up")
         machine.send_key("esc")
         wait_for("overview closed again", lambda: not overview(), 20)
-        focus_on(second)
 
     with subtest("plain three fingers in another app: left to GNOME, switches workspace"):
         # The editor-only claim must not steal the calculator's swipe.

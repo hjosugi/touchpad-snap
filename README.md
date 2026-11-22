@@ -633,6 +633,11 @@ theirs), and the daemon says so at startup. A `not_app`-only binding cannot be
 expressed as a positive GNOME claim: it is claimed everywhere and does nothing
 in the excluded apps.
 
+On GNOME a claim is per (fingers, modifiers, app), not per direction: a plain
+three-finger binding for an app claims plain three-finger swipes in every
+direction in that app, so its unbound directions do nothing instead of reaching
+GNOME.
+
 Windows' raw touchpad listener cannot hand a gesture back: once the listener
 sees a swipe, Windows' own gesture handling already ran too. Turn Windows'
 three/four-finger gestures off, and use a modifier plus fingers for bindings

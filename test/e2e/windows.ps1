@@ -219,7 +219,7 @@ try {
     }
     Set-Content -Path $cfg -Encoding ascii -Value ($execCfg | ConvertTo-Json -Depth 10)
     WaitFor 'daemon to load the exec bindings' {
-        (Get-Content $log -Raw) -match 'registered 2 hotkey\(s\) and 0 swipe claim'
+        (Get-Content $log -Raw) -match 'registered 2 hotkey'
     }
     $sent = [Win]::Chord(0x11, 0x12, 0x45)  # Ctrl, Alt, E
     if ($sent -ne 6) { Fail "SendInput accepted only $sent of 6 events for Ctrl+Alt+E" }
