@@ -70,7 +70,11 @@ repository root.
   0 begin, 1 update, 2 end, 3 cancel; `app_id`: the app that was focused when
   the swipe started (matched against the claim's filter); `dx`/`dy`:
   unaccelerated motion. *(The `app_id` argument is since version 4; older
-  versions send `Swipe(u,u,u,d,d)`.)*
+  versions send `Swipe(u,u,u,d,d)`.)* When a claimed swipe ends with its
+  `Alt` or `Super` still physically down, the extension taps the unbound
+  `F19` key (X keysym 0xffd0) through the virtual keyboard after sending the
+  end event, so the later release is not a lone modifier press that opens the
+  menu bar or the overview. Nothing is sent if the modifier is already up.
 
 `mods` bits: 1 Shift, 2 Ctrl, 4 Alt, 8 Super.
 

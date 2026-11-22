@@ -9,11 +9,12 @@
 #   nix build .#checks.x86_64-linux.vm-touchpad -L      (needs KVM)
 #
 # Asserts that Alt + three fingers left types Ctrl+Shift+N (a new editor
-# window) once Alt is up, and that the default swipes jump between the app's windows and leave
-# GNOME alone (Ctrl + three fingers left: no workspace switch; Alt + three
-# fingers up/down: no overview), that plain three fingers still open the
-# overview and switch workspace in apps without a binding, and that a plain
-# swipe bound only for the editor jumps there without leaving the workspace.
+# window) once Alt is up, and that the default swipes jump between the app's
+# windows and leave GNOME alone (Ctrl + three fingers left: no workspace
+# switch; Alt + three fingers up/down and Super + three fingers left: no
+# overview), that plain three fingers still open the overview and switch
+# workspace in apps without a binding, and that a plain swipe bound only for
+# the editor jumps there without leaving the workspace.
 {
   pkgs,
   touchpad-snap,
@@ -41,6 +42,7 @@ let
         { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "up" }, "actions": [ { "type": "window.next" } ] },
         { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "down" }, "actions": [ { "type": "window.prev" } ] },
         { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "left" }, "actions": [ { "type": "keys", "keys": "Ctrl+Shift+N" } ] },
+        { "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["super"], "direction": "left" }, "actions": [ { "type": "window.next" } ] },
         {
           "trigger": { "type": "swipe", "fingers": 3, "direction": "left" },
           "when": { "app": ["*TextEditor*"] },
@@ -215,7 +217,7 @@ pkgs.testers.runNixOSTest {
         machine.wait_for_unit("default.target", "alice")
         machine.wait_for_file("/run/swipe/ready")
         wait_for("GNOME Shell start-up", lambda: shell_eval("Main.layoutManager._startingUp") == "(true, 'false')", 120)
-        wait_for("daemon registration", lambda: "registered 2 hotkey(s) and 3 swipe claim(s)" in daemon_log(), 180)
+        wait_for("daemon registration", lambda: "registered 2 hotkey(s) and 4 swipe claim(s)" in daemon_log(), 180)
         # What the extension sends the daemon and what libinput makes of the
         # virtual devices, shown if something times out.
         machine.succeed(as_alice('dbus-monitor --session "type=signal,interface=io.github.hjosugi.TouchpadSnap1" >/tmp/signals.log 2>&1 &'))
@@ -264,6 +266,21 @@ pkgs.testers.runNixOSTest {
         assert not overview(), "the claimed swipe also opened the overview"
         assert snapshot()["active_workspace"] == 0
         machine.screenshot("after-alt-swipes")
+
+    with subtest("Super + three fingers left: jumps, no overview"):
+        # The modifier goes up after the fingers; the extension taps an unbound
+        # key (F19) while Super is still down, so the release is not a lone
+        # Super press (which would open the overview).
+        jumps = daemon_log().count("swipe Left")
+        focus_on(first)
+        machine.succeed("swipe send --mod super --fingers 3 --dx -40")
+        wait_for("Super + swipe left -> second editor", lambda: focused() == second, 20)
+        wait_for("daemon saw Super's swipe",
+                 lambda: daemon_log().count("swipe Left") == jumps + 1, 20)
+        time.sleep(1)
+        assert not overview(), "a lone Super after the claimed swipe opened the overview"
+        assert snapshot()["active_workspace"] == 0
+        machine.screenshot("after-super-swipe")
 
     with subtest("plain three fingers in the editor: claimed by the app filter and jumps"):
         jumps = daemon_log().count("swipe Left")
