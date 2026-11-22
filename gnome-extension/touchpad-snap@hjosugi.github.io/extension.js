@@ -31,12 +31,12 @@ import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {Phase, SwipeClaimer, modsFromState} from './lib.js';
+import {KeyQueue, Phase, SwipeClaimer, keySequence, modsFromState} from './lib.js';
 
 const BUS_NAME = 'io.github.hjosugi.TouchpadSnap';
 const OBJECT_PATH = '/io/github/hjosugi/TouchpadSnap';
 const INTERFACE = 'io.github.hjosugi.TouchpadSnap1';
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 
 const IFACE_XML = `
 <node>
@@ -53,6 +53,11 @@ const IFACE_XML = `
       <arg type="u" direction="in" name="index"/>
       <arg type="u" direction="in" name="total"/>
       <arg type="u" direction="in" name="duration_ms"/>
+      <arg type="b" direction="out" name="ok"/>
+    </method>
+    <method name="SendKeys">
+      <arg type="u" direction="in" name="keysym"/>
+      <arg type="u" direction="in" name="mods"/>
       <arg type="b" direction="out" name="ok"/>
     </method>
     <method name="SetAccelerators">
@@ -195,6 +200,10 @@ class TouchpadSnapService {
         this._owner = null;
         this._ownerWatchId = 0;
         this._connection = null;
+        this._keyboard = null;
+        this._keyQueue = new KeyQueue((sym, mods) => this._typeKeys(sym, mods),
+            item => console.warn(`touchpad-snap: dropped keys ${item.keysym.toString(16)}: modifiers stayed down`));
+        this._keysTimerId = 0;
         this._busId = 0;
         this._dbus = null;
         this._acceleratorId = 0;
@@ -236,6 +245,12 @@ class TouchpadSnapService {
     stop() {
         this._release();
         this._hud.destroy();
+        this._keyQueue.clear();
+        if (this._keysTimerId) {
+            GLib.Source.remove(this._keysTimerId);
+            this._keysTimerId = 0;
+        }
+        this._keyboard = null;
 
         if (this._capturedId) {
             global.stage.disconnect(this._capturedId);
@@ -291,6 +306,59 @@ class TouchpadSnapService {
         return true;
     }
 
+    // Types a shortcut into the focused window with a virtual keyboard, as
+    // GNOME's on-screen keyboard does. Only the daemon that registered its
+    // hotkeys may ask: anybody on the session bus could otherwise type.
+    //
+    // The shortcut waits until no modifier outside it is down: a virtual
+    // keyboard cannot release what the user's hand holds (mutter ignores such
+    // a release), so Alt + swipe sending Ctrl+Tab goes out when Alt comes up.
+    SendKeysAsync([keysym, mods], invocation) {
+        if (!this._owner || invocation.get_sender() !== this._owner) {
+            invocation.return_dbus_error('org.freedesktop.DBus.Error.AccessDenied',
+                'only the touchpad-snap daemon may send keys');
+            return;
+        }
+        this._keyQueue.push(keysym, mods, GLib.get_monotonic_time() / 1000);
+        this._pumpKeys();
+        invocation.return_value(new GLib.Variant('(b)', [true]));
+    }
+
+    _heldMods() {
+        const [, , state] = global.get_pointer();
+        return modsFromState(state & HOLD_MASK, Clutter.ModifierType);
+    }
+
+    _typeKeys(keysym, mods) {
+        if (!this._keyboard) {
+            const seat = Clutter.get_default_backend().get_default_seat();
+            this._keyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        }
+        try {
+            for (const [sym, pressed] of keySequence(keysym, mods)) {
+                this._keyboard.notify_keyval(GLib.get_monotonic_time(), sym,
+                    pressed ? Clutter.KeyState.PRESSED : Clutter.KeyState.RELEASED);
+            }
+        } catch (e) {
+            console.error(`touchpad-snap: typing keys failed: ${e}`);
+        }
+    }
+
+    // Types what can be typed; keeps polling while something waits for a
+    // modifier to go up.
+    _pumpKeys() {
+        const waiting = this._keyQueue.pump(this._heldMods(), GLib.get_monotonic_time() / 1000);
+        if (waiting && !this._keysTimerId) {
+            this._keysTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, RELEASE_POLL_MS, () => {
+                if (this._keyQueue.pending && this._pumpKeys())
+                    return GLib.SOURCE_CONTINUE;
+                this._keysTimerId = 0;
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+        return waiting;
+    }
+
     SetAcceleratorsAsync([bindings], invocation) {
         this._adopt(invocation.get_sender());
         this._ungrabAll();
@@ -327,6 +395,7 @@ class TouchpadSnapService {
     }
 
     _release() {
+        this._keyQueue.clear();
         this._stopReleaseWatch();
         this._ungrabAll();
         this._claimer.setClaims([]);

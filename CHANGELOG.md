@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- The `keys` action types a keyboard shortcut into the focused window,
+  `{ "type": "keys", "keys": "Ctrl+Shift+Tab" }`, from any swipe or hotkey.
+  The trigger's own modifiers are not part of it: `Alt` + swipe sending
+  `Ctrl+Tab` arrives as `Ctrl+Tab`. Windows releases the held modifiers for it
+  and presses them again; GNOME's virtual keyboard cannot release a key you
+  hold (mutter ignores it), so the extension types the shortcut when the
+  modifier comes up. GNOME extension protocol 4 adds `SendKeys`, callable only
+  by the registered daemon. `Backspace` and `Delete` join the key names. (#33)
+
 ### Changed
 
 - The configuration is now `config.json`: a list of bindings, each a trigger

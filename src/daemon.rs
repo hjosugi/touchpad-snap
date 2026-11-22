@@ -10,6 +10,7 @@ use anyhow::Result;
 use crate::config::{self, Action, Binding, Claim, Config, Source, Trigger};
 use crate::cycle::{self, Pick, Session, Step};
 use crate::gesture::{Phase, SwipeRecognizer};
+use crate::hotkey::{Hotkey, Mods};
 use crate::platform::{self, Backend, Event};
 use crate::session;
 
@@ -80,6 +81,7 @@ fn action_label(binding: &Binding) -> String {
             Action::Next => "Next".to_string(),
             Action::Prev => "Prev".to_string(),
             Action::Delay { ms } => format!("delay {ms} ms"),
+            Action::Keys { keys } => format!("keys {keys}"),
         })
         .collect::<Vec<_>>()
         .join(" + ")
@@ -213,7 +215,13 @@ impl Handler {
                             }
                         );
                     }
-                    self.run_binding(backend, binding, session);
+                    let held = match &binding.trigger {
+                        Trigger::Hotkey { keys } => {
+                            Hotkey::parse(keys).map(|h| h.mods).unwrap_or_default()
+                        }
+                        Trigger::Swipe { .. } => Mods::default(),
+                    };
+                    self.run_binding(backend, binding, session, held);
                 }
             }
             Event::Released => {
@@ -256,7 +264,7 @@ impl Handler {
                                 Session::Held
                             };
                             self.swipe_jumps += 1;
-                            self.run_binding(backend, binding, session);
+                            self.run_binding(backend, binding, session, claim.mods);
                         }
                     }
                 }
@@ -282,7 +290,10 @@ impl Handler {
 
     /// Runs a binding's action chain in order. `session` applies to the first
     /// window action; further ones in the same chain continue that session.
-    fn run_binding(&self, backend: &dyn Backend, binding: &Binding, session: Session) {
+    ///
+    /// `held` are the modifiers the trigger is held with (the swipe's, or the
+    /// hotkey's): a `keys` action releases them while it types.
+    fn run_binding(&self, backend: &dyn Backend, binding: &Binding, session: Session, held: Mods) {
         let mut session = session;
         for action in &binding.actions {
             match action {
@@ -299,6 +310,16 @@ impl Handler {
                     // is short and this keeps the action chain in order.
                     std::thread::sleep(Duration::from_millis(*ms));
                 }
+                Action::Keys { keys } => match Hotkey::parse(keys) {
+                    Ok(hotkey) => {
+                        if let Err(e) = backend.send_keys(hotkey, held) {
+                            eprintln!("touchpad-snap: keys {keys}: {e:#}");
+                        }
+                    }
+                    // Checked when the config is loaded; only a hand-built
+                    // Config gets here.
+                    Err(e) => eprintln!("touchpad-snap: keys: {e}"),
+                },
             }
         }
     }
@@ -343,6 +364,9 @@ mod tests {
         snap: RefCell<Snapshot>,
         activated: RefCell<Vec<u64>>,
         huds: RefCell<Vec<(u64, usize, usize)>>,
+        /// What `send_keys` was asked to type: the shortcut and the
+        /// modifiers held for the trigger.
+        typed: RefCell<Vec<(String, Mods)>>,
     }
 
     impl Fake {
@@ -363,6 +387,7 @@ mod tests {
                 }),
                 activated: RefCell::new(vec![]),
                 huds: RefCell::new(vec![]),
+                typed: RefCell::new(vec![]),
             }
         }
     }
@@ -387,6 +412,10 @@ mod tests {
         }
         fn show_hud(&self, id: u64, index: usize, total: usize, _ms: u64) -> Result<()> {
             self.huds.borrow_mut().push((id, index, total));
+            Ok(())
+        }
+        fn send_keys(&self, keys: Hotkey, held: Mods) -> Result<()> {
+            self.typed.borrow_mut().push((keys.to_string(), held));
             Ok(())
         }
         fn describe(&self) -> String {
@@ -453,6 +482,60 @@ mod tests {
             },
         );
         assert_eq!(fake.activated.borrow().len(), 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn config_with(bindings: serde_json::Value) -> Config {
+        let bindings: Vec<Binding> = serde_json::from_value(bindings).unwrap();
+        Config {
+            bindings,
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn keys_actions_type_the_shortcut_and_name_the_held_modifiers() {
+        let fake = Fake::new();
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-keys-{}", std::process::id()));
+        let cfg = config_with(serde_json::json!([
+            {"trigger": {"type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "down"},
+             "actions": [{"type": "keys", "keys": "Ctrl+Shift+Tab"}]},
+            {"trigger": {"type": "hotkey", "keys": "Super+Alt+K"},
+             "actions": [{"type": "keys", "keys": "Ctrl+N"}, {"type": "delay", "ms": 1}, {"type": "keys", "keys": "Escape"}]}
+        ]));
+        let mut h = Handler::new(cfg, dir.join("state.json"), false);
+        let alt = |phase, dy| Event::Swipe {
+            phase,
+            claim: Claim {
+                fingers: 3,
+                mods: Mods::ALT,
+            },
+            dx: 0.0,
+            dy,
+        };
+
+        // A swipe down with Alt held: the keys go out, Alt is named as held,
+        // and no window was jumped to.
+        h.handle(&fake, alt(Phase::Begin, 0.0));
+        h.handle(&fake, alt(Phase::Update, 130.0));
+        h.handle(&fake, alt(Phase::End, 0.0));
+        assert_eq!(
+            *fake.typed.borrow(),
+            vec![("Ctrl+Shift+tab".to_string(), Mods::ALT)]
+        );
+        assert!(fake.activated.borrow().is_empty());
+
+        // A hotkey: its own modifiers are the held ones, and the chain runs
+        // in order.
+        fake.typed.borrow_mut().clear();
+        h.handle(&fake, hotkey(0));
+        assert_eq!(
+            *fake.typed.borrow(),
+            vec![
+                ("Ctrl+N".to_string(), Mods::SUPER | Mods::ALT),
+                ("escape".to_string(), Mods::SUPER | Mods::ALT),
+            ]
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -7,6 +7,93 @@
 // Part of the D-Bus protocol: do not renumber.
 export const Mods = Object.freeze({SHIFT: 1, CTRL: 2, ALT: 4, SUPER: 8});
 
+// The modifier keys typed by SendKeys: [bit, X keysym of the left key].
+export const MODIFIER_KEYS = Object.freeze([
+    [Mods.SUPER, 0xffeb],
+    [Mods.CTRL, 0xffe3],
+    [Mods.ALT, 0xffe9],
+    [Mods.SHIFT, 0xffe1],
+]);
+
+/**
+ * The key events that type a shortcut: its modifiers down, the key tapped,
+ * its modifiers up.
+ *
+ * @param {number} keyval - X keysym of the key
+ * @param {number} mods - Mods bits of the shortcut
+ * @returns {Array<[number, boolean]>} [keysym, pressed] in order
+ */
+export function keySequence(keyval, mods) {
+    const keys = MODIFIER_KEYS.filter(([bit]) => mods & bit).map(([, sym]) => sym);
+    return [
+        ...keys.map(sym => [sym, true]),
+        [keyval, true],
+        [keyval, false],
+        ...keys.reverse().map(sym => [sym, false]),
+    ];
+}
+
+// How long a shortcut waits for the trigger's modifiers to go up.
+export const KEYS_WAIT_MS = 3000;
+
+/**
+ * Shortcuts to type, in order, each once no modifier that does not belong to
+ * it is down.
+ *
+ * A virtual keyboard cannot release a key somebody else holds (mutter
+ * ignores such a release), so `Alt` + swipe sending `Ctrl+Tab` cannot be
+ * typed while Alt is down: it would arrive as `Alt+Ctrl+Tab`. It is typed
+ * as soon as Alt comes up instead. The queue keeps the order of a chain,
+ * and drops what has waited longer than KEYS_WAIT_MS (a modifier held
+ * for that long is not part of a gesture any more).
+ */
+export class KeyQueue {
+    /**
+     * @param {function(number, number)} type - types keysym with Mods bits
+     * @param {function(object)} [onDrop] - told about each dropped shortcut
+     */
+    constructor(type, onDrop = () => {}) {
+        this._type = type;
+        this._onDrop = onDrop;
+        this._items = [];
+    }
+
+    get pending() {
+        return this._items.length > 0;
+    }
+
+    push(keysym, mods, nowMs) {
+        this._items.push({keysym, mods, at: nowMs});
+    }
+
+    clear() {
+        this._items = [];
+    }
+
+    /**
+     * Types what can be typed now.
+     *
+     * @param {number} down - Mods bits physically down right now
+     * @param {number} nowMs
+     * @returns {boolean} whether something still waits
+     */
+    pump(down, nowMs) {
+        while (this._items.length > 0) {
+            const item = this._items[0];
+            if (nowMs - item.at > KEYS_WAIT_MS) {
+                this._items.shift();
+                this._onDrop(item);
+                continue;
+            }
+            if (down & ~item.mods)
+                return true;
+            this._items.shift();
+            this._type(item.keysym, item.mods);
+        }
+        return false;
+    }
+}
+
 // Swipe phases as sent in the Swipe signal (src/gesture.rs, `Phase`).
 export const Phase = Object.freeze({BEGIN: 0, UPDATE: 1, END: 2, CANCEL: 3});
 
