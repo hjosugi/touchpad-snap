@@ -9,7 +9,9 @@ use anyhow::Result;
 
 use crate::config::{self, Action, Binding, Claim, Config, Source, Trigger};
 use crate::cycle::{self, Pick, Session, Step};
+use crate::exec::{self, ActionContext};
 use crate::gesture::{Phase, SwipeRecognizer};
+use crate::model::Snapshot;
 use crate::platform::{self, Backend, Event};
 use crate::session;
 
@@ -80,6 +82,13 @@ fn action_label(binding: &Binding) -> String {
             Action::Next => "Next".to_string(),
             Action::Prev => "Prev".to_string(),
             Action::Delay { ms } => format!("delay {ms} ms"),
+            Action::Exec { command, shell } => {
+                if *shell {
+                    format!("exec (shell) {}", command.display())
+                } else {
+                    format!("exec {}", command.display())
+                }
+            }
         })
         .collect::<Vec<_>>()
         .join(" + ")
@@ -143,6 +152,9 @@ pub struct Handler {
     swipe_jumps: usize,
     /// Non-repeat swipe bindings that already fired during this gesture.
     fired: HashSet<usize>,
+    /// The window list when the current swipe began; `exec` actions use the
+    /// focused window from there, not one snapshot per action.
+    gesture_snapshot: Option<Snapshot>,
     /// The modifiers of the last (tracked) hotkey are still down.
     held: bool,
     state_path: PathBuf,
@@ -159,6 +171,7 @@ impl Handler {
             claim: None,
             swipe_jumps: 0,
             fired: HashSet::new(),
+            gesture_snapshot: None,
             held: false,
             state_path,
             watch: None,
@@ -197,6 +210,11 @@ impl Handler {
                 };
                 self.held = tracked;
                 if let Some(binding) = self.cfg.hotkey_binding(index) {
+                    let snapshot = if binding.has_exec() {
+                        self.context_snapshot(backend)
+                    } else {
+                        None
+                    };
                     if self.verbose {
                         let keys = match &binding.trigger {
                             Trigger::Hotkey { keys } => keys.as_str(),
@@ -213,7 +231,7 @@ impl Handler {
                             }
                         );
                     }
-                    self.run_binding(backend, binding, session);
+                    self.run_binding(backend, binding, session, snapshot.as_ref());
                 }
             }
             Event::Released => {
@@ -233,6 +251,7 @@ impl Handler {
                     self.claim = Some(claim);
                     self.swipe_jumps = 0;
                     self.fired.clear();
+                    self.gesture_snapshot = self.context_snapshot(backend);
                 }
                 let claim = self.claim?;
                 if matches!(phase, Phase::Begin | Phase::Update) {
@@ -256,13 +275,19 @@ impl Handler {
                                 Session::Held
                             };
                             self.swipe_jumps += 1;
-                            self.run_binding(backend, binding, session);
+                            self.run_binding(
+                                backend,
+                                binding,
+                                session,
+                                self.gesture_snapshot.as_ref(),
+                            );
                         }
                     }
                 }
                 if matches!(phase, Phase::End | Phase::Cancel) {
                     self.recognizer.end();
                     self.claim = None;
+                    self.gesture_snapshot = None;
                 }
             }
         }
@@ -276,13 +301,37 @@ impl Handler {
         self.recognizer = SwipeRecognizer::new(cfg.gesture.threshold, cfg.gesture.repeat_step);
         self.claim = None;
         self.fired.clear();
+        self.gesture_snapshot = None;
         self.cfg = cfg.clone();
         Some(cfg)
     }
 
+    /// The window list for `exec` context, taken once when the trigger
+    /// starts. A failure is not fatal: the command still runs, without the
+    /// window variables.
+    fn context_snapshot(&self, backend: &dyn Backend) -> Option<Snapshot> {
+        match backend.snapshot() {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) => {
+                if self.verbose {
+                    eprintln!(
+                        "touchpad-snap: could not read the focused window for the action context: {error:#}"
+                    );
+                }
+                None
+            }
+        }
+    }
+
     /// Runs a binding's action chain in order. `session` applies to the first
     /// window action; further ones in the same chain continue that session.
-    fn run_binding(&self, backend: &dyn Backend, binding: &Binding, session: Session) {
+    fn run_binding(
+        &self,
+        backend: &dyn Backend,
+        binding: &Binding,
+        session: Session,
+        snapshot: Option<&Snapshot>,
+    ) {
         let mut session = session;
         for action in &binding.actions {
             match action {
@@ -298,6 +347,10 @@ impl Handler {
                     // Deliberately blocks the daemon thread for now; a delay
                     // is short and this keeps the action chain in order.
                     std::thread::sleep(Duration::from_millis(*ms));
+                }
+                Action::Exec { command, shell } => {
+                    let context = ActionContext::at(&binding.trigger, snapshot);
+                    exec::spawn(command, *shell, &context, self.verbose);
                 }
             }
         }
@@ -533,6 +586,67 @@ mod tests {
         h.handle(&fake, swipe(Phase::Update, -130.0));
         h.handle(&fake, swipe(Phase::End, 0.0));
         assert_eq!(fake.activated.borrow()[5..], [1]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exec_swipe_fires_once_unless_repeat() {
+        fn lines(path: &std::path::Path) -> usize {
+            std::fs::read_to_string(path)
+                .map(|text| text.lines().count())
+                .unwrap_or(0)
+        }
+        fn wait_for_lines(path: &std::path::Path, expected: usize) {
+            for _ in 0..100 {
+                if lines(path) >= expected {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            panic!(
+                "{} has {} lines, wanted {expected}",
+                path.display(),
+                lines(path)
+            );
+        }
+
+        let fake = Fake::new();
+        let dir =
+            std::env::temp_dir().join(format!("touchpad-snap-exec-swipe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("marker");
+        let config_for = |repeat: bool| {
+            let path = dir.join(format!("config-{repeat}.json"));
+            let repeat = if repeat { r#", "repeat": true"# } else { "" };
+            std::fs::write(
+                &path,
+                format!(
+                    r#"{{"bindings":[{{"trigger":{{"type":"swipe","fingers":3,"modifiers":["ctrl"],"direction":"left"}},"actions":[{{"type":"exec","command":["sh","-c","echo x >> {}"]}}]{repeat}}}]}}"#,
+                    marker.display()
+                ),
+            )
+            .unwrap();
+            config::load(&path).unwrap()
+        };
+
+        let mut once = Handler::new(config_for(false), dir.join("state.json"), false);
+        once.handle(&fake, swipe(Phase::Begin, 0.0));
+        once.handle(&fake, swipe(Phase::Update, -130.0));
+        once.handle(&fake, swipe(Phase::Update, -230.0));
+        once.handle(&fake, swipe(Phase::End, 0.0));
+        wait_for_lines(&marker, 1);
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(lines(&marker), 1);
+
+        std::fs::remove_file(&marker).unwrap();
+        let mut repeat = Handler::new(config_for(true), dir.join("state.json"), false);
+        repeat.handle(&fake, swipe(Phase::Begin, 0.0));
+        repeat.handle(&fake, swipe(Phase::Update, -130.0));
+        repeat.handle(&fake, swipe(Phase::Update, -230.0));
+        repeat.handle(&fake, swipe(Phase::End, 0.0));
+        wait_for_lines(&marker, 2);
+
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -379,9 +379,9 @@ libinput はコンポジタが同じジェスチャーを見るのを止めら�
   （`fingers` は 3〜5、`direction` は left / right / up / down、modifiers は
   `ctrl` / `alt` / `shift` / `super` の組み合わせ）です。
 - `actions` は順番に実行するチェーンです。現在使えるのは `window.next`、
-  `window.prev`、`delay`（`{ "type": "delay", "ms": 100 }`）です。キー送信、
-  `exec`、ウィンドウ・ワークスペース・アプリ操作は今後のリリースです。それらを
-  使ったバインディングは警告を出して読み飛ばします。
+  `window.prev`、`delay`（`{ "type": "delay", "ms": 100 }`）、`exec`
+  （下記）です。キー送信とウィンドウ・ワークスペース・アプリ操作は今後の
+  リリースです。それらを使ったバインディングは警告を出して読み飛ばします。
 - `name` は任意で、ログと `config check` にだけ使います。
   `enabled: false` にすると、バインディングをファイルに残したまま登録しません。
 - `repeat` は、指を離さずに動かしたとき `gesture.repeat_step` ごとに
@@ -395,13 +395,59 @@ libinput はコンポジタが同じジェスチャーを見るのを止めら�
   ワークスペース 1 枚分が 400）。`gesture.repeat_step` は追加で 1 枚進む
   ごとの移動量（0 で 1 スワイプ 1 回）。`hud` は切り替え後の表示です。
 
+#### `exec`: コマンドを実行する
+
+`exec` はジェスチャーやホットキーが発火したときにプログラムを実行します。
+プログラムと引数を配列で渡すと、シェルを介さずそのまま実行します。予期しない
+分割や展開は起こりません。
+
+```json
+{ "type": "exec", "command": ["ghostty", "--working-directory", "~"] }
+```
+
+文字列を 1 つ渡す場合は Linux では `sh -c`、Windows では `cmd /C` で実行され、
+`"shell": true` が必要です。
+
+```json
+{ "type": "exec", "command": "notify-send \"$TOUCHPAD_SNAP_WINDOW_TITLE\"", "shell": true }
+```
+
+`"shell": true` の無い文字列、`"shell": true` 付きの配列はバインディングの
+エラーになります。
+
+コマンドは daemon から切り離されて実行されます（Linux では独自のプロセス
+グループ、Windows ではコンソールウィンドウなし、stdin は `/dev/null` または
+`NUL`）。daemon は待たず、別スレッドが終了を回収します。
+`touchpad-snap daemon --verbose` は終了ステータスと stderr をログに出します。
+子プロセスには、トリガー開始時点でフォーカスされていたウィンドウと、トリガー
+自体が環境変数で渡されます。
+
+| 変数 | 値 |
+| --- | --- |
+| `TOUCHPAD_SNAP_WINDOW_ID` | フォーカス中のウィンドウ id |
+| `TOUCHPAD_SNAP_APP_ID` | アプリ id（`org.gnome.TextEditor.desktop`、実行ファイルのパスなど） |
+| `TOUCHPAD_SNAP_APP_NAME` | アプリ名 |
+| `TOUCHPAD_SNAP_WINDOW_TITLE` | ウィンドウのタイトル |
+| `TOUCHPAD_SNAP_TRIGGER` | トリガー（`swipe-3-alt-up`、`hotkey-Super+Alt+N` など） |
+
+ウィンドウから得られる変数だけを設定し、daemon 自身の環境は変更しません。
+`exec` は `"repeat": true` を指定しない限り 1 回のスワイプで 1 回だけ発火
+します（`window.next` / `window.prev` を含むチェーンの既定は従来どおり true）。
+`config check` は配列で指定したプログラムが `PATH` に無いときに警告します。
+シェル文字列はチェックできないため、その旨だけを表示します。
+
+**信頼できる設定ファイルだけを使ってください。** 設定ファイルは `exec` により
+あなたの権限で任意のコマンドを実行できます。サンドボックスはありません。他人の
+設定を取り込む前に `exec` アクションを確認してください。GUI も取り込み前に
+`exec` を表示する必要があります。
+
 ファイル内の既知のオブジェクトは厳格です。綴り間違いや未知のフィールドは
 JSON パス付きのエラーになります。ただしバインディングは 1 つずつ読むため、
 壊れたバインディングは報告して読み飛ばし、ほかはそのまま読み込みます。
-`config check` は `bindings[i]` ごとの問題を列挙し、壊れたバインディングが
-あるときだけ非ゼロで終了します。未知の trigger / action 種別や null 以外の
-`when`（新しいビルドの機能）は警告扱いで読み飛ばし、終了コードは 0 のまま
-です。daemon も同じ方針で、有効なバインディングだけで動き続けます。
+`config check` は `bindings[i]` ごとの問題と、`PATH` に無い `exec` プログラム
+を列挙し、壊れたバインディングがあるときだけ非ゼロで終了します。未知の
+trigger / action 種別や null 以外の `when`（新しいビルドの機能）は警告扱いで
+読み飛ばし、終了コードは 0 のままです。daemon も同じ方針で、有効なバインディングだけで動き続けます。
 `config schema` は Rust の型から生成した JSON Schema を表示します。リポジトリ
 の `schema/config.schema.json` が `$schema` の指す先で、エディタの検証・補完に
 使えます。

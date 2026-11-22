@@ -175,6 +175,39 @@ rm "$XDG_CONFIG_HOME/touchpad-snap/config.json"
 wait_for "daemon back on the defaults" 15 bash -c "grep -c 'registered 2 hotkey(s) and 2 swipe claim(s)' '$daemon_log' | grep -qx 2"
 ok "config reload: new hotkey active without a restart, broken edits ignored, removal restores defaults"
 
+# exec actions: a hotkey runs a command detached from the daemon, with the
+# trigger in its environment. The marker files live in the private session.
+exec_marker="$E2E_ROOT/exec-marker"
+exec_shell_marker="$E2E_ROOT/exec-shell-marker"
+rm -f "$exec_marker" "$exec_shell_marker"
+cat > "$XDG_CONFIG_HOME/touchpad-snap/config.json" <<JSON
+{
+  "bindings": [
+    {
+      "trigger": { "type": "hotkey", "keys": "Ctrl+Alt+E" },
+      "actions": [ { "type": "exec", "command": ["touch", "$exec_marker"] } ]
+    },
+    {
+      "trigger": { "type": "hotkey", "keys": "Ctrl+Alt+Shift+E" },
+      "actions": [
+        { "type": "exec", "command": "printf '%s' \$TOUCHPAD_SNAP_TRIGGER > $exec_shell_marker", "shell": true }
+      ]
+    }
+  ]
+}
+JSON
+wait_for "daemon to load the exec bindings" 15 grep -q "registered 2 hotkey(s) and 0 swipe claim(s)" "$daemon_log"
+checked=$(tps config check 2>&1) || fail "config check rejected the exec config: $checked"
+grep -q 'shell.*not checked against PATH' <<<"$checked" || fail "config check did not mention shell commands: $checked"
+press_keys Control_L Alt_L e || fail "injecting Ctrl+Alt+E failed"
+wait_for "exec to create its marker" 15 test -e "$exec_marker"
+press_keys Control_L Alt_L Shift_L e || fail "injecting Ctrl+Alt+Shift+E failed"
+wait_for "shell exec to write its marker" 15 test -s "$exec_shell_marker"
+[[ $(cat "$exec_shell_marker") == "hotkey-Ctrl+Alt+Shift+E" ]] \
+    || fail "exec did not receive TOUCHPAD_SNAP_TRIGGER: $(cat "$exec_shell_marker")"
+rm -f "$XDG_CONFIG_HOME/touchpad-snap/config.json"
+ok "exec: a hotkey runs an argument list and a shell string, with the trigger in its environment"
+
 # Alt+Tab-style sessions with order = "mru": presses while Super+Alt stays
 # down dig further back, however slowly they come; releasing commits, and the
 # windows passed on the way do not count as used. Needs a third editor.

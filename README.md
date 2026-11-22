@@ -508,9 +508,9 @@ default; an explicit `"bindings": []` turns all bindings off.
   (`fingers` 3–5; `direction` left, right, up or down; modifiers any of
   `ctrl`, `alt`, `shift`, `super`).
 - `actions` is a chain run in order. Today these are `window.next`,
-  `window.prev` and `delay` (`{ "type": "delay", "ms": 100 }`). Keyboard
-  actions, `exec` and window/workspace/app actions are future releases; a
-  binding that uses one is skipped with a warning.
+  `window.prev`, `delay` (`{ "type": "delay", "ms": 100 }`) and `exec`
+  (see below). Keyboard and window/workspace/app actions are future releases;
+  a binding that uses one is skipped with a warning.
 - `name` is optional and is only used in logs and `config check`.
   `enabled: false` keeps a binding in the file without registering it.
 - `repeat` says whether a swipe binding fires again every further
@@ -524,13 +524,57 @@ default; an explicit `"bindings": []` turns all bindings off.
   workspace swipe is 400); `gesture.repeat_step` is the further travel per
   extra jump (0 = one jump per swipe); `hud` controls the overlay after a jump.
 
+#### `exec`: run a command
+
+`exec` runs a program when its gesture or hotkey fires. Give the program and
+its arguments as a list to run it directly, with no shell to split or expand
+anything:
+
+```json
+{ "type": "exec", "command": ["ghostty", "--working-directory", "~"] }
+```
+
+A single string is run by `sh -c` on Linux and `cmd /C` on Windows, and needs
+`"shell": true`:
+
+```json
+{ "type": "exec", "command": "notify-send \"$TOUCHPAD_SNAP_WINDOW_TITLE\"", "shell": true }
+```
+
+A string without `"shell": true`, or a list with it, is a binding error.
+
+The command is detached: it gets its own process group on Linux and no console
+window on Windows, with stdin at `/dev/null` (or `NUL`). The daemon does not
+wait for it; a separate thread reaps it, and `touchpad-snap daemon --verbose`
+logs its exit status and stderr. The child receives the focused window from
+the moment the trigger started, and the trigger itself:
+
+| Variable | Value |
+| --- | --- |
+| `TOUCHPAD_SNAP_WINDOW_ID` | The focused window's id |
+| `TOUCHPAD_SNAP_APP_ID` | Its app id (`org.gnome.TextEditor.desktop`, an executable path…) |
+| `TOUCHPAD_SNAP_APP_NAME` | The app name |
+| `TOUCHPAD_SNAP_WINDOW_TITLE` | The window title |
+| `TOUCHPAD_SNAP_TRIGGER` | The trigger, e.g. `swipe-3-alt-up` or `hotkey-Super+Alt+N` |
+
+Only the variables a window provides are set; the daemon's own environment is
+never changed. An `exec` binding fires once per swipe unless `"repeat": true`
+(the default stays true for chains containing `window.next` / `window.prev`).
+`config check` warns when the program of an argument list is not on `PATH`;
+a shell string cannot be checked and is only reported as such.
+
+**Only run config files you trust.** A config can run any command as you: an
+`exec` action is not sandboxed. Before importing someone else's config, read
+its `exec` actions; the GUI must show them before importing too.
+
 The file is strict inside objects it knows: a typo or an unknown field is an
 error naming the JSON path. Bindings are decoded one by one, though: one bad
 binding is reported and skipped, and the others still load. `config check`
-lists every `bindings[i]` problem, and exits non-zero only for malformed
-bindings; an unknown trigger/action type or a non-null `when` (from a newer
-build) is a warning, is skipped, and does not fail the check. The daemon does
-the same and keeps running with the valid bindings. `config schema` prints the
+lists every `bindings[i]` problem, warns about `exec` programs that are not on
+`PATH`, and exits non-zero only for malformed bindings; an unknown
+trigger/action type or a non-null `when` (from a newer build) is a warning, is
+skipped, and does not fail the check. The daemon does the same and keeps
+running with the valid bindings. `config schema` prints the
 JSON Schema generated from the program's types; the committed
 `schema/config.schema.json` is what the `$schema` line points at, so editors
 can validate and complete the file.

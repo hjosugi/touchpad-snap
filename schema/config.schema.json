@@ -49,6 +49,29 @@
             "ms"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Run a program, detached from the daemon.",
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/ExecCommand"
+            },
+            "shell": {
+              "default": false,
+              "description": "Run a command string through the shell. Required for a string,\nrejected for an argument list.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "exec",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "command"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -116,6 +139,22 @@
         }
       },
       "type": "object"
+    },
+    "ExecCommand": {
+      "anyOf": [
+        {
+          "description": "One string, run by `sh -c` (Unix) or `cmd /C` (Windows). Needs\n`\"shell\": true`.",
+          "type": "string"
+        },
+        {
+          "description": "A program and its arguments, run directly without a shell. The first\nitem is the program.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "The `command` of an [`Action::Exec`]: a program with its arguments, or a\nsingle string for the shell."
     },
     "GestureConfig": {
       "additionalProperties": false,

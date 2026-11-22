@@ -11,6 +11,7 @@ pub mod cli;
 pub mod config;
 pub mod cycle;
 pub mod daemon;
+pub mod exec;
 pub mod gesture;
 pub mod hotkey;
 pub mod legacy;

@@ -195,6 +195,44 @@ try {
     $sent = [Win]::Chord(0x11, 0x12, 0x4E)
     WaitFor 'next press -> back to the first Notepad' { (Focused) -eq $n[0].id }
     Ok 'daemon: held modifiers keep digging past the timeout, release commits'
+
+    # exec actions: hotkeys run a command detached from the daemon, with the
+    # trigger in its environment. Both the direct (argument list) and shell
+    # forms are covered.
+    $directMarker = Join-Path $work 'exec-direct.txt'
+    $shellMarker = Join-Path $work 'exec-shell.txt'
+    $execCfg = @{
+        bindings = @(
+            @{
+                trigger = @{ type = 'hotkey'; keys = 'Ctrl+Alt+E' }
+                actions = @(
+                    @{ type = 'exec'; command = @('cmd', '/C', "echo direct> $directMarker") }
+                )
+            }
+            @{
+                trigger = @{ type = 'hotkey'; keys = 'Ctrl+Alt+Shift+E' }
+                actions = @(
+                    @{ type = 'exec'; command = "echo %TOUCHPAD_SNAP_TRIGGER%> $shellMarker"; shell = $true }
+                )
+            }
+        )
+    }
+    Set-Content -Path $cfg -Encoding ascii -Value ($execCfg | ConvertTo-Json -Depth 10)
+    WaitFor 'daemon to load the exec bindings' {
+        (Get-Content $log -Raw) -match 'registered 2 hotkey\(s\) and 0 swipe claim'
+    }
+    $sent = [Win]::Chord(0x11, 0x12, 0x45)  # Ctrl, Alt, E
+    if ($sent -ne 6) { Fail "SendInput accepted only $sent of 6 events for Ctrl+Alt+E" }
+    WaitFor 'exec to create its marker' { (Test-Path $directMarker) -and ((Get-Item $directMarker).Length -gt 0) }
+    $sent = [Win]::Chord(0x11, 0x12, 0x10, 0x45)  # Ctrl, Alt, Shift, E
+    if ($sent -ne 8) { Fail "SendInput accepted only $sent of 8 events for Ctrl+Alt+Shift+E" }
+    WaitFor 'shell exec to write its marker' { (Test-Path $shellMarker) -and ((Get-Item $shellMarker).Length -gt 0) }
+    $triggerSeen = (Get-Content $shellMarker -Raw).Trim()
+    if ($triggerSeen -ne 'hotkey-Ctrl+Alt+Shift+E') {
+        Fail "exec did not receive TOUCHPAD_SNAP_TRIGGER: $triggerSeen"
+    }
+    Ok 'daemon: exec runs an argument list and a shell string with the trigger in its environment'
+
     if ($VirtualDesktops) {
         # A second desktop, with one Notepad on it. Win+Ctrl+D switches to the
         # new desktop, so the Notepad starts there.

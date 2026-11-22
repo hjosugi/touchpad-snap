@@ -53,6 +53,13 @@ impl Binding {
                 .any(|a| matches!(a, Action::Next | Action::Prev))
         })
     }
+
+    /// Whether the chain runs a program, and so needs the trigger window.
+    pub fn has_exec(&self) -> bool {
+        self.actions
+            .iter()
+            .any(|a| matches!(a, Action::Exec { .. }))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -81,6 +88,120 @@ pub enum Action {
     /// Wait before the next action in the chain.
     #[serde(rename = "delay")]
     Delay { ms: u64 },
+    /// Run a program, detached from the daemon.
+    #[serde(rename = "exec")]
+    Exec {
+        command: ExecCommand,
+        /// Run a command string through the shell. Required for a string,
+        /// rejected for an argument list.
+        #[serde(default)]
+        shell: bool,
+    },
+}
+
+impl Action {
+    /// Checks the combinations that serde cannot express.
+    fn validate(&self) -> Result<(), String> {
+        let Action::Exec { command, shell } = self else {
+            return Ok(());
+        };
+        match command {
+            ExecCommand::Args(args) => {
+                if *shell {
+                    return Err(
+                        "`exec`: a command list runs directly; remove \"shell\": true".into(),
+                    );
+                }
+                if args.is_empty() {
+                    return Err("`exec`: \"command\" must not be an empty list".into());
+                }
+                if args[0].trim().is_empty() {
+                    return Err("`exec`: the program in \"command\" must not be empty".into());
+                }
+            }
+            ExecCommand::Shell(script) => {
+                if !*shell {
+                    return Err(
+                        "`exec`: a command string needs \"shell\": true; use an argument list \
+                         to run a program directly"
+                            .into(),
+                    );
+                }
+                if script.trim().is_empty() {
+                    return Err("`exec`: \"command\" must not be empty".into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The `command` of an [`Action::Exec`]: a program with its arguments, or a
+/// single string for the shell.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ExecCommand {
+    /// One string, run by `sh -c` (Unix) or `cmd /C` (Windows). Needs
+    /// `"shell": true`.
+    Shell(String),
+    /// A program and its arguments, run directly without a shell. The first
+    /// item is the program.
+    Args(Vec<String>),
+}
+
+impl ExecCommand {
+    /// How the command is shown in logs.
+    pub fn display(&self) -> String {
+        match self {
+            ExecCommand::Shell(script) => script.clone(),
+            ExecCommand::Args(args) => args.join(" "),
+        }
+    }
+
+    /// The program and arguments when it runs directly.
+    pub fn args(&self) -> Option<&[String]> {
+        match self {
+            ExecCommand::Args(args) => Some(args),
+            ExecCommand::Shell(_) => None,
+        }
+    }
+}
+
+impl Trigger {
+    /// A stable label for `TOUCHPAD_SNAP_TRIGGER`: `hotkey-Super+Alt+N` or
+    /// `swipe-3-alt-up`.
+    pub fn label(&self) -> String {
+        match self {
+            Trigger::Hotkey { keys } => format!("hotkey-{keys}"),
+            Trigger::Swipe {
+                fingers,
+                modifiers,
+                direction,
+            } => {
+                let direction = match direction {
+                    SwipeDirection::Left => "left",
+                    SwipeDirection::Right => "right",
+                    SwipeDirection::Up => "up",
+                    SwipeDirection::Down => "down",
+                };
+                let mods = modifiers
+                    .iter()
+                    .map(|m| match m {
+                        Modifier::Shift => "shift",
+                        Modifier::Ctrl => "ctrl",
+                        Modifier::Alt => "alt",
+                        Modifier::Super => "super",
+                    })
+                    .collect::<Vec<_>>()
+                    .join("-");
+                if mods.is_empty() {
+                    format!("swipe-{fingers}-{direction}")
+                } else {
+                    format!("swipe-{fingers}-{mods}-{direction}")
+                }
+            }
+        }
+    }
 }
 
 impl From<Step> for Action {
@@ -646,6 +767,115 @@ impl Config {
             .map(|(_, binding)| binding)
             .collect()
     }
+
+    /// `exec` commands that will not be found when the binding fires. Shell
+    /// strings cannot be checked and only direct argument lists are reported.
+    pub fn missing_exec_commands(&self) -> Vec<BindingProblem> {
+        let mut problems = Vec::new();
+        for (index, binding) in self
+            .bindings
+            .iter()
+            .enumerate()
+            .filter(|(_, binding)| binding.enabled)
+        {
+            for action in &binding.actions {
+                let Action::Exec { command, .. } = action else {
+                    continue;
+                };
+                let Some(program) = command.args().and_then(|args| args.first()) else {
+                    continue;
+                };
+                if !executable_on_path(program) {
+                    problems.push(BindingProblem {
+                        index,
+                        name: binding.name.clone(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "exec command `{program}` was not found on PATH (or as a file); \
+                             the binding will fail when it fires"
+                        ),
+                    });
+                }
+            }
+        }
+        problems
+    }
+
+    /// Whether any action runs a string through the shell, which
+    /// [`Config::missing_exec_commands`] cannot check.
+    pub fn has_shell_exec(&self) -> bool {
+        self.bindings
+            .iter()
+            .filter(|binding| binding.enabled)
+            .any(|binding| {
+                binding.actions.iter().any(|action| {
+                    matches!(
+                        action,
+                        Action::Exec {
+                            command: ExecCommand::Shell(_),
+                            ..
+                        }
+                    )
+                })
+            })
+    }
+}
+
+/// Whether `program` names an executable file, searching `PATH` for a bare
+/// name (with `PATHEXT` on Windows).
+pub fn executable_on_path(program: &str) -> bool {
+    if program.trim().is_empty() {
+        return false;
+    }
+    let path = Path::new(program);
+    let has_separator = program.contains('/') || program.contains('\\');
+    if path.is_absolute() || has_separator {
+        return is_executable(path);
+    }
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    let extensions = executable_extensions();
+    std::env::split_paths(&paths).any(|dir| {
+        let direct = dir.join(program);
+        is_executable(&direct)
+            || extensions
+                .iter()
+                .any(|extension| is_executable(&dir.join(format!("{program}{extension}"))))
+    })
+}
+
+#[cfg(windows)]
+fn executable_extensions() -> Vec<String> {
+    std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+        .split(';')
+        .filter(|extension| !extension.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn executable_extensions() -> Vec<String> {
+    vec![String::new()]
+}
+
+fn is_executable(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn check_gesture(gesture: &GestureConfig) -> Result<()> {
@@ -702,7 +932,12 @@ fn decode_binding(value: &Value) -> Result<Binding, DecodeIssue> {
                 "`when` conditions are not supported yet (issue #37); the binding was skipped",
             ))
         }
-        Ok(binding) => Ok(binding),
+        Ok(binding) => {
+            for action in &binding.actions {
+                action.validate().map_err(DecodeIssue::error)?;
+            }
+            Ok(binding)
+        }
         Err(e) => match unsupported_reason(value) {
             Some(message) => Err(DecodeIssue::warning(message)),
             None => Err(DecodeIssue::error(format!("{e}"))),
@@ -731,7 +966,7 @@ fn unsupported_reason(value: &Value) -> Option<String> {
     if let Some(actions) = value.get("actions").and_then(Value::as_array) {
         for action in actions {
             if let Some(kind) = action.get("type").and_then(Value::as_str)
-                && !matches!(kind, "window.next" | "window.prev" | "delay")
+                && !matches!(kind, "window.next" | "window.prev" | "delay" | "exec")
             {
                 return Some(format!(
                     "action type `{kind}` is not supported by this build; the binding was skipped"
@@ -1030,6 +1265,143 @@ mod tests {
             "actions": [{"type": "window.next"}]
         }));
         assert!(!explicit.repeats());
+    }
+
+    #[test]
+    fn exec_actions_parse_and_validate() {
+        let direct = binding(serde_json::json!({
+            "trigger": {"type": "hotkey", "keys": "Ctrl+Alt+E"},
+            "actions": [{"type": "exec", "command": ["ghostty", "--working-directory", "~"]}]
+        }));
+        assert_eq!(
+            direct.actions,
+            vec![Action::Exec {
+                command: ExecCommand::Args(vec![
+                    "ghostty".into(),
+                    "--working-directory".into(),
+                    "~".into()
+                ]),
+                shell: false,
+            }]
+        );
+        assert!(!direct.repeats());
+
+        let shell = binding(serde_json::json!({
+            "trigger": {"type": "hotkey", "keys": "Ctrl+Alt+E"},
+            "actions": [{"type": "exec", "command": "notify-send \"$TOUCHPAD_SNAP_WINDOW_TITLE\"", "shell": true}]
+        }));
+        assert!(matches!(
+            &shell.actions[0],
+            Action::Exec {
+                command: ExecCommand::Shell(_),
+                shell: true
+            }
+        ));
+        assert!(!shell.repeats());
+
+        let string_without_shell = decode_binding(&serde_json::json!({
+            "trigger": {"type": "hotkey", "keys": "Ctrl+Alt+E"},
+            "actions": [{"type": "exec", "command": "notify-send hi"}]
+        }))
+        .unwrap_err();
+        assert_eq!(string_without_shell.severity, Severity::Error);
+        assert!(string_without_shell.message.contains("shell"));
+
+        let list_with_shell = decode_binding(&serde_json::json!({
+            "trigger": {"type": "hotkey", "keys": "Ctrl+Alt+E"},
+            "actions": [{"type": "exec", "command": ["sh", "-c", "true"], "shell": true}]
+        }))
+        .unwrap_err();
+        assert_eq!(list_with_shell.severity, Severity::Error);
+        assert!(list_with_shell.message.contains("runs directly"));
+
+        for command in [serde_json::json!([]), serde_json::json!("")] {
+            let shell = command.is_string();
+            let bad = decode_binding(&serde_json::json!({
+                "trigger": {"type": "hotkey", "keys": "Ctrl+Alt+E"},
+                "actions": [{"type": "exec", "command": command, "shell": shell}]
+            }))
+            .unwrap_err();
+            assert_eq!(bad.severity, Severity::Error);
+        }
+    }
+
+    #[test]
+    fn exec_chain_fires_once_unless_repeat_is_set() {
+        let make = |repeat: Option<bool>| {
+            let mut value = serde_json::json!({
+                "trigger": {"type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "up"},
+                "actions": [{"type": "exec", "command": ["true"]}]
+            });
+            if let Some(repeat) = repeat {
+                value["repeat"] = Value::Bool(repeat);
+            }
+            binding(value)
+        };
+        assert!(!make(None).repeats());
+        assert!(make(Some(true)).repeats());
+        // A window action keeps the old default even next to exec.
+        let mixed = binding(serde_json::json!({
+            "trigger": {"type": "swipe", "fingers": 3, "modifiers": ["alt"], "direction": "up"},
+            "actions": [{"type": "exec", "command": ["true"]}, {"type": "window.next"}]
+        }));
+        assert!(mixed.repeats());
+    }
+
+    #[test]
+    fn trigger_labels_are_stable() {
+        assert_eq!(
+            Trigger::Hotkey {
+                keys: "Super+Alt+N".into()
+            }
+            .label(),
+            "hotkey-Super+Alt+N"
+        );
+        assert_eq!(
+            Trigger::Swipe {
+                fingers: 3,
+                modifiers: vec![Modifier::Alt],
+                direction: SwipeDirection::Up,
+            }
+            .label(),
+            "swipe-3-alt-up"
+        );
+        assert_eq!(
+            Trigger::Swipe {
+                fingers: 4,
+                modifiers: vec![],
+                direction: SwipeDirection::Left,
+            }
+            .label(),
+            "swipe-4-left"
+        );
+    }
+
+    #[test]
+    fn exec_commands_are_checked_for_paths() {
+        let current = std::env::current_exe().unwrap();
+        assert!(executable_on_path(&current.to_string_lossy()));
+        assert!(!executable_on_path(
+            "touchpad-snap-not-a-real-command-3f9c1e"
+        ));
+        assert!(!executable_on_path("/definitely/not/here"));
+
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"name":"editor","trigger":{"type":"hotkey","keys":"Ctrl+Alt+E"},"actions":[{"type":"exec","command":["definitely-missing-3f9c1e"]}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+S"},"actions":[{"type":"exec","command":"true","shell":true}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+N"},"actions":[{"type":"window.next"}]}
+                ]
+            }"#,
+        );
+        let missing = cfg.missing_exec_commands();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].index, 0);
+        assert_eq!(missing[0].name.as_deref(), Some("editor"));
+        assert_eq!(missing[0].severity, Severity::Warning);
+        assert!(missing[0].message.contains("definitely-missing-3f9c1e"));
+        assert!(cfg.has_shell_exec());
     }
 
     #[test]
