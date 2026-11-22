@@ -36,7 +36,7 @@ import {Phase, SwipeClaimer, modsFromState} from './lib.js';
 const BUS_NAME = 'io.github.hjosugi.TouchpadSnap';
 const OBJECT_PATH = '/io/github/hjosugi/TouchpadSnap';
 const INTERFACE = 'io.github.hjosugi.TouchpadSnap1';
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 
 const IFACE_XML = `
 <node>
@@ -60,7 +60,7 @@ const IFACE_XML = `
       <arg type="as" direction="out" name="failed"/>
     </method>
     <method name="SetSwipeClaims">
-      <arg type="a(uu)" direction="in" name="claims"/>
+      <arg type="a(uuas)" direction="in" name="claims"/>
     </method>
     <signal name="AcceleratorActivated">
       <arg type="s" name="action"/>
@@ -72,6 +72,7 @@ const IFACE_XML = `
       <arg type="u" name="phase"/>
       <arg type="u" name="fingers"/>
       <arg type="u" name="mods"/>
+      <arg type="s" name="app_id"/>
       <arg type="d" name="dx"/>
       <arg type="d" name="dy"/>
     </signal>
@@ -405,6 +406,7 @@ class TouchpadSnapService {
             return Clutter.EVENT_PROPAGATE;
 
         let mods = 0;
+        let app = [];
         if (phase === Phase.BEGIN) {
             // Leave the overview, lock screen and modal dialogs alone.
             if (Main.actionMode !== Shell.ActionMode.NORMAL) {
@@ -415,14 +417,33 @@ class TouchpadSnapService {
             // is OR-ed in as a belt-and-braces measure.
             const [, , pointerMods] = global.get_pointer();
             mods = modsFromState(event.get_state() | pointerMods, Clutter.ModifierType);
+            app = this._appIdentifiers();
         }
 
         const fingers = event.get_touchpad_gesture_finger_count();
         const [dx, dy] = event.get_gesture_motion_delta_unaccelerated();
-        const {stop, emit} = this._claimer.handle(phase, fingers, mods, dx, dy);
+        const {stop, emit} = this._claimer.handle(phase, fingers, mods, app, dx, dy);
         if (emit)
-            this._emit('Swipe', new GLib.Variant('(uuudd)', emit));
+            this._emit('Swipe', new GLib.Variant('(uuusdd)', emit));
         return stop ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
+    }
+
+    // The focused app's identifiers, as `_snapshot` reports them. The first
+    // one is sent to the daemon; all of them are matched against the claim's
+    // app filter.
+    _appIdentifiers() {
+        let window = global.display.focus_window;
+        while (window && !this._isListed(window) && window.get_transient_for())
+            window = window.get_transient_for();
+        if (!window)
+            return [];
+        const app = this._tracker.get_window_app(window);
+        const wmClass = window.get_wm_class() ?? '';
+        return [
+            app?.get_id() ?? '',
+            app?.get_name() ?? '',
+            wmClass,
+        ].filter((value, index, all) => value && all.indexOf(value) === index);
     }
 
     // -- window data -----------------------------------------------------------

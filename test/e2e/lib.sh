@@ -137,11 +137,11 @@ tps() { "$E2E_BIN" "$@"; }
 press_keys() { "$E2E_INJECT" "$@"; }
 
 # Sends the daemon a Swipe signal as the extension would after claiming a
-# touchpad swipe: swipe <phase> <fingers> <mods> <dx> <dy>
+# touchpad swipe: swipe <phase> <fingers> <mods> <app_id> <dx> <dy>
 swipe() {
     gdbus emit --session --object-path /io/github/hjosugi/TouchpadSnap \
         --signal io.github.hjosugi.TouchpadSnap1.Swipe -- \
-        "uint32 $1" "uint32 $2" "uint32 $3" "$4" "$5" >/dev/null
+        "uint32 $1" "uint32 $2" "uint32 $3" "$4" "$5" "$6" >/dev/null
 }
 
 # Call a method of the extension.

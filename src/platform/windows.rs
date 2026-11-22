@@ -808,15 +808,17 @@ fn modifiers_down(mods: Mods) -> bool {
 fn swipe_event(cfg: &Config, active: &mut Option<Claim>, sample: Sample) -> Option<Event> {
     match sample.phase {
         Phase::Begin => {
-            let claim = Claim {
-                fingers: sample.fingers,
-                mods: held_mods(),
-            };
-            if cfg.claims().contains(&claim) {
-                *active = Some(claim);
+            let claim = Claim::gesture(sample.fingers, held_mods());
+            if cfg
+                .claims()
+                .iter()
+                .any(|c| c.matches_gesture(claim.fingers, claim.mods))
+            {
+                *active = Some(claim.clone());
                 Some(Event::Swipe {
                     phase: Phase::Begin,
                     claim,
+                    app_id: None,
                     dx: 0.0,
                     dy: 0.0,
                 })
@@ -826,10 +828,11 @@ fn swipe_event(cfg: &Config, active: &mut Option<Claim>, sample: Sample) -> Opti
             }
         }
         Phase::Update => {
-            let claim = (*active)?;
+            let claim = active.clone()?;
             Some(Event::Swipe {
                 phase: Phase::Update,
                 claim,
+                app_id: None,
                 dx: sample.dx,
                 dy: sample.dy,
             })
@@ -839,6 +842,7 @@ fn swipe_event(cfg: &Config, active: &mut Option<Claim>, sample: Sample) -> Opti
             Some(Event::Swipe {
                 phase: sample.phase,
                 claim,
+                app_id: None,
                 dx: 0.0,
                 dy: 0.0,
             })

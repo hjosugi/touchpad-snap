@@ -15,9 +15,9 @@ ok "extension loaded and owns io.github.hjosugi.TouchpadSnap"
 
 version=$(gdbus call --session --dest io.github.hjosugi.TouchpadSnap --object-path /io/github/hjosugi/TouchpadSnap \
     --method org.freedesktop.DBus.Properties.Get io.github.hjosugi.TouchpadSnap1 ProtocolVersion)
-[[ $version == "(<uint32 3>,)" ]] || fail "unexpected protocol version: $version"
+[[ $version == "(<uint32 4>,)" ]] || fail "unexpected protocol version: $version"
 [[ $(list_json | jq '.windows | length') == 0 ]] || fail "expected no windows initially"
-ok "protocol 3, empty list at startup"
+ok "protocol 4, empty list at startup"
 
 e2e_open_clients
 # A window gets its size a moment after it is mapped.
@@ -79,7 +79,7 @@ ok "ShowHud"
 # Hotkeys: a free accelerator is grabbed, one the shell owns is reported back.
 grab=$(call SetAccelerators "[('<Super><Alt>n', 'hotkey:0'), ('<Alt>Tab', 'hotkey:1')]")
 [[ $grab == "(['<Alt>Tab'],)" ]] || fail "SetAccelerators: expected only <Alt>Tab to fail, got $grab"
-call SetSwipeClaims "[(uint32 3, uint32 2)]" >/dev/null || fail "SetSwipeClaims failed"
+call SetSwipeClaims "[(uint32 3, uint32 2, ['firefox'])]" >/dev/null || fail "SetSwipeClaims failed"
 ok "SetAccelerators grabs free keys and reports taken ones; SetSwipeClaims accepted"
 
 # An upgrade from window-jump, this program's old name: its config file is
@@ -123,29 +123,73 @@ ok "hotkeys: Super+Alt+N / Super+Alt+P cycle the editors through the daemon"
 # Swipes: what the extension forwards for a claimed Ctrl + three-finger swipe.
 # Left is "next"; 130 units passes the 120 threshold.
 sleep 0.5
-swipe 0 3 2 0.0 0.0
-swipe 1 3 2 -70.0 0.0
-swipe 1 3 2 -60.0 0.0
-swipe 2 3 2 0.0 0.0
+swipe 0 3 2 '' 0.0 0.0
+swipe 1 3 2 '' -70.0 0.0
+swipe 1 3 2 '' -60.0 0.0
+swipe 2 3 2 '' 0.0 0.0
 wait_for "swipe left → second editor" 15 focus_is "${editors[1]}"
 # A swipe with an unclaimed modifier set (Shift) does nothing, nor does a
 # claimed one in a direction without a binding (Alt + left).
 sleep 0.5
-swipe 0 3 1 0.0 0.0
-swipe 1 3 1 -300.0 0.0
-swipe 2 3 1 0.0 0.0
-swipe 0 3 4 0.0 0.0
-swipe 1 3 4 -300.0 0.0
-swipe 2 3 4 0.0 0.0
+swipe 0 3 1 '' 0.0 0.0
+swipe 1 3 1 '' -300.0 0.0
+swipe 2 3 1 '' 0.0 0.0
+swipe 0 3 4 '' 0.0 0.0
+swipe 1 3 4 '' -300.0 0.0
+swipe 2 3 4 '' 0.0 0.0
 sleep 0.5
 focus_is "${editors[1]}" || fail "a swipe without a binding moved focus"
 # Alt + three fingers up (negative dy) is "next" too: on to the first editor.
-swipe 0 3 4 0.0 0.0
-swipe 1 3 4 0.0 -130.0
-swipe 2 3 4 0.0 0.0
+swipe 0 3 4 '' 0.0 0.0
+swipe 1 3 4 '' 0.0 -130.0
+swipe 2 3 4 '' 0.0 0.0
 wait_for "Alt + swipe up → first editor" 15 focus_is "${editors[0]}"
 grep -q "swipe Up with 3 fingers" "$daemon_log" || fail "daemon did not log the swipe up"
 ok "swipes: Ctrl + left and Alt + up jump, unbound swipes do not"
+
+# Conditions: the same swipe means different things per app. The daemon gets
+# the app the gesture started in with the signal (as protocol 4's extension
+# sends it), so a binding for the editors does nothing in the calculator.
+editor_app=$(list_json | jq -r '.windows[] | select(.app_id | test("TextEditor")) | .app_id' | head -n1)
+calc_app=$(list_json | jq -r '.windows[] | select(.app_id | test("TextEditor") | not) | .app_id' | head -n1)
+mkdir -p "$XDG_CONFIG_HOME/touchpad-snap"
+cat > "$XDG_CONFIG_HOME/touchpad-snap/config.json" <<JSON
+{
+  "bindings": [
+    {
+      "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "left" },
+      "when": { "app": ["*TextEditor*"], "os": ["linux"], "desktop": ["gnome"] },
+      "actions": [ { "type": "window.next" } ]
+    },
+    {
+      "trigger": { "type": "swipe", "fingers": 3, "direction": "left" },
+      "when": { "app": ["*TextEditor*"] },
+      "actions": [ { "type": "window.next" } ]
+    }
+  ]
+}
+JSON
+wait_for "daemon to load the app-filtered swipes" 15 grep -q "registered 0 hotkey(s) and 2 swipe claim(s)" "$daemon_log"
+focus_on "${editors[0]}"
+swipe 0 3 2 "$editor_app" 0.0 0.0
+swipe 1 3 2 "$editor_app" -130.0 0.0
+swipe 2 3 2 "$editor_app" 0.0 0.0
+wait_for "Ctrl + swipe in the editor app → second editor" 15 focus_is "${editors[1]}"
+focus_on "$calc"
+swipe 0 3 2 "$calc_app" 0.0 0.0
+swipe 1 3 2 "$calc_app" -300.0 0.0
+swipe 2 3 2 "$calc_app" 0.0 0.0
+swipe 0 3 0 "$calc_app" 0.0 0.0
+swipe 1 3 0 "$calc_app" -300.0 0.0
+swipe 2 3 0 "$calc_app" 0.0 0.0
+sleep 0.5
+focus_is "$calc" || fail "an app-filtered swipe moved focus in another app"
+focus_on "${editors[0]}"
+swipe 0 3 0 "$editor_app" 0.0 0.0
+swipe 1 3 0 "$editor_app" -130.0 0.0
+swipe 2 3 0 "$editor_app" 0.0 0.0
+wait_for "plain swipe in the editor app → second editor" 15 focus_is "${editors[1]}"
+ok "conditions: the same swipe jumps in the editor app and does nothing in the calculator"
 
 # Editing the config while the daemon runs: the new hotkey takes over within
 # a couple of seconds, without a restart.
@@ -217,7 +261,7 @@ ok "second daemon refused"
 
 doctor=$(tps doctor 2>&1) || fail "doctor reported problems: $doctor"
 echo "$doctor"
-grep -q "protocol 3" <<<"$doctor" || fail "doctor does not see the extension"
+grep -q "protocol 4" <<<"$doctor" || fail "doctor does not see the extension"
 ok "doctor"
 
 # What window-jump, this program's old name, can leave behind: its GNOME
