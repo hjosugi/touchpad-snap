@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### Added
+
+- Window, workspace and overview actions: `window.minimize`, `maximize`,
+  `restore`, `toggle_maximize`, `fullscreen`, `close`, `tile` (halves and
+  corners), `move_to_monitor`, `move_to_workspace`, `workspace.next/prev` and
+  `overview.toggle`, on GNOME and Windows where the platform has an API.
+  `window.close` never repeats within one held gesture. (#35)
+- A local control channel in the daemon (Unix socket / Windows named pipe,
+  newline-delimited JSON): `status`, `reload`, `run` and `subscribe`, plus the
+  `touchpad-snap status`, `run` and `events` commands. `next`/`prev` go
+  through the daemon when it runs, so one place owns the MRU session; `doctor`
+  asks it too and the socket is the second-instance check. (#41)
+- Esc cancels a held session and returns to the window it started from
+  (`touchpad-snap` restores the origin and forgets the windows passed). (#43)
+- Pinch and hold triggers on GNOME, with the extension claiming
+  `(fingers, modifiers)` pairs: `{ "type": "pinch", "direction": "in" }` and
+  `{ "type": "hold", "fingers": 3 }`. (#17)
+- Mouse button triggers on Windows, including a held button + wheel
+  (`{ "type": "mouse", "button": "back", "scroll": "up" }`), swallowed only
+  while a binding matches. (#44)
+- Modifier double-tap and one-key sequence triggers:
+  `{ "type": "double_tap", "modifier": "ctrl" }` and
+  `{ "type": "sequence", "keys": "Super+Alt+W", "then": "M" }`, on GNOME and
+  Windows. (#45)
+- Packaging for AUR, winget and Scoop, generated from the release checksums;
+  optional Windows code signing in the release workflow, and a guide for
+  submitting the extension to extensions.gnome.org. (#12, #14, #15)
+
+### Changed
+
+- The crate is a Cargo workspace: the platform-neutral config, triggers,
+  conditions, window model and cycling logic live in `touchpad-snap-core`;
+  the daemon, CLI and backends re-export them, so nothing embeds a GUI
+  toolkit in the daemon. (#40)
+- GNOME extension protocol 8 adds pinch/hold claims, sequence suffixes,
+  modifier double-taps, `Cancel` and the generic window/desktop actions.
+  Older extensions keep working without the newer triggers. (#17, #35, #43,
+  #45)
+
 ## [0.6.0] - 2026-11-23
 
 ### Added

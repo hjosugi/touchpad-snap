@@ -1,7 +1,9 @@
 # touchpad-snap
 
-Switch between the windows **of the app you are in**, with a hotkey or a
-modifier + touchpad swipe — like `Cmd+`` ` on macOS or the "cycle windows of
+Bind touchpad gestures and keyboard shortcuts to actions. Switch between the
+windows **of the app you are in**, jump between apps, tile, close or maximize,
+switch workspaces or the overview, send a shortcut or run a command — with a
+hotkey, a modifier + touchpad swipe, a pinch, a hold or a mouse button. — like `Cmd+`` ` on macOS or the "cycle windows of
 the current app" action in BetterTouchTool, for **GNOME (Wayland and X11)**,
 **KDE Plasma**, **Sway, Hyprland and niri**, and **Windows**. Written in Rust;
 a small GNOME Shell extension or KWin script bridges to the compositor where
@@ -298,7 +300,10 @@ same; every name changed with it. After installing touchpad-snap as above:
 | `touchpad-snap daemon [-v]` | Serve the configured hotkeys and swipes. |
 | `touchpad-snap list [--json]` | Show windows grouped by app. |
 | `touchpad-snap activate <id>` | Focus one window by id. |
-| `touchpad-snap doctor` | Check config, backend and window list. |
+| `touchpad-snap doctor` | Check config, backend, daemon and window list. |
+| `touchpad-snap status [--json]` | Ask the running daemon for its version, backend, bindings and hotkeys it could not grab. |
+| `touchpad-snap run <action>` / `--binding <name>` | Run one action (or a binding) through the running daemon. |
+| `touchpad-snap events` | Stream the hotkeys, swipes, pinches, holds and mouse triggers the daemon sees, as JSON lines. |
 | `touchpad-snap config init\|import\|schema\|path\|check` | Write / import / print the schema of / locate / validate the config file. |
 | `touchpad-snap autostart enable\|disable [--systemd]` | Start the daemon at login (XDG entry by default, systemd user unit with `--systemd`). |
 
@@ -505,16 +510,10 @@ default; an explicit `"bindings": []` turns all bindings off.
 }
 ```
 
-- `trigger` is either a hotkey, `{ "type": "hotkey", "keys": "Super+Alt+N" }`
-  (modifiers: Super (Win), Ctrl, Alt, Shift; the key comes last), or a swipe,
-  `{ "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "left" }`
-  (`fingers` 3–5; `direction` left, right, up or down; modifiers any of
-  `ctrl`, `alt`, `shift`, `super`).
-- `actions` is a chain run in order. Today these are `window.next`,
-  `window.prev`, `app.next`, `app.prev`, `delay`
-  (`{ "type": "delay", "ms": 100 }`), `exec` (below) and `keys` (below).
-  Window-management and workspace actions are future releases; a binding that
-  uses one is skipped with a warning.
+- `trigger` is a hotkey, swipe, pinch, hold, sequence, modifier double-tap or
+  mouse button (see [Triggers and actions](#triggers-and-actions)).
+- `actions` is a chain run in order: window and app cycling, window management,
+  workspace and overview actions, `delay`, `keys` and `exec`.
 - `window.next` / `window.prev` stay within the focused app's windows;
   `app.next` / `app.prev` move to the most recently used window of the next /
   previous **app**. Apps are ordered by their most recent window, while
@@ -530,7 +529,7 @@ default; an explicit `"bindings": []` turns all bindings off.
   they are released for the shortcut and pressed again; on GNOME a virtual
   keyboard cannot release a key you hold, so the shortcut is typed when you
   let go of the modifier (and dropped if you hold it for more than 3 s).
-  Needs the GNOME extension with protocol 5 (log in again after updating).
+  Needs the GNOME extension with protocol 8 (log in again after updating).
   Other desktops report the action as unsupported.
 - `name` is optional and is only used in logs and `config check`.
   `enabled: false` keeps a binding in the file without registering it.
@@ -700,6 +699,112 @@ Tips:
   shell sees the same gesture independently — it cannot be intercepted.
 - If a hotkey cannot be grabbed (GNOME or another app already uses it), the
   daemon says so at startup; `touchpad-snap daemon -v` logs every event.
+
+## Triggers and actions
+
+Every trigger has `type`; modifiers are `ctrl`, `alt`, `shift`, `super`, and
+any trigger can carry a `when` (`app`/`not_app`, `os`, `desktop`).
+
+| Trigger | Fields | Platforms |
+|---|---|---|
+| `hotkey` | `keys`: `"Super+Alt+N"` | all |
+| `swipe` | `fingers` 3–5, `modifiers`, `direction`: left/right/up/down | GNOME, Windows touchpad, libinput |
+| `pinch` | `fingers` 2–5, `modifiers`, `direction`: `in` / `out` | GNOME |
+| `hold` | `fingers` 2–5, `modifiers` | GNOME |
+| `sequence` | `keys`: prefix hotkey, `then`: one letter or digit | GNOME, Windows |
+| `double_tap` | `modifier`: `ctrl` / `alt` / `shift` / `super` | GNOME, Windows |
+| `mouse` | `button`: left/right/middle/back/forward, `modifiers`, `scroll`: up/down/left/right | Windows |
+
+| Action | Fields | Platforms |
+|---|---|---|
+| `window.next` / `window.prev` | | all |
+| `app.next` / `app.prev` | | all |
+| `window.minimize` | | GNOME, Windows |
+| `window.maximize` / `window.restore` / `window.toggle_maximize` | | GNOME, Windows |
+| `window.fullscreen` | | GNOME (bind `keys` with F11 on Windows) |
+| `window.close` | never repeats within one gesture | GNOME, Windows |
+| `window.tile` | `to`: left/right/top/bottom/top-left/top-right/bottom-left/bottom-right | GNOME, Windows |
+| `window.move_to_monitor` | `to`: next/prev | GNOME, Windows |
+| `window.move_to_workspace` | `to`: next/prev | GNOME (no public Windows API) |
+| `workspace.next` / `workspace.prev` | | GNOME, Windows |
+| `overview.toggle` | | GNOME, Windows |
+| `keys` | `keys`: `"Ctrl+W"` typed into the focused window | all |
+| `exec` | `command` (argument list or, with `"shell": true`, a string) | all |
+| `delay` | `ms` | all |
+
+A binding that cannot work on this platform is skipped with a warning;
+`touchpad-snap config check` and the GUI list them.
+
+## Recipes
+
+Copy a binding into `bindings`. All of them work as `hotkey` triggers too.
+
+```json
+{ "name": "Next window of this app",
+  "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "left" },
+  "actions": [ { "type": "window.next" } ] }
+```
+
+```json
+{ "name": "Next app",
+  "trigger": { "type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "up" },
+  "actions": [ { "type": "app.next" } ] }
+```
+
+```json
+{ "name": "Close tab in the browser",
+  "trigger": { "type": "hotkey", "keys": "Super+Alt+W" },
+  "when": { "app": ["*firefox*", "*chrom*"] },
+  "actions": [ { "type": "keys", "keys": "Ctrl+W" } ] }
+```
+
+```json
+{ "name": "Close window",
+  "trigger": { "type": "pinch", "fingers": 3, "direction": "in", "modifiers": ["ctrl"] },
+  "actions": [ { "type": "window.close" } ] }
+```
+
+```json
+{ "name": "Volume up while the mouse wheel turns with Back held",
+  "trigger": { "type": "mouse", "button": "back", "scroll": "up" },
+  "actions": [ { "type": "keys", "keys": "XF86AudioRaiseVolume" } ] }
+```
+
+```json
+{ "name": "Tile left / right",
+  "trigger": { "type": "hotkey", "keys": "Super+Alt+Left" },
+  "actions": [ { "type": "window.tile", "to": "left" } ] }
+```
+
+```json
+{ "name": "Terminal",
+  "trigger": { "type": "hotkey", "keys": "Super+Alt+Return" },
+  "actions": [ { "type": "exec", "command": ["xterm"] } ] }
+```
+
+```json
+{ "name": "Prefix: Super+Alt+W, then M = maximize",
+  "trigger": { "type": "sequence", "keys": "Super+Alt+W", "then": "M" },
+  "actions": [ { "type": "window.maximize" } ] }
+```
+
+## Troubleshooting
+
+`touchpad-snap doctor` says what is missing, and `touchpad-snap status` asks a
+running daemon what it actually registered.
+
+- **A gesture does nothing**: the daemon must run (`touchpad-snap daemon`), the
+  config must be listed by `touchpad-snap config check`, and the extension
+  must be enabled and at the same protocol version (native GNOME, Windows) —
+  `doctor` prints it.
+- **A hotkey is taken**: GNOME Settings → Keyboard → Shortcuts, or another
+  Windows app, owns it; `status` lists the refused ones.
+- **Windows' own gestures still fire**: Settings → Bluetooth & devices →
+  Touchpad → Advanced gestures, set three/four-finger gestures to *Nothing*.
+- **A `when` binding is inactive**: `config check` prints the reason
+  (`desktop`/`os`/app pattern).
+- **GNOME after an update**: log out and back in once; GNOME discovers
+  extensions at login.
 
 ## Development
 

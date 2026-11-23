@@ -9,7 +9,7 @@ claims. Install it together with the `touchpad-snap` binary.
 machine, app pattern matching), unit-tested with Node: `npm test` at the
 repository root.
 
-## D-Bus protocol (version 5)
+## D-Bus protocol (version 8)
 
 | | |
 |---|---|
@@ -49,6 +49,18 @@ repository root.
   the calling connection. Replaces that caller's previous grabs. Returns the
   accelerators that could not be grabbed (already used by GNOME or another
   client). Active in normal mode and in the overview.
+- `SetPinchClaims(a(uu) claims)` / `SetHoldClaims(a(uu) claims)` — the
+  `(fingers, mods)` pairs pinch and hold bindings claim. *(Since version 7.)*
+- `SetSequence(s then)` — arm the one letter or digit that finishes a
+  sequence after its prefix hotkey fired; an empty string disarms it.
+  *(Since version 7.)*
+- `WindowAction(t id, s action, s arg) → b ok` — act on a window (`id` 0 is
+  the focused one): `window.minimize`, `maximize`, `restore`,
+  `toggle_maximize`, `fullscreen`, `close`, `tile`, `move_to_monitor`,
+  `move_to_workspace`. One entry point, so a new action needs no protocol
+  bump. *(Since version 6.)*
+- `ShellAction(s action) → b ok` — `workspace.next`, `workspace.prev`,
+  `overview.toggle`. *(Since version 6.)*
 - `SetSwipeClaims(a(uuas) claims)` — each claim is
   `(fingers, mods, app_patterns)`. A touchpad swipe is stopped before GNOME
   sees it and forwarded when, at its first event, the finger count and held
@@ -66,6 +78,16 @@ repository root.
   none of the modifiers held at that moment is down any more (polled every
   25 ms while they are). Presses of hotkeys in between are one session, as
   with Alt+Tab. *(Since version 3.)*
+- `Pinch(u phase, u fingers, u mods, d scale)` — a claimed pinch; `scale` is
+  absolute since Begin (1.0 at the start), below 1 is in, above 1 out.
+  *(Since version 7.)*
+- `Hold(u phase, u fingers, u mods)` — a claimed hold, sent at Begin once
+  the fingers have rested. *(Since version 7.)*
+- `Sequence` — the armed sequence suffix was pressed. *(Since version 7.)*
+- `DoubleTap(s modifier)` — a modifier was tapped twice within 400 ms.
+  *(Since version 7.)*
+- `Cancel` — Esc during a held session; the daemon returns to its origin.
+  *(Since version 7.)*
 - `Swipe(u phase, u fingers, u mods, s app_id, d dx, d dy)` — `phase`:
   0 begin, 1 update, 2 end, 3 cancel; `app_id`: the app that was focused when
   the swipe started (matched against the claim's filter); `dx`/`dy`:

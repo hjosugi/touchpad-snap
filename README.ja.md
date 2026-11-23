@@ -563,6 +563,75 @@ daemon のログに出して、それまでの設定のまま動き続けます�
 - Windows では先に標準の 3 / 4 本指ジェスチャーをオフにしてください。Precision Touchpad は同じ指の動きを生の HID 入力として報告しますが、Windows のシェルも独立してジェスチャーを処理するため、横取りはできません。
 - ホットキーが登録できない場合（GNOME や他のアプリが使用中）は daemon の起動時に表示されます。`touchpad-snap daemon -v` で全イベントをログに出せます。
 
+## トリガーとアクション
+
+トリガーは `hotkey`、`swipe`、`pinch`、`hold`、`sequence`、`double_tap`、
+`mouse`。修飾キーは `ctrl`・`alt`・`shift`・`super` で、どのトリガーにも
+`when`（`app`/`not_app`、`os`、`desktop`）を付けられます。詳しい表は
+[README.md の Triggers and actions](README.md#triggers-and-actions) を参照してください。
+
+| アクション | 内容 |
+|---|---|
+| `window.next` / `window.prev` | 同じアプリの次 / 前のウィンドウ |
+| `app.next` / `app.prev` | 次 / 前のアプリの最近使ったウィンドウ |
+| `window.minimize` / `maximize` / `restore` / `toggle_maximize` / `fullscreen` / `close` | ウィンドウ操作（`close` は 1 ジェスチャーで 1 回だけ） |
+| `window.tile` | `to`: left/right/top/bottom/四隅 |
+| `window.move_to_monitor` / `move_to_workspace` | `to`: next/prev |
+| `workspace.next` / `workspace.prev` / `overview.toggle` | デスクトップ操作 |
+| `keys` | フォーカス中のウィンドウへショートカットを送る |
+| `exec` | コマンドを実行する（引数リスト、`"shell": true` なら文字列） |
+| `delay` | `ms` 待つ |
+
+このプラットフォームで動かないバインディングは警告付きで読み飛ばされ、
+`touchpad-snap config check` と GUI が一覧します。
+
+## レシピ
+
+```json
+{ "name": "ブラウザのタブを閉じる",
+  "trigger": { "type": "hotkey", "keys": "Super+Alt+W" },
+  "when": { "app": ["*firefox*", "*chrom*"] },
+  "actions": [ { "type": "keys", "keys": "Ctrl+W" } ] }
+```
+
+```json
+{ "name": "ウィンドウを閉じる",
+  "trigger": { "type": "pinch", "fingers": 3, "direction": "in", "modifiers": ["ctrl"] },
+  "actions": [ { "type": "window.close" } ] }
+```
+
+```json
+{ "name": "左半分にタイル",
+  "trigger": { "type": "hotkey", "keys": "Super+Alt+Left" },
+  "actions": [ { "type": "window.tile", "to": "left" } ] }
+```
+
+```json
+{ "name": "ターミナル",
+  "trigger": { "type": "hotkey", "keys": "Super+Alt+Return" },
+  "actions": [ { "type": "exec", "command": ["xterm"] } ] }
+```
+
+```json
+{ "name": "Super+Alt+W の後に M で最大化",
+  "trigger": { "type": "sequence", "keys": "Super+Alt+W", "then": "M" },
+  "actions": [ { "type": "window.maximize" } ] }
+```
+
+## トラブルシューティング
+
+`touchpad-snap doctor` が足りないものを、`touchpad-snap status` が動作中の
+daemon の登録内容（掴めなかったホットキーを含む）を表示します。
+
+- **ジェスチャーが効かない**: daemon が動いているか、`config check` に
+  バインディングが出るか、拡張が有効で同じプロトコル版か（GNOME / Windows）。
+- **ホットキーが取られている**: GNOME の設定 → キーボード → ショートカット、
+  または他の Windows アプリが使用中。`status` に拒否されたキーが出ます。
+- **Windows 標準のジェスチャーが動く**: 設定 → Bluetooth とデバイス →
+  タッチパッド → 詳細ジェスチャーで 3/4 本指を「なし」に。
+- **GNOME 更新後**: 一度ログアウトしてログインし直す（ログイン時に拡張を
+  読み込みます）。
+
 ## 開発
 
 ```sh
