@@ -30,6 +30,7 @@ import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as ShellConfig from 'resource:///org/gnome/shell/misc/config.js';
 
 import {
     KeyQueue, NEUTRAL_KEYSYM, Phase, SwipeClaimer, keySequence, modsFromState,
@@ -40,6 +41,9 @@ const BUS_NAME = 'io.github.hjosugi.TouchpadSnap';
 const OBJECT_PATH = '/io/github/hjosugi/TouchpadSnap';
 const INTERFACE = 'io.github.hjosugi.TouchpadSnap1';
 const PROTOCOL_VERSION = 8;
+// Meta.Window.maximize()/unmaximize() lost their flags argument in GNOME 49.
+const SHELL_MAJOR = Number.parseInt(ShellConfig.PACKAGE_VERSION.split('.')[0], 10);
+const MAXIMIZE_TAKES_FLAGS = SHELL_MAJOR < 49;
 
 const IFACE_XML = `
 <node>
@@ -238,6 +242,20 @@ class Hud {
     }
 }
 
+function maximizeWindow(window) {
+    if (MAXIMIZE_TAKES_FLAGS)
+        window.maximize(Meta.MaximizeFlags.BOTH);
+    else
+        window.maximize();
+}
+
+function unmaximizeWindow(window) {
+    if (MAXIMIZE_TAKES_FLAGS)
+        window.unmaximize(Meta.MaximizeFlags.BOTH);
+    else
+        window.unmaximize();
+}
+
 class TouchpadSnapService {
     constructor() {
         this._tracker = Shell.WindowTracker.get_default();
@@ -394,20 +412,20 @@ class TouchpadSnapService {
             window.minimize();
             return true;
         case 'window.maximize':
-            window.maximize();
+            maximizeWindow(window);
             return true;
         case 'window.restore':
             if (window.minimized)
                 window.unminimize();
-            window.unmaximize();
+            unmaximizeWindow(window);
             if (window.is_fullscreen())
                 window.unmake_fullscreen();
             return true;
         case 'window.toggle_maximize':
             if (window.maximized_horizontally && window.maximized_vertically)
-                window.unmaximize();
+                unmaximizeWindow(window);
             else
-                window.maximize();
+                maximizeWindow(window);
             return true;
         case 'window.fullscreen':
             if (window.is_fullscreen())
@@ -487,7 +505,7 @@ class TouchpadSnapService {
         default:
             return false;
         }
-        window.unmaximize();
+        unmaximizeWindow(window);
         window.move_resize_frame(true, x, y, width, height);
         return true;
     }
