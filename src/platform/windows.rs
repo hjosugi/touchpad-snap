@@ -1023,6 +1023,13 @@ fn register_hotkeys(hotkeys: &[Hotkey], previous: usize) -> (usize, Vec<HotkeySt
         });
     }
     let ok = windows_tray::registered_count(&statuses);
+    crate::control::set_hotkey_failures(
+        statuses
+            .iter()
+            .filter(|status| !status.registered)
+            .map(|status| status.keys.clone())
+            .collect(),
+    );
     eprintln!("touchpad-snap: registered {ok} hotkey(s)");
     (hotkeys.len(), statuses)
 }

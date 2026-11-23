@@ -120,6 +120,7 @@ impl Gnome {
                 .proxy
                 .call("SetAccelerators", &(bindings,))
                 .map_err(|e| self.explain(e))?;
+            crate::control::set_hotkey_failures(failed.clone());
             for accel in &failed {
                 eprintln!(
                     "touchpad-snap: could not grab {accel}: GNOME or another app already uses it (check Settings → Keyboard → Shortcuts)"
@@ -162,6 +163,10 @@ impl Gnome {
 }
 
 impl Backend for Gnome {
+    fn protocol(&self) -> Option<u32> {
+        self.protocol_version().ok()
+    }
+
     fn snapshot(&self) -> Result<Snapshot> {
         let json: String = self.proxy.call("List", &()).map_err(|e| self.explain(e))?;
         serde_json::from_str(&json).context("parsing the window list from the GNOME extension")

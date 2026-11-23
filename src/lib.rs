@@ -12,6 +12,7 @@ pub use touchpad_snap_core::{config, cycle, gesture, hotkey, legacy, model, sess
 
 pub mod autostart;
 pub mod cli;
+pub mod control;
 pub mod daemon;
 pub mod exec;
 pub mod platform;

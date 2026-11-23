@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::Result;
 
 use crate::config::{self, Action, Binding, Claim, Config, Source, Trigger};
+use crate::control;
 use crate::cycle::{self, Pick, Session, Step};
 use crate::exec::{self, ActionContext};
 use crate::gesture::{Phase, SwipeRecognizer};
@@ -15,7 +16,7 @@ use crate::hotkey::{Hotkey, Mods};
 use crate::model::Snapshot;
 use crate::platform::{self, Backend, Event};
 use crate::session;
-use crate::when::{AppContext, PlatformDescription, TriggerContext};
+use crate::when::{AppContext, TriggerContext};
 
 /// Which list a jump steps through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,7 +202,7 @@ fn capture_context(backend: &dyn Backend, app_id: Option<&str>) -> TriggerContex
         .ok()
         .and_then(|snapshot| snapshot.focused().map(AppContext::from_window))
         .map(|app| app.with_app_id(app_id));
-    TriggerContext::new(PlatformDescription::current(), app)
+    TriggerContext::new(crate::platform::current_platform(), app)
 }
 
 /// Turns events into jumps. Kept apart from the platform loop so it can be
@@ -261,7 +262,12 @@ impl Handler {
     pub fn handle(&mut self, backend: &dyn Backend, event: Event) -> Option<Config> {
         match event {
             Event::Tick => {
-                let cfg = self.watch.as_mut()?.poll()?;
+                let force = control::take_reload();
+                let cfg = if force {
+                    self.watch.as_mut()?.reload()?
+                } else {
+                    self.watch.as_mut()?.poll()?
+                };
                 return self.adopt(cfg);
             }
             Event::Reload => {
@@ -304,6 +310,12 @@ impl Handler {
                         }
                         Trigger::Swipe { .. } => Mods::default(),
                     };
+                    control::publish(serde_json::json!({
+                        "event": "hotkey",
+                        "binding": binding.name,
+                        "trigger": binding.trigger.label(),
+                        "actions": action_label(binding),
+                    }));
                     self.run_binding(backend, binding, session, snapshot.as_ref(), held);
                 }
             }
@@ -331,7 +343,7 @@ impl Handler {
                 let claim = self.claim.clone()?;
                 if matches!(phase, Phase::Begin | Phase::Update) {
                     let context = self.context.clone().unwrap_or_else(|| TriggerContext {
-                        platform: PlatformDescription::current(),
+                        platform: crate::platform::current_platform(),
                         app: None,
                     });
                     for direction in self.recognizer.update(dx, dy) {
@@ -344,6 +356,16 @@ impl Handler {
                         if !binding.repeats() && !self.fired.insert(index) {
                             continue;
                         }
+                        control::publish(serde_json::json!({
+                            "event": "swipe",
+                            "phase": format!("{phase:?}").to_lowercase(),
+                            "fingers": claim.fingers,
+                            "mods": claim.mods.0,
+                            "direction": format!("{direction:?}").to_lowercase(),
+                            "binding": binding.name,
+                            "trigger": binding.trigger.label(),
+                            "actions": action_label(binding),
+                        }));
                         if self.verbose {
                             eprintln!(
                                 "touchpad-snap: swipe {direction:?} with {} fingers → {}",
@@ -395,6 +417,7 @@ impl Handler {
         self.context = None;
         self.fired.clear();
         self.gesture_snapshot = None;
+        control::config_changed(&cfg);
         self.cfg = cfg.clone();
         Some(cfg)
     }
@@ -430,79 +453,116 @@ impl Handler {
         snapshot: Option<&Snapshot>,
         held: Mods,
     ) {
-        let mut session = session;
-        for action in &binding.actions {
-            match action {
-                Action::Next => {
-                    self.run(backend, Step::Next, session);
-                    session = Session::Held;
-                }
-                Action::Prev => {
-                    self.run(backend, Step::Prev, session);
-                    session = Session::Held;
-                }
-                Action::AppNext => {
-                    self.run_apps(backend, Step::Next, session);
-                    session = Session::Held;
-                }
-                Action::AppPrev => {
-                    self.run_apps(backend, Step::Prev, session);
-                    session = Session::Held;
-                }
-                Action::Delay { ms } => {
-                    // Deliberately blocks the daemon thread for now; a delay
-                    // is short and this keeps the action chain in order.
-                    std::thread::sleep(Duration::from_millis(*ms));
-                }
-                Action::Exec { command, shell } => {
-                    let context = ActionContext::at(&binding.trigger, snapshot);
-                    exec::spawn(command, *shell, &context, self.verbose);
-                }
-                Action::Keys { keys } => match Hotkey::parse(keys) {
-                    Ok(hotkey) => {
-                        if let Err(e) = backend.send_keys(hotkey, held) {
-                            eprintln!("touchpad-snap: keys {keys}: {e:#}");
-                        }
-                    }
-                    // Checked when the config is loaded; only a hand-built
-                    // Config gets here.
-                    Err(e) => eprintln!("touchpad-snap: keys: {e}"),
-                },
-            }
-        }
-    }
-
-    fn run(&self, backend: &dyn Backend, step: Step, session: Session) {
-        self.log_pick(jump(backend, &self.cfg, step, session, &self.state_path));
-    }
-
-    fn run_apps(&self, backend: &dyn Backend, step: Step, session: Session) {
-        self.log_pick(jump_app(
+        run_actions(
             backend,
             &self.cfg,
-            step,
+            &binding.actions,
+            &binding.trigger,
             session,
+            snapshot,
+            held,
             &self.state_path,
-        ));
+            self.verbose,
+        );
     }
+}
 
-    fn log_pick(&self, result: Result<Pick>) {
-        match result {
-            Ok(pick) => {
-                if self.verbose {
-                    eprintln!("touchpad-snap: {pick:?}");
-                }
+/// Runs an action chain with the session and context captured for a trigger.
+///
+/// Shared by the event loop and the control channel's `run` request. The
+/// session state file is the only state; a caller running an action directly
+/// starts with [`Session::ByTime`] like the CLI.
+#[allow(clippy::too_many_arguments)]
+pub fn run_actions(
+    backend: &dyn Backend,
+    cfg: &Config,
+    actions: &[Action],
+    trigger: &Trigger,
+    session: Session,
+    snapshot: Option<&Snapshot>,
+    held: Mods,
+    state_path: &Path,
+    verbose: bool,
+) {
+    let mut session = session;
+    for action in actions {
+        match action {
+            Action::Next => {
+                let result = jump(backend, cfg, Step::Next, session, state_path);
+                log_pick(&result, verbose);
+                session = Session::Held;
             }
-            Err(e) => eprintln!("touchpad-snap: {e:#}"),
+            Action::Prev => {
+                let result = jump(backend, cfg, Step::Prev, session, state_path);
+                log_pick(&result, verbose);
+                session = Session::Held;
+            }
+            Action::AppNext => {
+                let result = jump_app(backend, cfg, Step::Next, session, state_path);
+                log_pick(&result, verbose);
+                session = Session::Held;
+            }
+            Action::AppPrev => {
+                let result = jump_app(backend, cfg, Step::Prev, session, state_path);
+                log_pick(&result, verbose);
+                session = Session::Held;
+            }
+            Action::Delay { ms } => {
+                // Deliberately blocks the daemon thread for now; a delay is
+                // short and this keeps the action chain in order.
+                std::thread::sleep(Duration::from_millis(*ms));
+            }
+            Action::Exec { command, shell } => {
+                let context = ActionContext::at(trigger, snapshot);
+                exec::spawn(command, *shell, &context, verbose);
+            }
+            Action::Keys { keys } => match Hotkey::parse(keys) {
+                Ok(hotkey) => {
+                    if let Err(e) = backend.send_keys(hotkey, held) {
+                        eprintln!("touchpad-snap: keys {keys}: {e:#}");
+                    }
+                }
+                // Checked when the config is loaded; only a hand-built
+                // Config gets here.
+                Err(e) => eprintln!("touchpad-snap: keys: {e}"),
+            },
         }
+    }
+}
+
+fn log_pick(result: &Result<Pick>, verbose: bool) {
+    match result {
+        Ok(pick) => {
+            if verbose {
+                eprintln!("touchpad-snap: {pick:?}");
+            }
+        }
+        Err(e) => eprintln!("touchpad-snap: {e:#}"),
     }
 }
 
 pub fn run(cfg: Config, config_path: PathBuf, verbose: bool) -> Result<()> {
     log_report(&cfg);
     let hotkeys = cfg.hotkeys();
-    let mut handler = Handler::new(cfg.clone(), session::default_path(), verbose)
-        .watch_config(config_path.clone());
+    let state_path = session::default_path();
+
+    let started = std::time::Instant::now();
+    let (backend_name, protocol) = match platform::connect() {
+        Ok(backend) => (backend.describe(), backend.protocol()),
+        Err(e) => (format!("unavailable: {e:#}"), None),
+    };
+    let status = control::Status::build(
+        &cfg,
+        &platform::current_platform(),
+        backend_name,
+        protocol,
+        started,
+        Vec::new(),
+    );
+    control::start(status, config_path.clone(), state_path.clone(), verbose)?;
+
+    let mut handler =
+        Handler::new(cfg.clone(), state_path, verbose).watch_config(config_path.clone());
     platform::run_daemon(
         &cfg,
         &hotkeys,

@@ -74,6 +74,10 @@ pub trait Backend {
     }
     /// One line for `touchpad-snap doctor`.
     fn describe(&self) -> String;
+    /// The desktop bridge's protocol version, when it has one.
+    fn protocol(&self) -> Option<u32> {
+        None
+    }
     /// What an installation under the old name (see [`crate::legacy`]) still
     /// has running here and how to get rid of it, for `touchpad-snap doctor`.
     fn leftovers(&self) -> Vec<String> {

@@ -120,6 +120,27 @@ grep -q "hotkey Super+Alt+N → Next (new press)" "$daemon_log" || fail "daemon 
 wait_for "the release of Super+Alt to be reported" 15 grep -q "hotkey modifiers released" "$daemon_log"
 ok "hotkeys: Super+Alt+N / Super+Alt+P cycle the editors through the daemon"
 
+# The control channel: status lists the running daemon and its bindings, run
+# executes one action through it, events streams what the daemon sees.
+tps status --json | jq -e '.pid > 0 and (.bindings | length) >= 2 and (.hotkeys_failed | length) == 0' >/dev/null \
+    || fail "status did not describe the daemon"
+tps status | grep -q "binding" || fail "status has no bindings"
+focus_on "${editors[0]}"
+tps run window.next || fail "run window.next failed"
+wait_for "run window.next → second editor" 15 focus_is "${editors[1]}"
+ok "control: status and run"
+
+events_log="$E2E_ROOT/events.log"
+tps events >"$events_log" 2>&1 &
+events_pid=$!
+e2e_pids+=($events_pid)
+sleep 0.5
+press_keys Super_L Alt_L n || fail "injecting Super+Alt+N failed"
+wait_for "the events stream to show the hotkey" 15 grep -q '"event":"hotkey"' "$events_log"
+grep -q 'Super+Alt+N' "$events_log" || fail "the hotkey event has no trigger: $(cat "$events_log")"
+kill "$events_pid" 2>/dev/null || true
+ok "control: events streams a hotkey"
+
 # Swipes: what the extension forwards for a claimed Ctrl + three-finger swipe.
 # Left is "next"; 130 units passes the 120 threshold.
 sleep 0.5

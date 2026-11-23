@@ -7,9 +7,9 @@ use std::process::ExitCode;
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 
-use crate::config::{self, Config, Source};
+use crate::config::{self, Action, Config, Source};
 use crate::cycle::{self, Order, Pick, Session, Step, WorkspaceScope};
-use crate::{autostart, daemon, legacy, platform, session, systemd};
+use crate::{autostart, control, daemon, legacy, platform, session, systemd};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -69,6 +69,23 @@ enum Command {
     },
     /// Check that everything is wired up
     Doctor,
+    /// Ask a running daemon for its version, backend, bindings and events
+    Status {
+        /// Print the raw status as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Ask a running daemon to run a binding by name or one action
+    Run {
+        /// Name of the binding (its `name` in config.json)
+        #[arg(long, conflicts_with = "action")]
+        binding: Option<String>,
+        /// An action: window.next, window.prev, app.next, app.prev, or a
+        /// JSON object such as '{"type":"keys","keys":"Ctrl+W"}'
+        action: Option<String>,
+    },
+    /// Stream the triggers and swipes a running daemon sees, as JSON lines
+    Events,
 }
 
 #[derive(clap::Args, Debug)]
@@ -266,7 +283,82 @@ fn dispatch(cli: Cli) -> Result<()> {
             Ok(())
         }
         Command::Doctor => doctor(&config_path),
+        Command::Status { json } => status(json),
+        Command::Run { binding, action } => {
+            let action = match action {
+                Some(text) => Some(parse_action(&text)?),
+                None => None,
+            };
+            if binding.is_none() && action.is_none() {
+                bail!("give a binding with --binding or an action");
+            }
+            let response = control::request(&control::Request::Run { binding, action })?;
+            if let Some(message) = response.message {
+                println!("{message}");
+            }
+            Ok(())
+        }
+        Command::Events => control::events(|line| {
+            println!("{line}");
+            true
+        }),
     }
+}
+
+fn parse_action(text: &str) -> Result<Action> {
+    match text {
+        "window.next" | "next" => Ok(Action::Next),
+        "window.prev" | "prev" => Ok(Action::Prev),
+        "app.next" | "next-app" => Ok(Action::AppNext),
+        "app.prev" | "prev-app" => Ok(Action::AppPrev),
+        _ => serde_json::from_str(text)
+            .map_err(|e| anyhow::anyhow!("`{text}` is not an action or action JSON: {e}")),
+    }
+}
+
+fn status(json: bool) -> Result<()> {
+    let response = control::request(&control::Request::Status)?;
+    let status = response
+        .status
+        .ok_or_else(|| anyhow::anyhow!("the daemon sent no status"))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&status)?);
+        return Ok(());
+    }
+    println!(
+        "touchpad-snap {} pid {} backend {} (up {} s)",
+        status.version,
+        status.pid,
+        status.backend,
+        status.uptime_ms / 1000
+    );
+    if let Some(protocol) = status.protocol {
+        println!("protocol  {protocol}");
+    }
+    for failed in &status.hotkeys_failed {
+        println!("hotkey    {failed} (taken by another app?)");
+    }
+    for binding in &status.bindings {
+        let name = binding
+            .name
+            .as_deref()
+            .map(|n| format!(" ({n})"))
+            .unwrap_or_default();
+        let state = if binding.active { "active" } else { "inactive" };
+        println!(
+            "binding   [{}]{} {} → {} [{state}{}]",
+            binding.index,
+            name,
+            binding.trigger,
+            binding.actions.join(" + "),
+            binding
+                .reason
+                .as_deref()
+                .map(|r| format!(": {r}"))
+                .unwrap_or_default()
+        );
+    }
+    Ok(())
 }
 
 /// Which list a CLI jump steps through.
@@ -277,6 +369,31 @@ enum Mode {
 }
 
 fn jump(config_path: &std::path::Path, step: Step, args: JumpArgs, mode: Mode) -> Result<()> {
+    // One place owns the MRU session when the daemon runs; fall back to the
+    // state file when it does not.
+    let control_step = match (mode, step) {
+        (Mode::Windows, Step::Next) => "next",
+        (Mode::Windows, Step::Prev) => "prev",
+        (Mode::Apps, Step::Next) => "next-app",
+        (Mode::Apps, Step::Prev) => "prev-app",
+    };
+    if let Some(response) = control::try_request(&control::Request::Jump {
+        step: control_step.into(),
+        order: args.order,
+        workspace: args.workspace,
+    }) {
+        let response = response?;
+        if !response.ok {
+            bail!(
+                "{}",
+                response
+                    .error
+                    .unwrap_or_else(|| "the daemon refused".into())
+            );
+        }
+        return Ok(());
+    }
+
     let mut cfg = config::load(config_path)?;
     if let Some(order) = args.order {
         cfg.cycle.order = order;
@@ -428,6 +545,32 @@ fn doctor(config_path: &std::path::Path) -> Result<()> {
         println!("config   {}", problem.describe());
     }
     problems += cfg.report().errors().count();
+
+    let daemon = match control::try_request(&control::Request::Status) {
+        Some(Ok(response)) if response.ok => response.status.map(|s| {
+            format!(
+                "running (pid {}, {}, up {} s, {} binding(s))",
+                s.pid,
+                s.backend,
+                s.uptime_ms / 1000,
+                s.bindings.len()
+            )
+        }),
+        Some(Ok(response)) => Some(format!(
+            "ERROR {}",
+            response.error.unwrap_or_else(|| "refused".into())
+        )),
+        Some(Err(e)) => Some(format!("ERROR {e:#}")),
+        None => None,
+    };
+    match daemon {
+        Some(line) if line.starts_with("ERROR") => {
+            problems += 1;
+            println!("daemon   {line}");
+        }
+        Some(line) => println!("daemon   {line}"),
+        None => println!("daemon   not running (hotkeys and swipes are off)"),
+    }
 
     match platform::connect() {
         Err(e) => {

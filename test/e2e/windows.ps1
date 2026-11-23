@@ -166,6 +166,29 @@ try {
     WaitFor 'overlay hidden again' { -not [Win]::HudVisible() } 5
     Ok 'daemon: Ctrl+Alt+N jumps, the overlay shows and hides, and is not listed'
 
+    # The control channel: status, run and events over the named pipe.
+    $status = (& $Bin status --json | Out-String | ConvertFrom-Json)
+    if ($status.pid -le 0 -or @($status.bindings).Count -lt 1 -or @($status.hotkeys_failed).Count -ne 0) {
+        Fail 'status did not describe the daemon'
+    }
+    & $Bin activate $n[0].id
+    WaitFor 'first Notepad focused before run' { (Focused) -eq $n[0].id }
+    & $Bin run window.next
+    if ($LASTEXITCODE -ne 0) { Fail 'run window.next failed' }
+    WaitFor 'run window.next -> second Notepad' { (Focused) -eq $n[1].id }
+    Ok 'control: status and run'
+
+    $eventsLog = Join-Path $work 'events.log'
+    $events = Start-Process -FilePath $Bin -ArgumentList @('--config', $cfg, 'events') `
+        -RedirectStandardOutput $eventsLog -RedirectStandardError (Join-Path $work 'events.err') -PassThru
+    $procs += $events
+    Start-Sleep -Milliseconds 700
+    [void][Win]::Chord(0x11, 0x12, 0x4E)
+    WaitFor 'events stream to show the hotkey' {
+        (Test-Path $eventsLog) -and (Select-String -Path $eventsLog -Pattern '"event":"hotkey"' -Quiet)
+    }
+    Ok 'control: events streams a hotkey'
+
     # Alt+Tab-style sessions with order = "mru": presses while Ctrl+Alt stay
     # down dig further back however slowly they come; releasing commits, and
     # the windows passed on the way do not count as used.
