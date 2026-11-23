@@ -48,6 +48,13 @@ tasks:
         echo "  2. gnome-extensions enable {{.UUID}}"
         echo "  3. touchpad-snap doctor && touchpad-snap autostart enable && touchpad-snap daemon &"
 
+  extension-zip:
+    desc: Build the zip uploaded to extensions.gnome.org
+    cmds:
+      - mkdir -p dist
+      - rm -f 'dist/{{.UUID}}.shell-extension.zip'
+      - cd 'gnome-extension/{{.UUID}}' && zip -r '../../dist/{{.UUID}}.shell-extension.zip' .
+
   uninstall:
     desc: Remove what `task install` put in your home directory
     cmds:

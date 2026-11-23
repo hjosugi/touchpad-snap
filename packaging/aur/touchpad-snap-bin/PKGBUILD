@@ -1,0 +1,38 @@
+# Maintainer: Avishai Kofun <https://github.com/hjosugi>
+pkgname=touchpad-snap-bin
+pkgver=0.6.0
+pkgrel=1
+pkgdesc="Bind touchpad gestures and keyboard shortcuts to window and desktop actions (prebuilt)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/hjosugi/touchpad-snap"
+license=('MIT')
+makedepends=('unzip')
+depends=()
+provides=('touchpad-snap')
+conflicts=('touchpad-snap' 'window-jump-bin')
+options=('!strip')
+source_x86_64=("${url}/releases/download/v${pkgver}/touchpad-snap-v${pkgver}-x86_64-unknown-linux-musl.tar.gz"
+               "${url}/releases/download/v${pkgver}/touchpad-snap@hjosugi.github.io.shell-extension.zip")
+source_aarch64=("${url}/releases/download/v${pkgver}/touchpad-snap-v${pkgver}-aarch64-unknown-linux-musl.tar.gz"
+                "${url}/releases/download/v${pkgver}/touchpad-snap@hjosugi.github.io.shell-extension.zip")
+sha256sums_x86_64=('d079f89d32e8eefa1bbb4233da3c7e15999393cc63417d25d8064c64bb4ca413'
+                   '0095afc97e88fbe7fce39a07448e7a6ce095d02582c3f995614267d9b1a438e3')
+sha256sums_aarch64=('44168095571ae2729f3276857cd4a7170e52eec3d27a20ff068d429ec5444953'
+                    '0095afc97e88fbe7fce39a07448e7a6ce095d02582c3f995614267d9b1a438e3')
+noextract=("touchpad-snap-v${pkgver}-${CARCH}-unknown-linux-musl.tar.gz")
+
+package() {
+  tar -xzf "touchpad-snap-v${pkgver}-${CARCH}-unknown-linux-musl.tar.gz" -C "$srcdir"
+  local dir="$srcdir/touchpad-snap-v${pkgver}-${CARCH}-unknown-linux-musl"
+
+  install -Dm755 "$dir/touchpad-snap" "$pkgdir/usr/bin/touchpad-snap"
+  install -Dm644 "$dir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$dir/touchpad-snap.service" \
+    "$pkgdir/usr/lib/systemd/user/touchpad-snap.service"
+
+  install -d "$pkgdir/usr/share/gnome-shell/extensions/touchpad-snap@hjosugi.github.io"
+  install -d "$srcdir/extension"
+  unzip -q "touchpad-snap@hjosugi.github.io.shell-extension.zip" -d "$srcdir/extension"
+  cp -r "$srcdir/extension/." \
+    "$pkgdir/usr/share/gnome-shell/extensions/touchpad-snap@hjosugi.github.io/"
+}

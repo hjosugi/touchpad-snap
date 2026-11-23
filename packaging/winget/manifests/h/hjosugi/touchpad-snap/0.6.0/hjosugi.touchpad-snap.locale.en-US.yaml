@@ -1,0 +1,24 @@
+PackageIdentifier: hjosugi.touchpad-snap
+PackageVersion: 0.6.0
+PackageLocale: en-US
+Publisher: hjosugi
+PublisherUrl: https://github.com/hjosugi
+PublisherSupportUrl: https://github.com/hjosugi/touchpad-snap/issues
+Author: hjosugi
+PackageName: touchpad-snap
+PackageUrl: https://github.com/hjosugi/touchpad-snap
+License: MIT
+LicenseUrl: https://github.com/hjosugi/touchpad-snap/blob/main/LICENSE
+Copyright: Copyright (c) hjosugi
+ShortDescription: Bind touchpad gestures and keyboard shortcuts to window and desktop actions
+Description: A small daemon that binds modifier + touchpad swipes and global hotkeys to window, app, workspace and desktop actions, plus keyboard shortcuts and commands. Defined in one JSON file. On Windows it runs in the notification area.
+Moniker: touchpad-snap
+Tags:
+  - gesture
+  - hotkey
+  - window-management
+  - touchpad
+  - productivity
+ReleaseNotesUrl: https://github.com/hjosugi/touchpad-snap/releases/tag/v0.6.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

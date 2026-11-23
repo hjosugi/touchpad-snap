@@ -44,6 +44,24 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: cargo build --release --locked --target ${{ matrix.target }}
 
+      - name: Sign (Windows)
+        if: runner.os == 'Windows' && vars.WINDOWS_SIGNING == 'true'
+        shell: pwsh
+        env:
+          CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "touchpad-snap.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_PFX_BASE64))
+          foreach ($exe in @("touchpad-snap.exe", "touchpad-snapw.exe")) {
+            $path = "target/${{ matrix.target }}/release/$exe"
+            & signtool sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $path
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $exe" }
+            $sig = Get-AuthenticodeSignature $path
+            if ($sig.Status -ne "Valid") { throw "signature for $exe is $($sig.Status)" }
+          }
+          Remove-Item $pfx
+
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -118,3 +136,24 @@ jobs:
           else
             gh release create "$TAG" dist/* --title "touchpad-snap $TAG" --notes-file notes.md --verify-tag
           fi
+
+  packaging:
+    name: Package manifests (AUR, winget, Scoop)
+    needs: [publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - name: Update the manifests from the published checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/update-packaging.py "${TAG#v}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packaging-${{ env.TAG }}
+          path: |
+            packaging/aur/**
+            packaging/winget/**
+            packaging/scoop/**
+          if-no-files-found: error
