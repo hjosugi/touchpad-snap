@@ -63,11 +63,17 @@ struct App {
     saved: Config,
     capture_hotkey: bool,
     available_apps: Vec<String>,
+    writable: bool,
 }
 
 impl App {
     fn new(path: PathBuf) -> Self {
         let (cfg, problems) = load(&path);
+        let load_error = problems
+            .first()
+            .filter(|p| p.contains("could not load"))
+            .cloned();
+        let legacy = problems.iter().any(|p| p.contains("legacy config.toml"));
         let mut app = Self {
             path,
             cfg: cfg.clone(),
@@ -91,6 +97,7 @@ impl App {
             saved: cfg.clone(),
             capture_hotkey: false,
             available_apps: Vec::new(),
+            writable: load_error.is_none() && !legacy,
         };
         app.sync_when();
         app
@@ -288,6 +295,9 @@ impl App {
 
     fn reload(&mut self) {
         let (cfg, problems) = load(&self.path);
+        self.writable = !problems
+            .first()
+            .is_some_and(|p| p.contains("could not load"));
         self.cfg = cfg.clone();
         self.saved = cfg;
         self.problems = problems;
@@ -298,6 +308,15 @@ impl App {
     }
 
     fn save(&mut self) {
+        if !self.writable {
+            self.message = self
+                .t(
+                    "The file could not be parsed; fix it before saving.",
+                    "ファイルを解析できないため保存できません。修正してください。",
+                )
+                .into();
+            return;
+        }
         if let Some(binding) = self.cfg.bindings.get_mut(self.selected) {
             apply_when(binding, &self.when_app, &self.when_not_app);
         }
@@ -469,7 +488,10 @@ impl eframe::App for App {
             ui.horizontal(|ui| {
                 ui.heading("touchpad-snap");
                 ui.separator();
-                if ui.button(self.t("Save", "保存")).clicked() {
+                if ui
+                    .add_enabled(self.writable, egui::Button::new(self.t("Save", "保存")))
+                    .clicked()
+                {
                     self.save();
                 }
                 if ui.button(self.t("Reload", "再読み込み")).clicked() {
