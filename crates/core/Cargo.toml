@@ -1,0 +1,16 @@
+[package]
+name = "touchpad-snap-core"
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Config model, triggers, actions and cycling logic shared by touchpad-snap"
+license = "MIT"
+repository = "https://github.com/hjosugi/touchpad-snap"
+
+[dependencies]
+anyhow = "1.0.104"
+dirs = "7.0.0"
+schemars = { version = "1.2.1", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.2.2"

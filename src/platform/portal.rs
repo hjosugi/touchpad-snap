@@ -511,7 +511,11 @@ pub fn run_hotkeys_with(
     #[cfg(feature = "libinput")]
     let gestures = {
         let (gesture_tx, gesture_rx) = std::sync::mpsc::channel::<Event>();
-        let source = super::libinput::GestureSource::spawn(cfg.claims(), gesture_tx, verbose);
+        let source = super::libinput::GestureSource::spawn(
+            cfg.claims_for(&super::current_platform()),
+            gesture_tx,
+            verbose,
+        );
         eprintln!("touchpad-snap: serving configured touchpad swipes through libinput");
         let bridge_tx = tx.clone();
         std::thread::spawn(move || {
@@ -554,7 +558,7 @@ pub fn run_hotkeys_with(
             None => {}
         }
         if let Some(new) = changed {
-            let claims = new.claims();
+            let claims = new.claims_for(&super::current_platform());
             hotkeys = new.hotkeys();
             #[cfg(feature = "libinput")]
             gestures.set_claims(claims);

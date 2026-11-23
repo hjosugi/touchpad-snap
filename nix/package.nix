@@ -12,6 +12,7 @@ rustPlatform.buildRustPackage {
     fileset = lib.fileset.unions [
       ../Cargo.toml
       ../Cargo.lock
+      ../crates
       ../src
       ../examples
       ../contrib
@@ -20,6 +21,9 @@ rustPlatform.buildRustPackage {
   };
 
   cargoLock.lockFile = ../Cargo.lock;
+
+  # The workspace member (core) holds most tests; the daemon alone is not enough.
+  cargoTestFlags = [ "--workspace" ];
 
   # touchpad-snapw is the console-less daemon for Windows; on Linux it is the
   # same as `touchpad-snap daemon`.

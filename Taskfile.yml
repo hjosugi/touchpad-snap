@@ -18,20 +18,20 @@ tasks:
   test:
     desc: Unit tests (Rust and the extension's JS)
     cmds:
-      - cargo test --locked
+      - cargo test --workspace --locked
       - npm test
 
   lint:
     desc: rustfmt and clippy, for Linux and Windows
     cmds:
-      - cargo fmt --check
-      - cargo clippy --all-targets --locked -- -D warnings
+      - cargo fmt --all --check
+      - cargo clippy --workspace --all-targets --locked -- -D warnings
       - cargo clippy --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
 
   e2e:
     desc: End-to-end test in a throw-away headless GNOME Shell (never touches your desktop)
     cmds:
-      - cargo build --all-targets --locked
+      - cargo build --workspace --all-targets --locked
       - ./test/e2e/gnome.sh
 
   install:
@@ -67,6 +67,7 @@ tasks:
     cmds:
       - test -n "{{.CLI_ARGS}}"
       - grep -q '^version = "{{.CLI_ARGS}}"' Cargo.toml
+      - grep -q '^version = "{{.CLI_ARGS}}"' crates/core/Cargo.toml
       - "grep -q '\"version-name\": \"{{.CLI_ARGS}}\"' gnome-extension/{{.UUID}}/metadata.json"
       - grep -q '## \[{{.CLI_ARGS}}\]' CHANGELOG.md
       - git tag -a v{{.CLI_ARGS}} -m "touchpad-snap {{.CLI_ARGS}}"

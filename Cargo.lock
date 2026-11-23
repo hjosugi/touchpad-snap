@@ -976,12 +976,23 @@ dependencies = [
  "clap",
  "dirs",
  "input",
+ "serde",
+ "serde_json",
+ "touchpad-snap-core",
+ "windows-sys 0.61.2",
+ "zbus",
+]
+
+[[package]]
+name = "touchpad-snap-core"
+version = "0.6.0"
+dependencies = [
+ "anyhow",
+ "dirs",
  "schemars",
  "serde",
  "serde_json",
  "toml",
- "windows-sys 0.61.2",
- "zbus",
 ]
 
 [[package]]

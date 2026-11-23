@@ -1950,7 +1950,11 @@ mod tests {
 
     #[test]
     fn committed_schema_is_current() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("schema/config.schema.json");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("crates/core is two levels below the workspace root");
+        let path = root.join("schema/config.schema.json");
         let committed: Value = serde_json::from_str(
             &std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("reading {}: {e}", path.display())),

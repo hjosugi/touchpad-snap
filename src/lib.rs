@@ -1,22 +1,18 @@
-//! touchpad-snap: switch between windows of the same app with hotkeys and
-//! touchpad swipes, on GNOME (via a small shell extension), KDE Plasma (via a
-//! KWin script), Sway/Hyprland/niri and Windows.
+//! touchpad-snap: bind touchpad gestures and shortcuts to actions, on GNOME
+//! (via a small shell extension), KDE Plasma (via a KWin script),
+//! Sway/Hyprland/niri and Windows.
 //!
-//! The platform-neutral core — [`cycle`] (which window to pick),
-//! [`gesture`] (when a swipe counts), [`hotkey`] (key syntax) and
-//! [`config`] — is pure and unit-tested; [`platform`] holds the backends.
+//! The platform-neutral core — config, triggers, conditions and window
+//! cycling — is the [`touchpad_snap_core`] crate; this crate adds the
+//! platform backends and the daemon. The core modules are re-exported here so
+//! `touchpad_snap::config` and friends keep working for the daemon, the
+//! tests and anything that embedded the old single crate.
+
+pub use touchpad_snap_core::{config, cycle, gesture, hotkey, legacy, model, session, when};
 
 pub mod autostart;
 pub mod cli;
-pub mod config;
-pub mod cycle;
 pub mod daemon;
 pub mod exec;
-pub mod gesture;
-pub mod hotkey;
-pub mod legacy;
-pub mod model;
 pub mod platform;
-pub mod session;
 pub mod systemd;
-pub mod when;

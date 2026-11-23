@@ -215,9 +215,49 @@ impl PlatformDescription {
         Self { os, desktop }
     }
 
+    /// The platform as named by the environment, without probing any
+    /// backend (the daemon has a richer detector; this is for pure callers
+    /// such as [`crate::config::Config::claims`]).
     pub fn current() -> Self {
-        crate::platform::current_platform()
+        let os = if cfg!(target_os = "linux") {
+            "linux"
+        } else if cfg!(windows) {
+            "windows"
+        } else {
+            std::env::consts::OS
+        };
+        let desktop = if cfg!(target_os = "linux") {
+            std::env::var("XDG_CURRENT_DESKTOP")
+                .ok()
+                .and_then(|value| desktop_name(&value))
+        } else {
+            None
+        };
+        Self::new(os, desktop)
     }
+}
+
+/// The `when.desktop` name in an `XDG_CURRENT_DESKTOP` value.
+fn desktop_name(desktop: &str) -> Option<&'static str> {
+    for part in desktop.split([':', ';']) {
+        let part = part.trim();
+        if part.eq_ignore_ascii_case("gnome") {
+            return Some("gnome");
+        }
+        if part.eq_ignore_ascii_case("kde") || part.eq_ignore_ascii_case("plasma") {
+            return Some("kde");
+        }
+        if part.eq_ignore_ascii_case("sway") {
+            return Some("sway");
+        }
+        if part.eq_ignore_ascii_case("hyprland") {
+            return Some("hyprland");
+        }
+        if part.eq_ignore_ascii_case("niri") {
+            return Some("niri");
+        }
+    }
+    None
 }
 
 /// Everything a `when` condition can be evaluated against.

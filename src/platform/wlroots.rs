@@ -185,7 +185,11 @@ fn run_gestures(cfg: &Config, verbose: bool, handle: &mut super::Handler) -> Res
     // Keep the channel connected even if the libinput thread stops (no seat,
     // no permission); the daemon then keeps checking the config.
     let keepalive = tx.clone();
-    let gestures = super::libinput::GestureSource::spawn(cfg.claims(), tx, verbose);
+    let gestures = super::libinput::GestureSource::spawn(
+        cfg.claims_for(&super::current_platform()),
+        tx,
+        verbose,
+    );
     let _keepalive = keepalive;
 
     let mut last_tick = Instant::now();
@@ -205,7 +209,7 @@ fn run_gestures(cfg: &Config, verbose: bool, handle: &mut super::Handler) -> Res
             changed = changed.or(handle(&backend, event));
         }
         if let Some(new) = changed {
-            gestures.set_claims(new.claims());
+            gestures.set_claims(new.claims_for(&super::current_platform()));
         }
     }
     Ok(())
