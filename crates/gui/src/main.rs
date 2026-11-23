@@ -59,6 +59,10 @@ struct App {
     export_path: String,
     import_path: String,
     pending_import: Option<Vec<Binding>>,
+    undo: Option<Config>,
+    saved: Config,
+    capture_hotkey: bool,
+    available_apps: Vec<String>,
 }
 
 impl App {
@@ -66,7 +70,7 @@ impl App {
         let (cfg, problems) = load(&path);
         let mut app = Self {
             path,
-            cfg,
+            cfg: cfg.clone(),
             problems,
             selected: 0,
             lang: Lang::En,
@@ -83,6 +87,10 @@ impl App {
                 .to_string(),
             import_path: String::new(),
             pending_import: None,
+            undo: None,
+            saved: cfg.clone(),
+            capture_hotkey: false,
+            available_apps: Vec::new(),
         };
         app.sync_when();
         app
@@ -280,8 +288,10 @@ impl App {
 
     fn reload(&mut self) {
         let (cfg, problems) = load(&self.path);
-        self.cfg = cfg;
+        self.cfg = cfg.clone();
+        self.saved = cfg;
         self.problems = problems;
+        self.undo = None;
         self.selected = self.selected.min(self.cfg.bindings.len().saturating_sub(1));
         self.sync_when();
         self.message = self.t("Reloaded", "再読み込みしました").into();
@@ -296,13 +306,16 @@ impl App {
         }
         match write_atomic(&self.path, &self.cfg) {
             Ok(()) => {
+                self.undo = Some(self.saved.clone());
+                self.saved = self.cfg.clone();
                 self.message = format!(
                     "{} {}",
                     self.t("Saved", "保存しました"),
                     self.path.display()
                 );
                 let (cfg, problems) = load(&self.path);
-                self.cfg = cfg;
+                self.cfg = cfg.clone();
+                self.saved = cfg;
                 self.problems = problems;
             }
             Err(e) => self.message = format!("{} {e:#}", self.t("Error:", "エラー:")),
@@ -317,14 +330,30 @@ impl App {
             Ok(output) if output.status.success() => {
                 let text = String::from_utf8_lossy(&output.stdout);
                 match serde_json::from_str::<serde_json::Value>(&text) {
-                    Ok(value) => format!(
-                        "{} {} · {} · {} {}",
-                        self.t("daemon", "daemon"),
-                        value["version"].as_str().unwrap_or("?"),
-                        value["backend"].as_str().unwrap_or("?"),
-                        value["bindings"].as_array().map_or(0, Vec::len),
-                        self.t("bindings", "バインディング")
-                    ),
+                    Ok(value) => {
+                        let failed = value["hotkeys_failed"]
+                            .as_array()
+                            .map(|list| {
+                                list.iter()
+                                    .filter_map(|key| key.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_default();
+                        let suffix = if failed.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" · {} {failed}", self.t("taken:", "取得できず:"))
+                        };
+                        format!(
+                            "{} {} · {} · {} {}{suffix}",
+                            self.t("daemon", "daemon"),
+                            value["version"].as_str().unwrap_or("?"),
+                            value["backend"].as_str().unwrap_or("?"),
+                            value["bindings"].as_array().map_or(0, Vec::len),
+                            self.t("bindings", "バインディング")
+                        )
+                    }
                     Err(_) => text.trim().to_string(),
                 }
             }
@@ -403,6 +432,34 @@ impl Drop for App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.capture_hotkey {
+            if let Some((key, mods)) = ctx.input(capture_key) {
+                if key == egui::Key::Escape {
+                    self.capture_hotkey = false;
+                } else {
+                    let mut parts = Vec::new();
+                    if mods.shift {
+                        parts.push("Shift".to_string());
+                    }
+                    if mods.ctrl {
+                        parts.push("Ctrl".to_string());
+                    }
+                    if mods.alt {
+                        parts.push("Alt".to_string());
+                    }
+                    if let Some(binding) = self.cfg.bindings.get_mut(self.selected) {
+                        let mut keys = parts.join("+");
+                        if !keys.is_empty() {
+                            keys.push('+');
+                        }
+                        keys.push_str(&hotkey_key_name(key));
+                        binding.trigger = Trigger::Hotkey { keys };
+                    }
+                    self.capture_hotkey = false;
+                }
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         if let Some(child) = &mut self.events_child
             && matches!(child.try_wait(), Ok(Some(_)))
         {
@@ -417,6 +474,20 @@ impl eframe::App for App {
                 }
                 if ui.button(self.t("Reload", "再読み込み")).clicked() {
                     self.reload();
+                }
+                if ui
+                    .add_enabled(
+                        self.undo.is_some(),
+                        egui::Button::new(self.t("Undo", "元に戻す")),
+                    )
+                    .clicked()
+                    && let Some(undo) = self.undo.take()
+                {
+                    self.cfg = undo;
+                    self.sync_when();
+                    self.message = self
+                        .t("Undid the last save", "直前の保存を元に戻しました")
+                        .into();
                 }
                 if ui.button(self.t("Check daemon", "daemon を確認")).clicked() {
                     self.refresh_status();
@@ -640,7 +711,21 @@ impl App {
         });
 
         ui.separator();
-        ui.label(self.t("Trigger", "トリガー"));
+        ui.horizontal(|ui| {
+            ui.label(self.t("Trigger", "トリガー"));
+            if ui
+                .button(self.t("Capture shortcut", "ショートカットを記録"))
+                .clicked()
+            {
+                self.capture_hotkey = true;
+            }
+            if self.capture_hotkey {
+                ui.label(self.t(
+                    "Press the keys… (Esc cancels)",
+                    "キーを押してください…（Esc で中止）",
+                ));
+            }
+        });
         trigger_editor(ui, &mut binding.trigger, self.lang);
 
         ui.separator();
@@ -652,6 +737,25 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(self.t("Not apps", "除外アプリ"));
             ui.text_edit_singleline(&mut self.when_not_app);
+        });
+        ui.horizontal_wrapped(|ui| {
+            if ui.button(self.t("Open apps", "開いているアプリ")).clicked() {
+                self.available_apps = open_apps();
+            }
+            let mut chosen = None;
+            for app in &self.available_apps {
+                if ui.small_button(app).clicked() {
+                    chosen = Some(app.clone());
+                }
+            }
+            if let Some(app) = chosen
+                && !self.when_app.split(',').any(|part| part.trim() == app)
+            {
+                if !self.when_app.trim().is_empty() {
+                    self.when_app.push_str(", ");
+                }
+                self.when_app.push_str(&app);
+            }
         });
         apply_when(&mut binding, &self.when_app, &self.when_not_app);
 
@@ -1227,4 +1331,64 @@ fn action_editor(ui: &mut Ui, action: &mut Action, _lang: Lang) {
 
 fn split_whitespace(text: &str) -> Vec<String> {
     text.split_whitespace().map(str::to_string).collect()
+}
+
+fn capture_key(input: &egui::InputState) -> Option<(egui::Key, egui::Modifiers)> {
+    input.events.iter().find_map(|event| match event {
+        egui::Event::Key {
+            key,
+            pressed: true,
+            repeat: false,
+            modifiers,
+            ..
+        } => Some((*key, *modifiers)),
+        _ => None,
+    })
+}
+
+fn hotkey_key_name(key: egui::Key) -> String {
+    match key {
+        egui::Key::Space => "space".into(),
+        egui::Key::Enter => "return".into(),
+        egui::Key::Escape => "escape".into(),
+        egui::Key::Tab => "tab".into(),
+        egui::Key::Backspace => "backspace".into(),
+        egui::Key::Delete => "delete".into(),
+        egui::Key::ArrowLeft => "left".into(),
+        egui::Key::ArrowRight => "right".into(),
+        egui::Key::ArrowUp => "up".into(),
+        egui::Key::ArrowDown => "down".into(),
+        egui::Key::Home => "home".into(),
+        egui::Key::End => "end".into(),
+        egui::Key::PageUp => "pageup".into(),
+        egui::Key::PageDown => "pagedown".into(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn open_apps() -> Vec<String> {
+    let output = Command::new("touchpad-snap")
+        .args(["list", "--json"])
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return Vec::new();
+    };
+    let mut apps: Vec<String> = Vec::new();
+    if let Some(windows) = value["windows"].as_array() {
+        for window in windows {
+            if let Some(app) = window["app_id"].as_str().filter(|a| !a.is_empty())
+                && !apps.iter().any(|known| known == app)
+            {
+                apps.push(app.to_string());
+            }
+        }
+    }
+    apps.sort();
+    apps
 }

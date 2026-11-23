@@ -321,7 +321,9 @@ window is available in English and Japanese. **Try** runs the selected binding
 through the daemon, **Live** streams what the daemon sees (hotkeys, swipes,
 pinches, holds, mouse triggers), and bindings can be exported to or imported
 from a JSON file; importing lists every `exec` command before anything is
-added.
+added. **Capture shortcut** fills a hotkey trigger from the keys pressed;
+**Open apps** offers the running apps as `when.app` patterns; **Undo** steps
+back over the last save.
 
 The GUI is a separate binary: on Linux it is built from source (`cargo install
 --locked --path crates/gui`, or `nix build .#touchpad-snap-gui`) because the
