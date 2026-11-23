@@ -15,9 +15,9 @@ ok "extension loaded and owns io.github.hjosugi.TouchpadSnap"
 
 version=$(gdbus call --session --dest io.github.hjosugi.TouchpadSnap --object-path /io/github/hjosugi/TouchpadSnap \
     --method org.freedesktop.DBus.Properties.Get io.github.hjosugi.TouchpadSnap1 ProtocolVersion)
-[[ $version == "(<uint32 6>,)" ]] || fail "unexpected protocol version: $version"
+[[ $version == "(<uint32 7>,)" ]] || fail "unexpected protocol version: $version"
 [[ $(list_json | jq '.windows | length') == 0 ]] || fail "expected no windows initially"
-ok "protocol 6, empty list at startup"
+ok "protocol 7, empty list at startup"
 
 e2e_open_clients
 # A window gets its size a moment after it is mapped.
@@ -394,7 +394,7 @@ ok "second daemon refused"
 
 doctor=$(tps doctor 2>&1) || fail "doctor reported problems: $doctor"
 echo "$doctor"
-grep -q "protocol 6" <<<"$doctor" || fail "doctor does not see the extension"
+grep -q "protocol 7" <<<"$doctor" || fail "doctor does not see the extension"
 ok "doctor"
 
 # What window-jump, this program's old name, can leave behind: its GNOME
@@ -417,6 +417,38 @@ tps autostart enable >/dev/null || fail "autostart enable failed"
 tps autostart disable >/dev/null || fail "autostart disable failed"
 doctor=$(tps doctor 2>&1) || fail "doctor still reports problems: $doctor"
 ok "doctor reports what window-jump left behind; autostart enable replaces its entry"
+
+# Pinch and hold gestures: the extension claims (fingers, modifiers) pairs
+# and the daemon picks the binding by pinch direction.
+cat > "$XDG_CONFIG_HOME/touchpad-snap/config.json" <<'JSON'
+{
+  "bindings": [
+    {
+      "trigger": { "type": "pinch", "fingers": 2, "modifiers": ["ctrl"], "direction": "in" },
+      "actions": [ { "type": "window.next" } ]
+    },
+    {
+      "trigger": { "type": "hold", "fingers": 3, "modifiers": ["ctrl"] },
+      "actions": [ { "type": "app.next" } ]
+    }
+  ]
+}
+JSON
+wait_for "daemon to load the gesture bindings" 15 grep -q "registered 0 hotkey(s) and 0 swipe claim(s)" "$daemon_log"
+gesture() {
+    gdbus emit --session --object-path /io/github/hjosugi/TouchpadSnap \
+        --signal "io.github.hjosugi.TouchpadSnap1.$1" -- "${@:2}" >/dev/null
+}
+focus_on "${editors[0]}"
+gesture Pinch "uint32 0" "uint32 2" "uint32 2" "1.0"
+gesture Pinch "uint32 1" "uint32 2" "uint32 2" "0.6"
+gesture Pinch "uint32 2" "uint32 2" "uint32 2" "0.5"
+wait_for "Ctrl + pinch in → next window" 15 focus_is "${editors[1]}"
+before=$(front)
+app_changed() { [[ $(front) != "$before" ]]; }
+gesture Hold "uint32 0" "uint32 3" "uint32 2"
+wait_for "Ctrl + three-finger hold → next app" 15 app_changed
+ok "gestures: pinch in and hold run their bindings"
 
 # Window and desktop actions, through the extension's generic entry points.
 minimized() { list_json | jq -r --argjson id "$1" '.windows[] | select(.id == $id) | .minimized'; }

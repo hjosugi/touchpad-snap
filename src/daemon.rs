@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::config::{self, Action, Binding, Claim, Config, Source, Trigger};
+use crate::config::{self, Action, Binding, Claim, Config, PinchDirection, Source, Trigger};
 use crate::control;
 use crate::cycle::{self, Pick, Session, Step};
 use crate::exec::{self, ActionContext};
@@ -208,6 +208,9 @@ pub struct Handler {
     gesture_snapshot: Option<Snapshot>,
     /// The modifiers of the last (tracked) hotkey are still down.
     held: bool,
+    /// The pinch in progress: fingers, modifiers, the context captured at
+    /// Begin and the final scale seen.
+    pinch: Option<(u32, Mods, TriggerContext, f64)>,
     state_path: PathBuf,
     watch: Option<ConfigWatch>,
     verbose: bool,
@@ -225,6 +228,7 @@ impl Handler {
             fired: HashSet::new(),
             gesture_snapshot: None,
             held: false,
+            pinch: None,
             state_path,
             watch: None,
             verbose,
@@ -276,7 +280,7 @@ impl Handler {
                     if self.verbose {
                         let keys = match &binding.trigger {
                             Trigger::Hotkey { keys } => keys.as_str(),
-                            Trigger::Swipe { .. } => "",
+                            _ => "",
                         };
                         eprintln!(
                             "touchpad-snap: hotkey {} → {} ({})",
@@ -293,7 +297,7 @@ impl Handler {
                         Trigger::Hotkey { keys } => {
                             Hotkey::parse(keys).map(|h| h.mods).unwrap_or_default()
                         }
-                        Trigger::Swipe { .. } => Mods::default(),
+                        _ => Mods::default(),
                     };
                     control::publish(serde_json::json!({
                         "event": "hotkey",
@@ -312,6 +316,80 @@ impl Handler {
             }
             Event::Cancel => {
                 self.cancel_session(backend);
+            }
+            Event::Pinch {
+                phase,
+                fingers,
+                mods,
+                scale,
+            } => match phase {
+                Phase::Begin => {
+                    self.pinch = Some((fingers, mods, capture_context(backend, None), scale));
+                }
+                Phase::Update => {
+                    if let Some((_, _, _, last)) = self.pinch.as_mut() {
+                        *last = scale;
+                    }
+                }
+                Phase::End => {
+                    let (fingers, mods, context, last) = self.pinch.take()?;
+                    let (direction, active) = if last < 0.95 {
+                        (PinchDirection::In, true)
+                    } else if last > 1.05 {
+                        (PinchDirection::Out, true)
+                    } else {
+                        (PinchDirection::In, false)
+                    };
+                    if !active {
+                        control::publish(serde_json::json!({
+                            "event": "pinch",
+                            "fingers": fingers,
+                            "mods": mods.0,
+                            "scale": last,
+                            "binding": null,
+                        }));
+                        return None;
+                    }
+                    if let Some(binding) = self
+                        .cfg
+                        .pinch_binding_for(fingers, mods, direction, &context)
+                    {
+                        control::publish(serde_json::json!({
+                            "event": "pinch",
+                            "fingers": fingers,
+                            "mods": mods.0,
+                            "direction": direction.as_str(),
+                            "scale": last,
+                            "binding": binding.name,
+                            "trigger": binding.trigger.label(),
+                        }));
+                        let snapshot = self.context_snapshot(backend);
+                        self.run_binding(backend, binding, Session::Fresh, snapshot.as_ref(), mods);
+                    }
+                }
+                Phase::Cancel => {
+                    self.pinch = None;
+                }
+            },
+            Event::Hold {
+                phase,
+                fingers,
+                mods,
+            } => {
+                if phase == Phase::Begin {
+                    let context = capture_context(backend, None);
+                    if let Some(binding) = self.cfg.hold_binding_for(fingers, mods, &context) {
+                        control::publish(serde_json::json!({
+                            "event": "hold",
+                            "fingers": fingers,
+                            "mods": mods.0,
+                            "binding": binding.name,
+                            "trigger": binding.trigger.label(),
+                        }));
+                        let snapshot = self.context_snapshot(backend);
+                        self.run_binding(backend, binding, Session::Fresh, snapshot.as_ref(), mods);
+                    }
+                }
             }
             Event::Swipe {
                 phase,
@@ -406,6 +484,7 @@ impl Handler {
         self.gesture_snapshot = None;
         self.swipe_jumps = 0;
         self.fired.clear();
+        self.pinch = None;
 
         let Ok(snapshot) = backend.snapshot() else {
             return;

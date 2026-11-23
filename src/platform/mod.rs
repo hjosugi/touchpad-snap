@@ -114,6 +114,21 @@ pub enum Event {
     /// Esc was pressed while a session was held: go back to where it started
     /// and end it.
     Cancel,
+    /// A claimed touchpad pinch. `scale` is the absolute scale since the
+    /// gesture began (1.0 at Begin); below 1 is a pinch in, above 1 out.
+    Pinch {
+        phase: Phase,
+        fingers: u32,
+        mods: Mods,
+        scale: f64,
+    },
+    /// A claimed touchpad hold, sent at Begin once the fingers have rested
+    /// long enough (and again at its end).
+    Hold {
+        phase: Phase,
+        fingers: u32,
+        mods: Mods,
+    },
     /// Motion of a claimed touchpad swipe. `app_id` is the focused app at
     /// Begin when the platform knows it (GNOME protocol 4+); the daemon
     /// otherwise snapshots the focused window at Begin.

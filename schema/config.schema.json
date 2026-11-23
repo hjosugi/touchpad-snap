@@ -463,6 +463,21 @@
         }
       ]
     },
+    "PinchDirection": {
+      "description": "The direction of a pinch trigger.",
+      "oneOf": [
+        {
+          "const": "in",
+          "description": "Fingers move together (zoom out).",
+          "type": "string"
+        },
+        {
+          "const": "out",
+          "description": "Fingers move apart (zoom in).",
+          "type": "string"
+        }
+      ]
+    },
     "SwipeDirection": {
       "enum": [
         "left",
@@ -532,6 +547,64 @@
           "required": [
             "type",
             "keys"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A two-finger pinch in or out, optionally with modifiers held.",
+          "properties": {
+            "direction": {
+              "$ref": "#/$defs/PinchDirection"
+            },
+            "fingers": {
+              "default": 2,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "modifiers": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Modifier"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "pinch",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "direction"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Fingers resting on the touchpad without moving for a moment.",
+          "properties": {
+            "fingers": {
+              "default": 2,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "modifiers": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Modifier"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "hold",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
           ],
           "type": "object"
         }

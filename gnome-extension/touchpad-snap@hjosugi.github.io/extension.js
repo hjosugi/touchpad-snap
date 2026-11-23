@@ -39,7 +39,7 @@ import {
 const BUS_NAME = 'io.github.hjosugi.TouchpadSnap';
 const OBJECT_PATH = '/io/github/hjosugi/TouchpadSnap';
 const INTERFACE = 'io.github.hjosugi.TouchpadSnap1';
-const PROTOCOL_VERSION = 6;
+const PROTOCOL_VERSION = 7;
 
 const IFACE_XML = `
 <node>
@@ -70,6 +70,12 @@ const IFACE_XML = `
     <method name="SetSwipeClaims">
       <arg type="a(uuas)" direction="in" name="claims"/>
     </method>
+    <method name="SetPinchClaims">
+      <arg type="a(uu)" direction="in" name="claims"/>
+    </method>
+    <method name="SetHoldClaims">
+      <arg type="a(uu)" direction="in" name="claims"/>
+    </method>
     <method name="WindowAction">
       <arg type="t" direction="in" name="id"/>
       <arg type="s" direction="in" name="action"/>
@@ -87,6 +93,17 @@ const IFACE_XML = `
       <arg type="s" name="action"/>
     </signal>
     <signal name="Cancel"/>
+    <signal name="Pinch">
+      <arg type="u" name="phase"/>
+      <arg type="u" name="fingers"/>
+      <arg type="u" name="mods"/>
+      <arg type="d" name="scale"/>
+    </signal>
+    <signal name="Hold">
+      <arg type="u" name="phase"/>
+      <arg type="u" name="fingers"/>
+      <arg type="u" name="mods"/>
+    </signal>
     <signal name="Swipe">
       <arg type="u" name="phase"/>
       <arg type="u" name="fingers"/>
@@ -210,6 +227,11 @@ class TouchpadSnapService {
         this._tracker = Shell.WindowTracker.get_default();
         this._hud = new Hud(this._tracker);
         this._claimer = new SwipeClaimer();
+        // Pinch and hold claims: [fingers, mods] pairs.
+        this._pinchClaims = [];
+        this._holdClaims = [];
+        this._pinchClaimed = false;
+        this._holdClaimed = false;
         // Meta keybinding action id -> action name chosen by the daemon.
         this._accels = new Map();
         this._owner = null;
@@ -552,6 +574,14 @@ class TouchpadSnapService {
         invocation.return_value(null);
     }
 
+    SetPinchClaims([claims]) {
+        this._pinchClaims = claims;
+    }
+
+    SetHoldClaims([claims]) {
+        this._holdClaims = claims;
+    }
+
     // -- daemon bookkeeping ----------------------------------------------------
 
     // One daemon at a time: a new caller replaces the previous one.
@@ -572,6 +602,8 @@ class TouchpadSnapService {
         this._stopCancel();
         this._ungrabAll();
         this._claimer.setClaims([]);
+        this._pinchClaims = [];
+        this._holdClaims = [];
         if (this._ownerWatchId) {
             Gio.bus_unwatch_name(this._ownerWatchId);
             this._ownerWatchId = 0;
@@ -681,7 +713,20 @@ class TouchpadSnapService {
     }
 
     _onTouchpad(event) {
-        if (!this._claimer.hasClaims || event.type() !== Clutter.EventType.TOUCHPAD_SWIPE)
+        switch (event.type()) {
+        case Clutter.EventType.TOUCHPAD_SWIPE:
+            return this._onSwipe(event);
+        case Clutter.EventType.TOUCHPAD_PINCH:
+            return this._onPinch(event);
+        case Clutter.EventType.TOUCHPAD_HOLD:
+            return this._onHold(event);
+        default:
+            return Clutter.EVENT_PROPAGATE;
+        }
+    }
+
+    _onSwipe(event) {
+        if (!this._claimer.hasClaims)
             return Clutter.EVENT_PROPAGATE;
 
         const phase = PHASES.get(event.get_gesture_phase());
@@ -722,6 +767,73 @@ class TouchpadSnapService {
         if (emit && (phase === Phase.END || phase === Phase.CANCEL))
             this._neutralizeLoneModifier(emit[2]);
         return stop ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
+    }
+
+    _claimed(claims, fingers, mods) {
+        return claims.some(([f, m]) => f === fingers && m === mods);
+    }
+
+    _gestureMods(event) {
+        const [, , pointerMods] = global.get_pointer();
+        return modsFromState(event.get_state() | pointerMods, Clutter.ModifierType);
+    }
+
+    _onPinch(event) {
+        if (this._pinchClaims.length === 0)
+            return Clutter.EVENT_PROPAGATE;
+        const phase = PHASES.get(event.get_gesture_phase());
+        if (phase === undefined)
+            return Clutter.EVENT_PROPAGATE;
+        if (phase === Phase.BEGIN) {
+            if (Main.actionMode !== Shell.ActionMode.NORMAL)
+                return Clutter.EVENT_PROPAGATE;
+            const fingers = event.get_touchpad_gesture_finger_count();
+            const mods = this._gestureMods(event);
+            this._pinchClaimed = this._claimed(this._pinchClaims, fingers, mods);
+            if (!this._pinchClaimed)
+                return Clutter.EVENT_PROPAGATE;
+        } else if (!this._pinchClaimed) {
+            return Clutter.EVENT_PROPAGATE;
+        }
+
+        let scale = 1.0;
+        try {
+            scale = event.get_gesture_scale_absolute();
+        } catch {
+            // Very old Clutter: fall back to the motion delta magnitude.
+        }
+        const fingers = event.get_touchpad_gesture_finger_count();
+        const mods = this._gestureMods(event);
+        this._emit('Pinch', new GLib.Variant('(uuud)', [phase, fingers, mods, scale]));
+        if (phase === Phase.END || phase === Phase.CANCEL)
+            this._pinchClaimed = false;
+        return Clutter.EVENT_STOP;
+    }
+
+    _onHold(event) {
+        if (this._holdClaims.length === 0)
+            return Clutter.EVENT_PROPAGATE;
+        const phase = PHASES.get(event.get_gesture_phase());
+        if (phase === undefined)
+            return Clutter.EVENT_PROPAGATE;
+        if (phase === Phase.BEGIN) {
+            if (Main.actionMode !== Shell.ActionMode.NORMAL)
+                return Clutter.EVENT_PROPAGATE;
+            const fingers = event.get_touchpad_gesture_finger_count();
+            const mods = this._gestureMods(event);
+            this._holdClaimed = this._claimed(this._holdClaims, fingers, mods);
+            if (!this._holdClaimed)
+                return Clutter.EVENT_PROPAGATE;
+        } else if (!this._holdClaimed) {
+            return Clutter.EVENT_PROPAGATE;
+        }
+
+        const fingers = event.get_touchpad_gesture_finger_count();
+        const mods = this._gestureMods(event);
+        this._emit('Hold', new GLib.Variant('(uuu)', [phase, fingers, mods]));
+        if (phase === Phase.END || phase === Phase.CANCEL)
+            this._holdClaimed = false;
+        return Clutter.EVENT_STOP;
     }
 
     // The focused app's identifiers, as `_snapshot` reports them. The first

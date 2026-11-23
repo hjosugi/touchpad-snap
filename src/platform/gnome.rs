@@ -33,7 +33,7 @@ pub const INTERFACE: &str = "io.github.hjosugi.TouchpadSnap1";
 /// version 3 the AcceleratorReleased signal, version 4 per-app swipe claims
 /// and the app id in the Swipe signal, and version 5 SendKeys (the `keys`
 /// action). Older extensions still work, without the features above.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 pub const EXTENSION_UUID: &str = "touchpad-snap@hjosugi.github.io";
 
 /// Whether an extension of `version` understands app-filtered swipe claims.
@@ -91,6 +91,7 @@ impl Gnome {
                 3 => "per-app swipe claims and the `keys` action",
                 4 => "the `keys` action",
                 5 => "the window, workspace and overview actions",
+                6 => "pinch and hold gestures",
                 _ => "nothing",
             };
             eprintln!(
@@ -144,6 +145,25 @@ impl Gnome {
             let wire: Vec<(u32, u32)> = claims.iter().map(|c| (c.fingers, c.mods.0)).collect();
             self.proxy
                 .call_method("SetSwipeClaims", &(wire,))
+                .map_err(|e| self.explain(e))?;
+        }
+
+        if version >= 7 {
+            let pinch: Vec<(u32, u32)> = cfg
+                .pinch_claims()
+                .into_iter()
+                .map(|(fingers, mods)| (fingers, mods.0))
+                .collect();
+            let hold: Vec<(u32, u32)> = cfg
+                .hold_claims()
+                .into_iter()
+                .map(|(fingers, mods)| (fingers, mods.0))
+                .collect();
+            self.proxy
+                .call_method("SetPinchClaims", &(pinch,))
+                .map_err(|e| self.explain(e))?;
+            self.proxy
+                .call_method("SetHoldClaims", &(hold,))
                 .map_err(|e| self.explain(e))?;
         }
 
@@ -488,6 +508,24 @@ fn parse_signal(msg: &Message, version: u32, hotkeys: &[Hotkey]) -> Option<Event
         }
         "AcceleratorReleased" => Some(Event::Released),
         "Cancel" => Some(Event::Cancel),
+        "Pinch" => {
+            let (phase, fingers, mods, scale): (u32, u32, u32, f64) =
+                msg.body().deserialize().ok()?;
+            Some(Event::Pinch {
+                phase: Phase::from_u32(phase)?,
+                fingers,
+                mods: Mods(mods),
+                scale,
+            })
+        }
+        "Hold" => {
+            let (phase, fingers, mods): (u32, u32, u32) = msg.body().deserialize().ok()?;
+            Some(Event::Hold {
+                phase: Phase::from_u32(phase)?,
+                fingers,
+                mods: Mods(mods),
+            })
+        }
         "Swipe" => {
             let (phase, fingers, mods, app_id, dx, dy) = if supports_app_claims(version) {
                 let (phase, fingers, mods, app_id, dx, dy): (u32, u32, u32, String, f64, f64) =

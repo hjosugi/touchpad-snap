@@ -93,6 +93,46 @@ pub enum Trigger {
     },
     #[serde(rename = "hotkey")]
     Hotkey { keys: String },
+    /// A two-finger pinch in or out, optionally with modifiers held.
+    #[serde(rename = "pinch")]
+    Pinch {
+        #[serde(default = "default_pinch_fingers")]
+        fingers: u32,
+        #[serde(default)]
+        modifiers: Vec<Modifier>,
+        direction: PinchDirection,
+    },
+    /// Fingers resting on the touchpad without moving for a moment.
+    #[serde(rename = "hold")]
+    Hold {
+        #[serde(default = "default_pinch_fingers")]
+        fingers: u32,
+        #[serde(default)]
+        modifiers: Vec<Modifier>,
+    },
+}
+
+fn default_pinch_fingers() -> u32 {
+    2
+}
+
+/// The direction of a pinch trigger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PinchDirection {
+    /// Fingers move together (zoom out).
+    In,
+    /// Fingers move apart (zoom in).
+    Out,
+}
+
+impl PinchDirection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PinchDirection::In => "in",
+            PinchDirection::Out => "out",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -388,8 +428,41 @@ impl Trigger {
                     format!("swipe-{fingers}-{mods}-{direction}")
                 }
             }
+            Trigger::Pinch {
+                fingers,
+                modifiers,
+                direction,
+            } => {
+                let mods = modifier_names(modifiers);
+                if mods.is_empty() {
+                    format!("pinch-{fingers}-{}", direction.as_str())
+                } else {
+                    format!("pinch-{fingers}-{mods}-{}", direction.as_str())
+                }
+            }
+            Trigger::Hold { fingers, modifiers } => {
+                let mods = modifier_names(modifiers);
+                if mods.is_empty() {
+                    format!("hold-{fingers}")
+                } else {
+                    format!("hold-{fingers}-{mods}")
+                }
+            }
         }
     }
+}
+
+fn modifier_names(modifiers: &[Modifier]) -> String {
+    modifiers
+        .iter()
+        .map(|m| match m {
+            Modifier::Shift => "shift",
+            Modifier::Ctrl => "ctrl",
+            Modifier::Alt => "alt",
+            Modifier::Super => "super",
+        })
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 impl From<Step> for Action {
@@ -1045,7 +1118,9 @@ impl Config {
                             claim.matches_gesture(*fingers, mods_of(modifiers))
                                 && *bound == direction
                         }
-                        Trigger::Hotkey { .. } => false,
+                        Trigger::Hotkey { .. } | Trigger::Pinch { .. } | Trigger::Hold { .. } => {
+                            false
+                        }
                     }
             })
             .collect()
@@ -1109,6 +1184,84 @@ impl Config {
                     )
                 })
             })
+    }
+
+    /// Distinct (fingers, modifiers) combinations a pinch binding claims.
+    pub fn pinch_claims(&self) -> Vec<(u32, Mods)> {
+        let mut claims = Vec::new();
+        for binding in self.bindings.iter().filter(|b| b.enabled) {
+            let Trigger::Pinch {
+                fingers, modifiers, ..
+            } = &binding.trigger
+            else {
+                continue;
+            };
+            let claim = (*fingers, mods_of(modifiers));
+            if !claims.contains(&claim) {
+                claims.push(claim);
+            }
+        }
+        claims
+    }
+
+    /// Distinct (fingers, modifiers) combinations a hold binding claims.
+    pub fn hold_claims(&self) -> Vec<(u32, Mods)> {
+        let mut claims = Vec::new();
+        for binding in self.bindings.iter().filter(|b| b.enabled) {
+            let Trigger::Hold { fingers, modifiers } = &binding.trigger else {
+                continue;
+            };
+            let claim = (*fingers, mods_of(modifiers));
+            if !claims.contains(&claim) {
+                claims.push(claim);
+            }
+        }
+        claims
+    }
+
+    /// The one binding that fires for a pinch in `context`.
+    pub fn pinch_binding_for(
+        &self,
+        fingers: u32,
+        mods: Mods,
+        direction: PinchDirection,
+        context: &TriggerContext,
+    ) -> Option<&Binding> {
+        choose(
+            self.bindings.iter().enumerate().filter(|(_, b)| {
+                b.enabled
+                    && matches!(
+                        &b.trigger,
+                        Trigger::Pinch { fingers: f, modifiers, direction: d }
+                            if *f == fingers
+                                && mods_of(modifiers) == mods
+                                && *d == direction
+                    )
+            }),
+            context,
+        )
+        .map(|(_, binding)| binding)
+    }
+
+    /// The one binding that fires for a hold in `context`.
+    pub fn hold_binding_for(
+        &self,
+        fingers: u32,
+        mods: Mods,
+        context: &TriggerContext,
+    ) -> Option<&Binding> {
+        choose(
+            self.bindings.iter().enumerate().filter(|(_, b)| {
+                b.enabled
+                    && matches!(
+                        &b.trigger,
+                        Trigger::Hold { fingers: f, modifiers }
+                            if *f == fingers && mods_of(modifiers) == mods
+                    )
+            }),
+            context,
+        )
+        .map(|(_, binding)| binding)
     }
 
     /// The one binding that fires for this swipe in `context`.
@@ -1401,6 +1554,13 @@ fn check_binding(binding: &Binding) -> Result<(), String> {
         }
         Trigger::Hotkey { keys } => {
             Hotkey::parse(keys)?;
+        }
+        Trigger::Pinch { fingers, .. } | Trigger::Hold { fingers, .. } => {
+            if !(2..=5).contains(fingers) {
+                return Err(format!(
+                    "gesture with {fingers} fingers: only 2 to 5 fingers can be used"
+                ));
+            }
         }
     }
     Ok(())
