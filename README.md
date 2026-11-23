@@ -304,8 +304,25 @@ same; every name changed with it. After installing touchpad-snap as above:
 | `touchpad-snap status [--json]` | Ask the running daemon for its version, backend, bindings and hotkeys it could not grab. |
 | `touchpad-snap run <action>` / `--binding <name>` | Run one action (or a binding) through the running daemon. |
 | `touchpad-snap events` | Stream the hotkeys, swipes, pinches, holds and mouse triggers the daemon sees, as JSON lines. |
+| `touchpad-snap settings` | Open the settings window (needs `touchpad-snap-settings`, installed by `task install` or `cargo install --path crates/gui`). |
 | `touchpad-snap config init\|import\|schema\|path\|check` | Write / import / print the schema of / locate / validate the config file. |
 | `touchpad-snap autostart enable\|disable [--systemd]` | Start the daemon at login (XDG entry by default, systemd user unit with `--systemd`). |
+
+### Settings window
+
+`touchpad-snap settings` (or the **touchpad-snap Settings** desktop entry, or
+**Settings…** in the Windows tray menu) lists the bindings, edits one
+(trigger, app conditions, action chain, name, repeat, enable), and changes the
+general cycle/gesture/HUD settings. It writes the same `config.json` the daemon
+watches, so a save applies within about two seconds; **Reload** re-reads a file
+edited elsewhere. Problems from the same loader as `config check` are shown in
+the window, and **Check daemon** asks the running daemon for its status. The
+window is available in English and Japanese.
+
+The GUI is a separate binary: on Linux it is built from source (`cargo install
+--locked --path crates/gui`, or `nix build .#touchpad-snap-gui`) because the
+static musl daemon build cannot link the GUI's `dlopen` dependencies; the
+Windows release zip ships `touchpad-snap-settings.exe`.
 
 ### Without the daemon
 

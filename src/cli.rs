@@ -86,6 +86,8 @@ enum Command {
     },
     /// Stream the triggers and swipes a running daemon sees, as JSON lines
     Events,
+    /// Open the settings window
+    Settings,
 }
 
 #[derive(clap::Args, Debug)]
@@ -302,7 +304,35 @@ fn dispatch(cli: Cli) -> Result<()> {
             println!("{line}");
             true
         }),
+        Command::Settings => settings(&config_path),
     }
+}
+
+fn settings(config_path: &std::path::Path) -> Result<()> {
+    let name = if cfg!(windows) {
+        "touchpad-snap-settings.exe"
+    } else {
+        "touchpad-snap-settings"
+    };
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        candidates.push(exe.with_file_name(name));
+    }
+    candidates.push(std::path::PathBuf::from(name));
+    for exe in candidates {
+        match std::process::Command::new(&exe)
+            .arg("--config")
+            .arg(config_path)
+            .spawn()
+        {
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    bail!(
+        "{name} was not found; build it with `cargo install --path crates/gui` or install it next to touchpad-snap"
+    )
 }
 
 fn parse_action(text: &str) -> Result<Action> {

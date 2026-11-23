@@ -231,6 +231,21 @@ touchpad-snap は、バージョン 0.5 より前は **window-jump** という�
 | `touchpad-snap config init\|import\|schema\|path\|check` | 設定ファイルの作成 / 取り込み / スキーマ表示 / 場所 / 検証。 |
 | `touchpad-snap autostart enable\|disable [--systemd]` | ログイン時の daemon 自動起動（既定は XDG、`--systemd` で systemd ユーザーサービス）。 |
 
+### 設定ウィンドウ
+
+`touchpad-snap settings`（または **touchpad-snap の設定** デスクトップエントリ、
+Windows のトレイメニューの **Settings…**）で、バインディングの一覧・編集
+（トリガー、`when` 条件、アクションの並び、名前、繰り返し、有効/無効）と、
+順序・ジェスチャー・HUD の設定を編集できます。daemon が監視している
+`config.json` をそのまま書き換えるので、保存は約 2 秒で反映されます。
+`config check` と同じ検査結果を表示し、**Check daemon** で動作中の daemon の
+状態も確認できます（英語・日本語）。
+
+GUI は別バイナリです。Linux では `cargo install --locked --path crates/gui`
+または `nix build .#touchpad-snap-gui` でビルドします（静的 musl の daemon
+バイナリには GUI の dlopen 依存をリンクできないため）。Windows のリリース
+zip には `touchpad-snap-settings.exe` が入ります。
+
 ### daemon を使わない場合
 
 コマンドを好きなショートカットツールに割り当てます。GNOME なら **設定 → キーボード → ショートカットの表示とカスタマイズ → カスタムショートカット** でコマンドに `touchpad-snap next` を指定します（ウィンドウの列挙とフォーカスのため、GNOME では拡張は引き続き必要です）。

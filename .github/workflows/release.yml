@@ -43,6 +43,10 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: cargo build --release --locked --target ${{ matrix.target }}
+      # The settings window needs dlopen; the musl Linux build stays the
+      # daemon only, and Linux gets the GUI from source or a distro package.
+      - if: runner.os == 'Windows'
+        run: cargo build -p touchpad-snap-gui --release --locked --target ${{ matrix.target }}
 
       - name: Sign (Windows)
         if: runner.os == 'Windows' && vars.WINDOWS_SIGNING == 'true'
@@ -77,7 +81,7 @@ jobs:
         run: |
           $name = "touchpad-snap-$env:TAG-${{ matrix.target }}"
           New-Item -ItemType Directory -Force "dist/$name" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/touchpad-snap.exe", "target/${{ matrix.target }}/release/touchpad-snapw.exe", README.md, README.ja.md, LICENSE "dist/$name/"
+          Copy-Item "target/${{ matrix.target }}/release/touchpad-snap.exe", "target/${{ matrix.target }}/release/touchpad-snapw.exe", "target/${{ matrix.target }}/release/touchpad-snap-settings.exe", README.md, README.ja.md, LICENSE "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
           Remove-Item -Recurse "dist/$name"
       - uses: actions/upload-artifact@v7

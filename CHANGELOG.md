@@ -26,6 +26,13 @@
   `{ "type": "double_tap", "modifier": "ctrl" }` and
   `{ "type": "sequence", "keys": "Super+Alt+W", "then": "M" }`, on GNOME and
   Windows. (#45)
+- A settings window (`touchpad-snap settings`, the desktop entry, or the
+  Windows tray's *Settings…*): binding list with enable/add/copy/delete/order,
+  an editor for the trigger, app conditions, action chain, name and repeat,
+  the general cycle/gesture/HUD settings, the loader's problems, and the
+  daemon's status. English and Japanese; saves atomically to the same
+  `config.json`. A separate `touchpad-snap-gui` binary depends on core only and
+  is shipped in the Windows zip. (#18)
 - Packaging for AUR, winget and Scoop, generated from the release checksums;
   optional Windows code signing in the release workflow, and a guide for
   submitting the extension to extensions.gnome.org. (#12, #14, #15)

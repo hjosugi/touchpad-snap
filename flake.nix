@@ -17,6 +17,7 @@
         system: pkgs: {
           default = self.packages.${system}.touchpad-snap;
           touchpad-snap = pkgs.callPackage ./nix/package.nix { };
+          touchpad-snap-gui = pkgs.callPackage ./nix/gui.nix { };
           gnome-shell-extension = pkgs.callPackage ./nix/extension.nix { };
         }
       );

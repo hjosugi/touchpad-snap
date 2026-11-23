@@ -31,7 +31,9 @@ The extension is also updated by hand on extensions.gnome.org
 manifests. To publish, copy that folder unchanged into a fork of
 `microsoft/winget-pkgs` under the same path and open a PR. The installer is
 the portable zip: winget installs `touchpad-snap.exe` as `touchpad-snap` and
-the console-less `touchpad-snapw.exe` as `touchpad-snapw`.
+the console-less `touchpad-snapw.exe` as `touchpad-snapw`. The zip also carries
+`touchpad-snap-settings.exe` for the tray's *Settings…* item (winget does not
+add a command for it, so start it from the tray).
 
 Validate locally with `winget validate --manifest <folder>` on Windows, or let
 the winget-pkgs CI do it.

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=touchpad-snap Settings
+Name[ja]=touchpad-snap の設定
+Comment=Edit the gesture and shortcut bindings
+Comment[ja]=ジェスチャーとショートカットの割り当てを編集
+Exec=touchpad-snap settings
+Icon=preferences-system
+Terminal=false
+Categories=Settings;
+Keywords=gesture;touchpad;hotkey;shortcut;settings;

@@ -1,0 +1,19 @@
+[package]
+name = "touchpad-snap-gui"
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Settings window for touchpad-snap"
+license = "MIT"
+repository = "https://github.com/hjosugi/touchpad-snap"
+
+[[bin]]
+name = "touchpad-snap-settings"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.32", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+touchpad-snap-core = { path = "../core" }
+anyhow = "1.0.104"
+dirs = "7.0.0"
+serde_json = "1.0.154"

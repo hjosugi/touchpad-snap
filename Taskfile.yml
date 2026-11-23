@@ -4,6 +4,7 @@ version: '3'
 vars:
   UUID: touchpad-snap@hjosugi.github.io
   EXTENSION_DIR: '{{.HOME}}/.local/share/gnome-shell/extensions'
+  APPLICATIONS_DIR: '{{.HOME}}/.local/share/applications'
 
 tasks:
   default:
@@ -41,6 +42,8 @@ tasks:
       - mkdir -p '{{.EXTENSION_DIR}}'
       - rm -rf '{{.EXTENSION_DIR}}/{{.UUID}}'
       - cp -r --no-preserve=mode gnome-extension/{{.UUID}} '{{.EXTENSION_DIR}}/{{.UUID}}'
+      - mkdir -p '{{.APPLICATIONS_DIR}}'
+      - cp contrib/desktop/touchpad-snap-settings.desktop '{{.APPLICATIONS_DIR}}/'
       - |
         echo
         echo "Installed. Next:"
@@ -59,7 +62,9 @@ tasks:
     desc: Remove what `task install` put in your home directory
     cmds:
       - cargo uninstall touchpad-snap || true
+      - cargo uninstall touchpad-snap-gui || true
       - rm -rf '{{.EXTENSION_DIR}}/{{.UUID}}'
+      - rm -f '{{.APPLICATIONS_DIR}}/touchpad-snap-settings.desktop'
       - touchpad-snap autostart disable 2>/dev/null || rm -f '{{.HOME}}/.config/autostart/touchpad-snap.desktop'
 
   release:

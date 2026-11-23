@@ -20,20 +20,23 @@ pub struct HotkeyStatus {
 /// A menu command, carried out by the daemon loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
+    Settings,
     Reload,
     OpenConfig,
     ToggleAutostart,
     Quit,
 }
 
-const CMD_RELOAD: u32 = 1;
-const CMD_OPEN_CONFIG: u32 = 2;
-const CMD_AUTOSTART: u32 = 3;
-const CMD_QUIT: u32 = 4;
+const CMD_SETTINGS: u32 = 1;
+const CMD_RELOAD: u32 = 2;
+const CMD_OPEN_CONFIG: u32 = 3;
+const CMD_AUTOSTART: u32 = 4;
+const CMD_QUIT: u32 = 5;
 
 /// Maps a `WM_COMMAND` id to what the daemon should do.
 pub fn action_for_command(command: u32) -> Option<Action> {
     match command {
+        CMD_SETTINGS => Some(Action::Settings),
         CMD_RELOAD => Some(Action::Reload),
         CMD_OPEN_CONFIG => Some(Action::OpenConfig),
         CMD_AUTOSTART => Some(Action::ToggleAutostart),
@@ -103,7 +106,7 @@ mod win32 {
     };
 
     use super::{
-        Action, CMD_AUTOSTART, CMD_OPEN_CONFIG, CMD_QUIT, CMD_RELOAD, HotkeyStatus,
+        Action, CMD_AUTOSTART, CMD_OPEN_CONFIG, CMD_QUIT, CMD_RELOAD, CMD_SETTINGS, HotkeyStatus,
         action_for_command, status_lines, tooltip,
     };
     use crate::{autostart, config};
@@ -112,6 +115,7 @@ mod win32 {
     const TRAY_ID: u32 = 1;
     const TRAY_CALLBACK: u32 = WM_APP + 1;
 
+    const SETTINGS_LABEL: &str = "Settings…";
     const RELOAD_LABEL: &str = "Reload config";
     const OPEN_CONFIG_LABEL: &str = "Open config file";
     const AUTOSTART_LABEL: &str = "Start at login";
@@ -293,6 +297,8 @@ mod win32 {
         }
         unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, null()) };
 
+        let settings = wide(SETTINGS_LABEL);
+        unsafe { AppendMenuW(menu, MF_STRING, CMD_SETTINGS as usize, settings.as_ptr()) };
         let reload = wide(RELOAD_LABEL);
         unsafe { AppendMenuW(menu, MF_STRING, CMD_RELOAD as usize, reload.as_ptr()) };
         let open = wide(OPEN_CONFIG_LABEL);
@@ -403,10 +409,11 @@ mod tests {
 
     #[test]
     fn menu_commands_map_to_actions() {
-        assert_eq!(action_for_command(1), Some(Action::Reload));
-        assert_eq!(action_for_command(2), Some(Action::OpenConfig));
-        assert_eq!(action_for_command(3), Some(Action::ToggleAutostart));
-        assert_eq!(action_for_command(4), Some(Action::Quit));
+        assert_eq!(action_for_command(1), Some(Action::Settings));
+        assert_eq!(action_for_command(2), Some(Action::Reload));
+        assert_eq!(action_for_command(3), Some(Action::OpenConfig));
+        assert_eq!(action_for_command(4), Some(Action::ToggleAutostart));
+        assert_eq!(action_for_command(5), Some(Action::Quit));
         assert_eq!(action_for_command(0), None);
         assert_eq!(action_for_command(99), None);
     }

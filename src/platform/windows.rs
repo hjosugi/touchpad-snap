@@ -958,6 +958,32 @@ fn app_name(exe: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Starts `touchpad-snap-settings.exe` next to this binary (or on `PATH`).
+fn open_settings(config_path: &Path) {
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        candidates.push(exe.with_file_name("touchpad-snap-settings.exe"));
+    }
+    candidates.push(std::path::PathBuf::from("touchpad-snap-settings.exe"));
+    for exe in candidates {
+        match std::process::Command::new(&exe)
+            .arg("--config")
+            .arg(config_path)
+            .spawn()
+        {
+            Ok(_) => return,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                eprintln!("touchpad-snap: could not start {}: {e}", exe.display());
+                return;
+            }
+        }
+    }
+    eprintln!(
+        "touchpad-snap: touchpad-snap-settings.exe was not found; install it next to this program"
+    );
+}
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -1144,6 +1170,7 @@ pub fn run_daemon(
                         t.set_status(&statuses);
                     }
                 }
+                Action::Settings => open_settings(config_path),
                 Action::OpenConfig => windows_tray::open_config_file(config_path),
                 Action::ToggleAutostart => windows_tray::toggle_autostart(),
                 Action::Quit => {
