@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-23
+
 ### Added
 
 - The `keys` action types a keyboard shortcut into the focused window,
@@ -41,6 +43,13 @@
   version. (#32)
 - GNOME extension protocol 5 combines per-app swipe claims (4) and `SendKeys`
   (5); older extensions still work without the newer features.
+
+### Fixed
+
+- Releasing a lone `Alt` or `Super` after a claimed swipe no longer opens the
+  focused window's menu bar (Alt), the GNOME overview or the Windows Start
+  menu (Super): the extension and the Windows backend tap an unbound key when
+  a claimed swipe ends with the modifier still down. (#38)
 
 ## [0.5.1] - 2026-11-22
 
