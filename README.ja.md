@@ -239,7 +239,10 @@ Windows のトレイメニューの **Settings…**）で、バインディン�
 順序・ジェスチャー・HUD の設定を編集できます。daemon が監視している
 `config.json` をそのまま書き換えるので、保存は約 2 秒で反映されます。
 `config check` と同じ検査結果を表示し、**Check daemon** で動作中の daemon の
-状態も確認できます（英語・日本語）。
+状態も確認できます（英語・日本語）。**Try** は選択中のバインディングを daemon
+経由で実行し、**Live** は daemon が見ているイベント（ホットキー、スワイプ、
+ピンチ、ホールド、マウス）を流します。バインディングは JSON ファイルへ
+書き出し・取り込みでき、取り込み時は `exec` コマンドを実行前に一覧します。
 
 GUI は別バイナリです。Linux では `cargo install --locked --path crates/gui`
 または `nix build .#touchpad-snap-gui` でビルドします（静的 musl の daemon

@@ -32,7 +32,10 @@
   the general cycle/gesture/HUD settings, the loader's problems, and the
   daemon's status. English and Japanese; saves atomically to the same
   `config.json`. A separate `touchpad-snap-gui` binary depends on core only and
-  is shipped in the Windows zip. (#18)
+  is shipped in the Windows zip. The window also runs the selected binding
+  through the daemon (**Try**), streams the daemon's events, and exports or
+  imports bindings as JSON (imports list every `exec` command first). (#18,
+  #42)
 - Packaging for AUR, winget and Scoop, generated from the release checksums;
   optional Windows code signing in the release workflow, and a guide for
   submitting the extension to extensions.gnome.org. (#12, #14, #15)

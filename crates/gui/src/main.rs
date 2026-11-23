@@ -4,8 +4,10 @@
 //! within the daemon's next poll (about two seconds) without IPC. The model,
 //! validation and schema come from `touchpad-snap-core`.
 
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use egui::{DragValue, Ui};
@@ -52,6 +54,11 @@ struct App {
     when_app: String,
     when_not_app: String,
     dirty_since: Option<usize>,
+    events: Arc<Mutex<std::collections::VecDeque<String>>>,
+    events_child: Option<Child>,
+    export_path: String,
+    import_path: String,
+    pending_import: Option<Vec<Binding>>,
 }
 
 impl App {
@@ -68,9 +75,187 @@ impl App {
             when_app: String::new(),
             when_not_app: String::new(),
             dirty_since: None,
+            events: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            events_child: None,
+            export_path: std::env::temp_dir()
+                .join("touchpad-snap-bindings.json")
+                .display()
+                .to_string(),
+            import_path: String::new(),
+            pending_import: None,
         };
         app.sync_when();
         app
+    }
+
+    fn start_events(&mut self) {
+        if self.events_child.is_some() {
+            return;
+        }
+        self.events
+            .lock()
+            .expect("events")
+            .push_back(format!("— {} —", self.t("listening", "待ち受け中")));
+        match Command::new("touchpad-snap")
+            .arg("events")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(mut child) => {
+                if let Some(stdout) = child.stdout.take() {
+                    let buffer = self.events.clone();
+                    std::thread::spawn(move || {
+                        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                            let mut buffer = buffer.lock().expect("events");
+                            buffer.push_back(line);
+                            while buffer.len() > 300 {
+                                buffer.pop_front();
+                            }
+                        }
+                    });
+                }
+                self.events_child = Some(child);
+            }
+            Err(e) => {
+                self.message = format!("{} {e}", self.t("events:", "events:"));
+            }
+        }
+    }
+
+    fn stop_events(&mut self) {
+        if let Some(mut child) = self.events_child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    fn try_selected(&mut self) {
+        let Some(binding) = self.cfg.bindings.get(self.selected) else {
+            return;
+        };
+        let mut command = Command::new("touchpad-snap");
+        command.arg("run");
+        match &binding.name {
+            Some(name) if !name.trim().is_empty() => {
+                command.arg("--binding").arg(name);
+            }
+            _ => match binding.actions.first() {
+                Some(action) => match serde_json::to_string(action) {
+                    Ok(json) => {
+                        command.arg(json);
+                    }
+                    Err(e) => {
+                        self.message = format!("{e}");
+                        return;
+                    }
+                },
+                None => {
+                    self.message = self
+                        .t("Add an action first.", "先にアクションを追加してください。")
+                        .into();
+                    return;
+                }
+            },
+        }
+        self.message = match command.output() {
+            Ok(output) if output.status.success() => {
+                format!(
+                    "{} {}",
+                    self.t("Ran", "実行しました:"),
+                    String::from_utf8_lossy(&output.stdout).trim()
+                )
+            }
+            Ok(output) => format!(
+                "{} {}",
+                self.t("Error:", "エラー:"),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+            Err(e) => format!("{e}"),
+        };
+    }
+
+    fn export_bindings(&mut self) {
+        let path = PathBuf::from(self.export_path.trim());
+        let text = match serde_json::to_string_pretty(&self.cfg.bindings) {
+            Ok(text) => text + "\n",
+            Err(e) => {
+                self.message = format!("{e}");
+                return;
+            }
+        };
+        self.message = match std::fs::write(&path, text) {
+            Ok(()) => format!(
+                "{} {}",
+                self.t("Exported to", "書き出しました:"),
+                path.display()
+            ),
+            Err(e) => format!("{} {e}", self.t("Error:", "エラー:")),
+        };
+    }
+
+    fn prepare_import(&mut self) {
+        let path = PathBuf::from(self.import_path.trim());
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) => {
+                self.message = format!("{} {e}", self.t("Error:", "エラー:"));
+                return;
+            }
+        };
+        let imported: Vec<Binding> = match serde_json::from_str::<Vec<Binding>>(&text) {
+            Ok(bindings) => bindings,
+            Err(_) => match serde_json::from_str::<serde_json::Value>(&text) {
+                Ok(value) => match value.get("bindings").cloned() {
+                    Some(bindings) => match serde_json::from_value::<Vec<Binding>>(bindings) {
+                        Ok(bindings) => bindings,
+                        Err(e) => {
+                            self.message = format!("{} {e}", self.t("Error:", "エラー:"));
+                            return;
+                        }
+                    },
+                    None => {
+                        self.message = self
+                            .t(
+                                "No bindings in that file.",
+                                "そのファイルにバインディングがありません。",
+                            )
+                            .into();
+                        return;
+                    }
+                },
+                Err(e) => {
+                    self.message = format!("{} {e}", self.t("Error:", "エラー:"));
+                    return;
+                }
+            },
+        };
+        if imported.is_empty() {
+            self.message = self
+                .t(
+                    "No bindings in that file.",
+                    "そのファイルにバインディングがありません。",
+                )
+                .into();
+            return;
+        }
+        self.pending_import = Some(imported);
+    }
+
+    fn apply_import(&mut self) {
+        let Some(imported) = self.pending_import.take() else {
+            return;
+        };
+        self.stop_events();
+        let count = imported.len();
+        self.cfg.bindings.extend(imported);
+        self.selected = self.cfg.bindings.len() - 1;
+        self.sync_when();
+        self.message = format!(
+            "{} {count} {}",
+            self.t("Imported", "取り込みました:"),
+            self.t("binding(s); save to apply", "件。保存で反映されます")
+        );
     }
 
     fn t(&self, en: &'static str, ja: &'static str) -> &'static str {
@@ -210,8 +395,19 @@ impl App {
     }
 }
 
+impl Drop for App {
+    fn drop(&mut self) {
+        self.stop_events();
+    }
+}
+
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(child) = &mut self.events_child
+            && matches!(child.try_wait(), Ok(Some(_)))
+        {
+            self.events_child = None;
+        }
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("touchpad-snap");
@@ -224,6 +420,16 @@ impl eframe::App for App {
                 }
                 if ui.button(self.t("Check daemon", "daemon を確認")).clicked() {
                     self.refresh_status();
+                }
+                if ui.button(self.t("Try", "試す")).clicked() {
+                    self.try_selected();
+                }
+                if self.events_child.is_some() {
+                    if ui.button(self.t("Stop live", "ライブ表示を停止")).clicked() {
+                        self.stop_events();
+                    }
+                } else if ui.button(self.t("Live", "ライブ表示")).clicked() {
+                    self.start_events();
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -302,6 +508,94 @@ impl eframe::App for App {
                     }
                 });
             });
+
+        if self.events_child.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
+        egui::TopBottomPanel::bottom("files")
+            .resizable(true)
+            .default_height(180.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(self.t("Export bindings", "バインディングを書き出す"));
+                    ui.text_edit_singleline(&mut self.export_path);
+                    if ui.button("Export").clicked() {
+                        self.export_bindings();
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(self.t("Import bindings", "バインディングを取り込む"));
+                    ui.text_edit_singleline(&mut self.import_path);
+                    if ui.button("Import").clicked() {
+                        self.prepare_import();
+                    }
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(self.t("Live events", "ライブイベント"));
+                    if ui.button(self.t("Clear", "消去")).clicked() {
+                        self.events.lock().expect("events").clear();
+                    }
+                });
+                egui::ScrollArea::vertical()
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        let lines: Vec<String> = self
+                            .events
+                            .lock()
+                            .expect("events")
+                            .iter()
+                            .cloned()
+                            .collect();
+                        for line in lines {
+                            ui.label(egui::RichText::new(line).monospace().small());
+                        }
+                    });
+            });
+
+        if let Some(imported) = self.pending_import.clone() {
+            let execs: Vec<String> = imported
+                .iter()
+                .flat_map(|binding| binding.actions.iter())
+                .filter_map(|action| match action {
+                    Action::Exec { command, .. } => Some(command.display()),
+                    _ => None,
+                })
+                .collect();
+            egui::Window::new(self.t("Import bindings?", "バインディングを取り込みますか？"))
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "{} {}",
+                        imported.len(),
+                        self.t(
+                            "binding(s) will be added.",
+                            "件のバインディングを追加します。"
+                        )
+                    ));
+                    if !execs.is_empty() {
+                        ui.label(
+                            egui::RichText::new(self.t(
+                                "These commands are run by exec actions:",
+                                "これらのコマンドが exec アクションで実行されます:",
+                            ))
+                            .strong(),
+                        );
+                        for command in &execs {
+                            ui.label(egui::RichText::new(command).monospace());
+                        }
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button(self.t("Add them", "追加する")).clicked() {
+                            self.apply_import();
+                        }
+                        if ui.button(self.t("Cancel", "やめる")).clicked() {
+                            self.pending_import = None;
+                        }
+                    });
+                });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {

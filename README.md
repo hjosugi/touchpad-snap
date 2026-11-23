@@ -317,7 +317,11 @@ general cycle/gesture/HUD settings. It writes the same `config.json` the daemon
 watches, so a save applies within about two seconds; **Reload** re-reads a file
 edited elsewhere. Problems from the same loader as `config check` are shown in
 the window, and **Check daemon** asks the running daemon for its status. The
-window is available in English and Japanese.
+window is available in English and Japanese. **Try** runs the selected binding
+through the daemon, **Live** streams what the daemon sees (hotkeys, swipes,
+pinches, holds, mouse triggers), and bindings can be exported to or imported
+from a JSON file; importing lists every `exec` command before anything is
+added.
 
 The GUI is a separate binary: on Linux it is built from source (`cargo install
 --locked --path crates/gui`, or `nix build .#touchpad-snap-gui`) because the
