@@ -20,13 +20,20 @@
   unconditional one, ties go to file order. On GNOME the app filter travels
   with the swipe claim (protocol 4), so a swipe bound for one app stays the
   shell's everywhere else. (#37)
+- The `app.next` / `app.prev` actions, and the matching `next-app` /
+  `prev-app` commands, move to the most recently used window of the next or
+  previous app, the companion of `window.next` / `window.prev`. Apps are
+  ordered by their most recent window, the usual session rules apply (a held
+  trigger freezes the order and steps one app further), and the HUD counts
+  apps. (#36)
 
 ### Changed
 
 - The configuration is now `config.json`: a list of bindings, each a trigger
   (swipe or hotkey), an optional `name`/`enabled`/`repeat`/`when`, and an
-  ordered action chain (`window.next`, `window.prev`, `delay`, `keys`, `exec`).
-  Window/workspace/app actions follow in the next issues. A malformed or
+  ordered action chain (`window.next`, `window.prev`, `app.next`, `app.prev`,
+  `delay`, `keys`, `exec`). Window-management and workspace actions follow in
+  the next issues. A malformed or
   unsupported binding is reported and skipped instead of failing the whole
   file, and a committed JSON Schema (`schema/config.schema.json`,
   `touchpad-snap config schema`) documents the format. The old `config.toml`

@@ -16,8 +16,9 @@ use crate::{autostart, daemon, legacy, platform, session, systemd};
     name = "touchpad-snap",
     version,
     about = "Switch between windows of the same app with hotkeys and touchpad swipes (GNOME, KDE Plasma, Sway, Hyprland, niri, Windows)",
-    after_help = "Bind `touchpad-snap next` / `touchpad-snap prev` to any shortcut, or run `touchpad-snap daemon` \
-                  for the hotkeys and swipes in the config file."
+    after_help = "Bind `touchpad-snap next` / `prev` (windows of the focused app) or `next-app` / `prev-app` \
+                  (most recently used apps) to any shortcut, or run `touchpad-snap daemon` for the hotkeys \
+                  and swipes in the config file."
 )]
 struct Cli {
     /// Config file [default: ~/.config/touchpad-snap/config.json, %APPDATA%\touchpad-snap\config.json]
@@ -34,6 +35,10 @@ enum Command {
     Next(JumpArgs),
     /// Focus the previous window of the focused app
     Prev(JumpArgs),
+    /// Focus the most recently used window of the next app
+    NextApp(JumpArgs),
+    /// Focus the most recently used window of the previous app
+    PrevApp(JumpArgs),
     /// List windows, grouped by app
     List {
         /// Print the raw snapshot as JSON
@@ -185,8 +190,10 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
     }
     match cli.command {
-        Command::Next(args) => jump(&config_path, Step::Next, args),
-        Command::Prev(args) => jump(&config_path, Step::Prev, args),
+        Command::Next(args) => jump(&config_path, Step::Next, args, Mode::Windows),
+        Command::Prev(args) => jump(&config_path, Step::Prev, args, Mode::Windows),
+        Command::NextApp(args) => jump(&config_path, Step::Next, args, Mode::Apps),
+        Command::PrevApp(args) => jump(&config_path, Step::Prev, args, Mode::Apps),
         Command::List { json } => list(json),
         Command::Activate { id } => platform::connect()?.activate(id),
         Command::Daemon { verbose } => {
@@ -262,7 +269,14 @@ fn dispatch(cli: Cli) -> Result<()> {
     }
 }
 
-fn jump(config_path: &std::path::Path, step: Step, args: JumpArgs) -> Result<()> {
+/// Which list a CLI jump steps through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Windows,
+    Apps,
+}
+
+fn jump(config_path: &std::path::Path, step: Step, args: JumpArgs, mode: Mode) -> Result<()> {
     let mut cfg = config::load(config_path)?;
     if let Some(order) = args.order {
         cfg.cycle.order = order;
@@ -273,13 +287,12 @@ fn jump(config_path: &std::path::Path, step: Step, args: JumpArgs) -> Result<()>
     let backend = platform::connect()?;
     // A shortcut tool runs us once per press; whether its keys are still held
     // is unknown, so MRU sessions go by time.
-    match daemon::jump(
-        backend.as_ref(),
-        &cfg,
-        step,
-        Session::ByTime,
-        &session::default_path(),
-    )? {
+    let state_path = session::default_path();
+    let pick = match mode {
+        Mode::Windows => daemon::jump(backend.as_ref(), &cfg, step, Session::ByTime, &state_path)?,
+        Mode::Apps => daemon::jump_app(backend.as_ref(), &cfg, step, Session::ByTime, &state_path)?,
+    };
+    match pick {
         Pick::Jump(_) | Pick::Alone => Ok(()),
         Pick::NoFocus => bail!("no window is focused"),
     }
@@ -494,6 +507,22 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(Cli::try_parse_from(["touchpad-snap", "next", "--order", "nope"]).is_err());
+    }
+
+    #[test]
+    fn parses_app_jump_commands() {
+        let cli =
+            Cli::try_parse_from(["touchpad-snap", "next-app", "--workspace", "current"]).unwrap();
+        match cli.command {
+            Command::NextApp(a) => assert_eq!(a.workspace, Some(WorkspaceScope::Current)),
+            other => panic!("{other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["touchpad-snap", "prev-app", "--order", "mru"]).unwrap();
+        match cli.command {
+            Command::PrevApp(a) => assert_eq!(a.order, Some(Order::Mru)),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

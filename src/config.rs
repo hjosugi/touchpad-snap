@@ -54,9 +54,12 @@ pub struct Binding {
 impl Binding {
     pub fn repeats(&self) -> bool {
         self.repeat.unwrap_or_else(|| {
-            self.actions
-                .iter()
-                .any(|a| matches!(a, Action::Next | Action::Prev))
+            self.actions.iter().any(|a| {
+                matches!(
+                    a,
+                    Action::Next | Action::Prev | Action::AppNext | Action::AppPrev
+                )
+            })
         })
     }
 
@@ -91,6 +94,12 @@ pub enum Action {
     /// Focus the previous window of the focused app.
     #[serde(rename = "window.prev")]
     Prev,
+    /// Focus the most recently used window of the next app.
+    #[serde(rename = "app.next")]
+    AppNext,
+    /// Focus the most recently used window of the previous app.
+    #[serde(rename = "app.prev")]
+    AppPrev,
     /// Wait before the next action in the chain.
     #[serde(rename = "delay")]
     Delay { ms: u64 },
@@ -143,7 +152,11 @@ impl Action {
                     }
                 }
             },
-            Action::Next | Action::Prev | Action::Delay { .. } => {}
+            Action::Next
+            | Action::Prev
+            | Action::AppNext
+            | Action::AppPrev
+            | Action::Delay { .. } => {}
         }
         Ok(())
     }
@@ -1161,7 +1174,13 @@ fn unsupported_reason(value: &Value) -> Option<String> {
             if let Some(kind) = action.get("type").and_then(Value::as_str)
                 && !matches!(
                     kind,
-                    "window.next" | "window.prev" | "delay" | "exec" | "keys"
+                    "window.next"
+                        | "window.prev"
+                        | "app.next"
+                        | "app.prev"
+                        | "delay"
+                        | "exec"
+                        | "keys"
                 )
             {
                 return Some(format!(
@@ -1489,6 +1508,22 @@ mod tests {
             "actions": [{"type": "window.next"}]
         }));
         assert!(!explicit.repeats());
+    }
+
+    #[test]
+    fn app_actions_parse_and_repeat_by_default() {
+        let next = binding(serde_json::json!({
+            "trigger": {"type": "swipe", "fingers": 3, "modifiers": ["ctrl"], "direction": "left"},
+            "actions": [{"type": "app.next"}]
+        }));
+        assert_eq!(next.actions, vec![Action::AppNext]);
+        assert!(next.repeats());
+        let prev = binding(serde_json::json!({
+            "trigger": {"type": "hotkey", "keys": "Ctrl+Alt+P"},
+            "actions": [{"type": "app.prev"}]
+        }));
+        assert_eq!(prev.actions, vec![Action::AppPrev]);
+        assert!(prev.repeats());
     }
 
     #[test]

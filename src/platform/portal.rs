@@ -431,6 +431,8 @@ fn description(cfg: &Config, index: usize) -> &'static str {
     match cfg.hotkey_binding(index).and_then(|b| b.actions.first()) {
         Some(Action::Next) => "touchpad-snap: focus the next window of this app",
         Some(Action::Prev) => "touchpad-snap: focus the previous window of this app",
+        Some(Action::AppNext) => "touchpad-snap: focus the next app",
+        Some(Action::AppPrev) => "touchpad-snap: focus the previous app",
         _ => "touchpad-snap: switch windows of this app",
     }
 }

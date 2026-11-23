@@ -223,6 +223,7 @@ touchpad-snap は、バージョン 0.5 より前は **window-jump** という�
 | コマンド | |
 |---|---|
 | `touchpad-snap next` / `prev` | フォーカス中のアプリの次 / 前のウィンドウへ。`--order`、`--workspace` で設定を上書き。 |
+| `touchpad-snap next-app` / `prev-app` | 次 / 前のアプリの、最後に使ったウィンドウへ。 |
 | `touchpad-snap daemon [-v]` | 設定したホットキーとスワイプを待ち受ける。 |
 | `touchpad-snap list [--json]` | アプリごとにウィンドウを一覧表示。 |
 | `touchpad-snap activate <id>` | ID を指定して 1 枚フォーカス。 |
@@ -379,9 +380,16 @@ libinput はコンポジタが同じジェスチャーを見るのを止めら�
   （`fingers` は 3〜5、`direction` は left / right / up / down、modifiers は
   `ctrl` / `alt` / `shift` / `super` の組み合わせ）です。
 - `actions` は順番に実行するチェーンです。現在使えるのは `window.next`、
-  `window.prev`、`delay`（`{ "type": "delay", "ms": 100 }`）、`exec`（下記）、
-  `keys`（下記）です。ウィンドウ・ワークスペース・アプリ操作は今後のリリースです。
-  それらを使ったバインディングは警告を出して読み飛ばします。
+  `window.prev`、`app.next`、`app.prev`、`delay`
+  （`{ "type": "delay", "ms": 100 }`）、`exec`（下記）、`keys`（下記）です。
+  ウィンドウ操作とワークスペース操作は今後のリリースです。それらを使った
+  バインディングは警告を出して読み飛ばします。
+- `window.next` / `window.prev` はフォーカス中のアプリのウィンドウ内を移動し、
+  `app.next` / `app.prev` は次 / 前の**アプリ**の最後に使ったウィンドウへ移ります。
+  アプリは最後に使ったウィンドウの順（MRU）で並び、`cycle.workspace` と
+  `cycle.include_minimized` はそのまま適用されます。セッションの規則も同じで、
+  トリガーを押し続けている間は順序が固定されて 1 回ごとに次のアプリへ進み、
+  HUD はアプリ数を数えます。
 - `keys` は、フォーカス中のウィンドウにキーボードショートカットを打ちます
   （`{ "type": "keys", "keys": "Ctrl+Shift+Tab" }`）。書き方はホットキーと同じで、
   修飾キーのあとに、英数字、`F1`〜`F24`、矢印、`Tab`、`Space`、`Return`、`Escape`、
@@ -395,8 +403,8 @@ libinput はコンポジタが同じジェスチャーを見るのを止めら�
 - `name` は任意で、ログと `config check` にだけ使います。
   `enabled: false` にすると、バインディングをファイルに残したまま登録しません。
 - `repeat` は、指を離さずに動かしたとき `gesture.repeat_step` ごとに
-  スワイプを再度発火するかです。省略時は `window.next` / `window.prev` を
-  含むチェーンなら true、それ以外は false です。
+  スワイプを再度発火するかです。省略時は `window.next` / `window.prev` /
+  `app.next` / `app.prev` を含むチェーンなら true、それ以外は false です。
 - `when`（任意）で、フォーカス中のアプリ・OS・デスクトップごとに
   バインディングを絞り込めます。詳しくは下の「条件（`when`）」を参照してください。
 - `Alt` または `Super` を押しながらの横取りしたスワイプも安全です。スワイプが終わると、
@@ -450,7 +458,7 @@ libinput はコンポジタが同じジェスチャーを見るのを止めら�
 
 ウィンドウから得られる変数だけを設定し、daemon 自身の環境は変更しません。
 `exec` は `"repeat": true` を指定しない限り 1 回のスワイプで 1 回だけ発火
-します（`window.next` / `window.prev` を含むチェーンの既定は従来どおり true）。
+します（`window.next` / `window.prev` / `app.next` / `app.prev` を含むチェーンの既定は従来どおり true）。
 `config check` は配列で指定したプログラムが `PATH` に無いときに警告します。
 シェル文字列はチェックできないため、その旨だけを表示します。
 

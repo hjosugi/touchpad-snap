@@ -17,6 +17,13 @@ use crate::platform::{self, Backend, Event};
 use crate::session;
 use crate::when::{AppContext, PlatformDescription, TriggerContext};
 
+/// Which list a jump steps through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Windows,
+    Apps,
+}
+
 /// Jumps once: list, pick, activate, remember.
 pub fn jump(
     backend: &dyn Backend,
@@ -25,21 +32,45 @@ pub fn jump(
     session: Session,
     state_path: &Path,
 ) -> Result<Pick> {
+    jump_mode(backend, cfg, step, session, state_path, Mode::Windows)
+}
+
+/// Like [`jump`], but steps between apps instead of windows of one app.
+pub fn jump_app(
+    backend: &dyn Backend,
+    cfg: &Config,
+    step: Step,
+    session: Session,
+    state_path: &Path,
+) -> Result<Pick> {
+    jump_mode(backend, cfg, step, session, state_path, Mode::Apps)
+}
+
+fn jump_mode(
+    backend: &dyn Backend,
+    cfg: &Config,
+    step: Step,
+    session: Session,
+    state_path: &Path,
+    mode: Mode,
+) -> Result<Pick> {
     let snapshot = backend.snapshot()?;
     let mut state = session::load(state_path);
-    let pick = cycle::pick(
-        &snapshot,
-        step,
-        session,
-        &cfg.cycle_options(),
-        &mut state,
-        session::now_ms(),
-    );
+    let opts = cfg.cycle_options();
+    let now_ms = session::now_ms();
+    let pick = match mode {
+        Mode::Windows => cycle::pick(&snapshot, step, session, &opts, &mut state, now_ms),
+        Mode::Apps => cycle::pick_app(&snapshot, step, session, &opts, &mut state, now_ms),
+    };
     if let Pick::Jump(id) = pick {
         backend.activate(id)?;
         session::save(state_path, &state);
+        let place = match mode {
+            Mode::Windows => place_in_cycle(&snapshot, id, cfg),
+            Mode::Apps => place_in_apps(&snapshot, id, cfg),
+        };
         if cfg.hud.enabled
-            && let Some((index, total)) = place_in_cycle(&snapshot, id, cfg)
+            && let Some((index, total)) = place
             && let Err(e) = backend.show_hud(id, index, total, cfg.hud.duration_ms)
         {
             // The jump itself worked; the overlay is decoration.
@@ -59,6 +90,20 @@ fn place_in_cycle(
     let target = snapshot.get(id)?;
     let list = cycle::candidates(snapshot, target, &cfg.cycle_options());
     let index = list.iter().position(|w| w.id == id)? + 1;
+    Some((index, list.len()))
+}
+
+/// 1-based position of `id`'s app among the apps in cycling order, and how
+/// many apps there are.
+fn place_in_apps(
+    snapshot: &crate::model::Snapshot,
+    id: u64,
+    cfg: &Config,
+) -> Option<(usize, usize)> {
+    let target = snapshot.get(id)?;
+    let list = cycle::app_candidates(snapshot, target, &cfg.cycle_options());
+    let key = target.app_key();
+    let index = list.iter().position(|w| w.app_key() == key)? + 1;
     Some((index, list.len()))
 }
 
@@ -83,6 +128,8 @@ fn action_label(binding: &Binding) -> String {
         .map(|action| match action {
             Action::Next => "Next".to_string(),
             Action::Prev => "Prev".to_string(),
+            Action::AppNext => "AppNext".to_string(),
+            Action::AppPrev => "AppPrev".to_string(),
             Action::Delay { ms } => format!("delay {ms} ms"),
             Action::Exec { command, shell } => {
                 if *shell {
@@ -394,6 +441,14 @@ impl Handler {
                     self.run(backend, Step::Prev, session);
                     session = Session::Held;
                 }
+                Action::AppNext => {
+                    self.run_apps(backend, Step::Next, session);
+                    session = Session::Held;
+                }
+                Action::AppPrev => {
+                    self.run_apps(backend, Step::Prev, session);
+                    session = Session::Held;
+                }
                 Action::Delay { ms } => {
                     // Deliberately blocks the daemon thread for now; a delay
                     // is short and this keeps the action chain in order.
@@ -418,7 +473,21 @@ impl Handler {
     }
 
     fn run(&self, backend: &dyn Backend, step: Step, session: Session) {
-        match jump(backend, &self.cfg, step, session, &self.state_path) {
+        self.log_pick(jump(backend, &self.cfg, step, session, &self.state_path));
+    }
+
+    fn run_apps(&self, backend: &dyn Backend, step: Step, session: Session) {
+        self.log_pick(jump_app(
+            backend,
+            &self.cfg,
+            step,
+            session,
+            &self.state_path,
+        ));
+    }
+
+    fn log_pick(&self, result: Result<Pick>) {
+        match result {
             Ok(pick) => {
                 if self.verbose {
                     eprintln!("touchpad-snap: {pick:?}");
@@ -578,6 +647,48 @@ mod tests {
             },
         );
         assert_eq!(fake.activated.borrow().len(), 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn app_actions_jump_between_apps_and_count_apps_in_the_hud() {
+        let fake = Fake::new();
+        {
+            let mut snap = fake.snap.borrow_mut();
+            snap.windows[0].app_id = "a".into();
+            snap.windows[1].app_id = "a".into();
+            snap.windows[2].app_id = "b".into();
+            snap.windows.push(Window {
+                id: 4,
+                app_id: "c".into(),
+                mru: 3,
+                ..Default::default()
+            });
+        }
+        let dir = std::env::temp_dir().join(format!("touchpad-snap-apps-{}", std::process::id()));
+        let cfg = config_with(serde_json::json!([
+            {"trigger": {"type": "hotkey", "keys": "Ctrl+Alt+J"},
+             "actions": [{"type": "app.next"}]},
+            {"trigger": {"type": "hotkey", "keys": "Ctrl+Alt+K"},
+             "actions": [{"type": "app.prev"}]}
+        ]));
+        let mut h = Handler::new(cfg, dir.join("state.json"), false);
+
+        // The apps are a, b, c in MRU order; the HUD counts apps only.
+        h.handle(&fake, hotkey(0));
+        assert_eq!(*fake.activated.borrow(), vec![3]);
+        assert_eq!(*fake.huds.borrow(), vec![(3, 2, 3)]);
+
+        // Keys still down: one further app, not a toggle back.
+        h.handle(&fake, hotkey(0));
+        assert_eq!(*fake.activated.borrow(), vec![3, 4]);
+        assert_eq!(fake.huds.borrow()[1], (4, 3, 3));
+
+        // Released and stepping back: the older app, b.
+        h.handle(&fake, Event::Released);
+        h.handle(&fake, hotkey(1));
+        assert_eq!(*fake.activated.borrow(), vec![3, 4, 3]);
+        assert_eq!(fake.huds.borrow()[2], (3, 2, 3));
         let _ = std::fs::remove_dir_all(dir);
     }
 
