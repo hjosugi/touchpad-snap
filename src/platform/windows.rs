@@ -47,7 +47,7 @@ use windows_sys::core::{BOOL, GUID, HRESULT};
 use super::windows_hud::HudWindow;
 use super::windows_touchpad::{Sample, Source};
 use super::windows_tray::{self, Action, HotkeyStatus, Tray};
-use super::{Backend, Event};
+use super::{Backend, Event, should_neutralize};
 use crate::config::{Claim, Config};
 use crate::gesture::Phase;
 use crate::hotkey::{Hotkey, Modifier, Mods, Typed, typing_order};
@@ -238,6 +238,27 @@ impl Backend for Win32 {
 
     fn send_keys(&self, keys: Hotkey, held: Mods) -> Result<()> {
         send_typed(keys, held)
+    }
+
+    fn neutralize(&self, mods: Mods) -> Result<()> {
+        if !should_neutralize(mods, held_mods()) {
+            return Ok(());
+        }
+        let inputs = neutralize_inputs();
+        let accepted = unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_ptr(),
+                size_of::<INPUT>() as i32,
+            )
+        };
+        if accepted != inputs.len() as u32 {
+            bail!(
+                "Windows accepted {accepted} of {} key events (a window of an elevated program in front blocks them)",
+                inputs.len()
+            );
+        }
+        Ok(())
     }
 
     fn describe(&self) -> String {
@@ -579,8 +600,19 @@ fn send_typed(keys: Hotkey, held: Mods) -> Result<()> {
 }
 
 /// A virtual key that no program uses (`VK__none_`), for the keystroke that
-/// stops a lone Alt or Win from opening a menu.
+/// stops a lone Alt or Win from opening a menu. The same trick AutoHotkey
+/// uses; Windows reports it as a key press, so the modifier's release is no
+/// longer alone, but no application has a use for it.
 const VK_NEUTRAL: VIRTUAL_KEY = 0xE8;
+
+/// The harmless tap sent after a claimed swipe with a lone Alt or Super still
+/// held: `VK_NEUTRAL` down, then up.
+fn neutralize_inputs() -> [INPUT; 2] {
+    [
+        typed_input(VK_NEUTRAL, false),
+        typed_input(VK_NEUTRAL, true),
+    ]
+}
 
 fn generic_vk(m: Modifier) -> VIRTUAL_KEY {
     match m {
@@ -1081,6 +1113,18 @@ mod tests {
             workspace_for_window(true, true, Some(false), Some(GUID::default()), &mut map),
             Some(1)
         );
+    }
+
+    #[test]
+    fn neutralize_inputs_tap_the_unassigned_key() {
+        let inputs = neutralize_inputs();
+        let vk = |i: usize| unsafe { inputs[i].Anonymous.ki.wVk };
+        let down = |i: usize| unsafe { inputs[i].Anonymous.ki.dwFlags } == 0;
+
+        assert_eq!(vk(0), VK_NEUTRAL);
+        assert_eq!(vk(1), VK_NEUTRAL);
+        assert!(down(0), "the key must go down first");
+        assert!(!down(1), "and come up again");
     }
 
     #[test]

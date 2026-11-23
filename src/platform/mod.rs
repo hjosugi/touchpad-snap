@@ -36,6 +36,16 @@ mod windows_tray;
 #[cfg(target_os = "linux")]
 pub mod wlroots;
 
+/// Whether a claimed swipe's `mods` still need a harmless keystroke: `Alt` or
+/// `Super` was held for the gesture and is physically down at its end. A
+/// claimed swipe is not a key, so without one the eventual release looks like
+/// a lone modifier press to the system. Ctrl and Shift do nothing on their
+/// own and need no tap (nor does a modifier already released).
+pub fn should_neutralize(mods: Mods, still_held: Mods) -> bool {
+    (mods.contains(Mods::ALT) && still_held.contains(Mods::ALT))
+        || (mods.contains(Mods::SUPER) && still_held.contains(Mods::SUPER))
+}
+
 pub trait Backend {
     fn snapshot(&self) -> Result<Snapshot>;
     fn activate(&self, id: u64) -> Result<()>;
@@ -52,6 +62,15 @@ pub trait Backend {
     /// release of a key the user holds).
     fn send_keys(&self, _keys: Hotkey, _held: Mods) -> Result<()> {
         anyhow::bail!("sending keys is not supported on this desktop yet")
+    }
+    /// After a claimed swipe ends, tap a key that means nothing while a lone
+    /// `Alt` or `Super` from `mods` is still held, so its release is not a
+    /// lone modifier press (which opens a menu bar, the overview or Start).
+    /// Driven by the physical state: if the user let the modifier go first,
+    /// there is nothing to do. Backends whose compositor extension does this
+    /// itself (GNOME) keep the default no-op.
+    fn neutralize(&self, _mods: Mods) -> Result<()> {
+        Ok(())
     }
     /// One line for `touchpad-snap doctor`.
     fn describe(&self) -> String;
@@ -384,5 +403,34 @@ mod tests {
             hotkey_source(Some("nonsense"), Some("GNOME")),
             HotkeySource::Gnome
         );
+    }
+}
+
+#[cfg(test)]
+mod neutralize_tests {
+    use super::*;
+
+    #[test]
+    fn alt_or_super_still_down_needs_a_neutral_tap() {
+        assert!(should_neutralize(Mods::ALT, Mods::ALT));
+        assert!(should_neutralize(Mods::SUPER, Mods::SUPER));
+        assert!(should_neutralize(Mods::ALT | Mods::CTRL, Mods::ALT));
+        assert!(should_neutralize(
+            Mods::SUPER | Mods::SHIFT,
+            Mods::SUPER | Mods::SHIFT
+        ));
+    }
+
+    #[test]
+    fn nothing_is_sent_when_the_modifier_is_up_or_meaningless() {
+        assert!(!should_neutralize(Mods::ALT, Mods::default()));
+        assert!(!should_neutralize(Mods::SUPER, Mods::default()));
+        // A different modifier being down does not make Alt a lone press.
+        assert!(!should_neutralize(Mods::ALT, Mods::CTRL));
+        assert!(!should_neutralize(Mods::SUPER, Mods::ALT));
+        // Ctrl and Shift do nothing when released alone.
+        assert!(!should_neutralize(Mods::CTRL, Mods::CTRL));
+        assert!(!should_neutralize(Mods::SHIFT, Mods::SHIFT));
+        assert!(!should_neutralize(Mods::default(), Mods::ALT));
     }
 }

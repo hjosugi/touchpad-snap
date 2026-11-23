@@ -15,6 +15,30 @@ export const MODIFIER_KEYS = Object.freeze([
     [Mods.SHIFT, 0xffe1],
 ]);
 
+// The X keysym of F19 (0xffd0). Tapped while a lone Alt or Super is still
+// held after a claimed swipe, it turns the eventual release into an ordinary
+// modifier release instead of a lone press that opens the menu bar, the
+// overview or Start. F19 is above the keys normal keyboards have and no
+// default GNOME Shell, GTK or Firefox shortcut uses. It is also the highest
+// plain function key the standard Linux keymap maps: F20-F22 are XF86 actions
+// there, and F23/F24 switch to those actions while Super is held (mutter maps
+// keysyms through that keymap, so F35 has no keycode at all). The Windows side
+// uses the unassigned virtual key 0xE8 for the same reason.
+export const NEUTRAL_KEYSYM = 0xffd0;
+
+/**
+ * Whether a claimed swipe's modifiers still need a harmless key tap: Alt or
+ * Super was held for the gesture and is physically down at its end. Ctrl and
+ * Shift do nothing alone; a modifier already released needs nothing either.
+ *
+ * @param {number} mods - Mods bits the swipe was claimed with
+ * @param {number} held - Mods bits physically down right now
+ * @returns {boolean}
+ */
+export function shouldNeutralize(mods, held) {
+    return Boolean((mods & held) & (Mods.ALT | Mods.SUPER));
+}
+
 /**
  * The key events that type a shortcut: its modifiers down, the key tapped,
  * its modifiers up.

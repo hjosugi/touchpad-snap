@@ -531,6 +531,15 @@ default; an explicit `"bindings": []` turns all bindings off.
   for chains containing `window.next` / `window.prev`, false otherwise.
 - `when` (optional) restricts a binding to the focused app, the OS and/or the
   desktop. See [Conditions (`when`)](#conditions-when) below.
+- A claimed swipe with `Alt` or `Super` held is safe. When the swipe ends,
+  touchpad-snap taps a key no application binds (`F19` on GNOME, virtual key
+  `0xE8` — the AutoHotkey trick — on Windows) while the modifier is still
+  down. A claimed swipe is not a key, so without that tap your eventual
+  release would look like a lone modifier press and open the window's menu bar
+  (`Alt`) or the overview/Start (`Super`). The tap is skipped if you released
+  the modifier first, and is never sent for hotkeys or `keys` actions (those
+  already press a real key). A rare app that binds `F19` itself may still see
+  the tap.
 - `cycle`, `gesture` and `hud` work as before: `cycle.order` is `stable`,
   `position` or `mru`; `cycle.workspace` is `all` or `current`;
   `gesture.threshold` is the finger travel before a swipe counts (GNOME's full
@@ -672,9 +681,10 @@ writes the JSON defaults; `config path` prints the JSON path.
 
 Tips:
 
-- Avoid `Super` alone as the swipe modifier: releasing it opens the GNOME
-  Activities overview (and may open the Start menu on Windows). `Ctrl`,
-  `Ctrl+Alt` or `Shift` are safe.
+- `Alt` and `Super` alone are fine as swipe modifiers for claimed swipes:
+  before you let go, touchpad-snap taps a harmless key so the release is not a
+  lone modifier press (which would open a menu bar, the overview or Start).
+  Apps that bind `F19` themselves are the unusual exception.
 - On Windows, turn off the built-in three/four-finger gestures first.
   Precision Touchpads report their contacts as raw HID input, and Windows'
   shell sees the same gesture independently — it cannot be intercepted.
@@ -706,9 +716,9 @@ The e2e test never touches your running desktop: it starts its own
 gnome-shell with its own D-Bus, HOME and dconf. That shell reads no input
 devices, so the touchpad path is tested in the VM instead: a uinput touchpad
 plays three-finger swipes through libinput, mutter and GNOME Shell, and the
-test checks that Ctrl + three fingers left and Alt + three fingers up/down
-jump without switching workspace or opening the overview, while plain three
-fingers still do both. See
+test checks that Ctrl + three fingers left, Alt + three fingers up/down and
+Super + three fingers left jump without switching workspace or opening the
+overview, while plain three fingers still do both. See
 [gnome-extension/README.md](gnome-extension/README.md) for the D-Bus protocol.
 CI runs all of the above on GNOME 46, 48, 49, 50 and 51 (Ubuntu, Debian, Fedora and Arch containers), in the NixOS VM, and on Windows Server 2022.
 

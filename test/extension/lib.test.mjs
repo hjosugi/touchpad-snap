@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
 import {
-    KEYS_WAIT_MS, KeyQueue, MODIFIER_KEYS, Mods, Phase, SwipeClaimer, appMatches,
-    keySequence, modsFromState, patternMatches,
+    KEYS_WAIT_MS, KeyQueue, MODIFIER_KEYS, Mods, NEUTRAL_KEYSYM, Phase, SwipeClaimer,
+    appMatches, keySequence, modsFromState, patternMatches, shouldNeutralize,
 } from '../../gnome-extension/touchpad-snap@hjosugi.github.io/lib.js';
 
 // Clutter.ModifierType values.
@@ -171,4 +171,25 @@ test('KeyQueue drops what has waited too long, and goes on with the rest', () =>
     q.push(0x63, 0, 0);
     q.clear();
     assert.equal(q.pending, false);
+});
+
+test('a lone Alt or Super still down after a swipe needs a neutral key', () => {
+    assert.equal(shouldNeutralize(Mods.ALT, Mods.ALT), true);
+    assert.equal(shouldNeutralize(Mods.SUPER, Mods.SUPER), true);
+    assert.equal(shouldNeutralize(Mods.ALT | Mods.CTRL, Mods.ALT), true);
+    // Already released, or a modifier that means nothing alone.
+    assert.equal(shouldNeutralize(Mods.ALT, 0), false);
+    assert.equal(shouldNeutralize(Mods.SUPER, 0), false);
+    assert.equal(shouldNeutralize(Mods.ALT, Mods.CTRL), false);
+    assert.equal(shouldNeutralize(Mods.CTRL, Mods.CTRL), false);
+    assert.equal(shouldNeutralize(Mods.SHIFT, Mods.SHIFT), false);
+    assert.equal(shouldNeutralize(0, Mods.ALT), false);
+});
+
+test('the neutral key is F19 and is tapped without modifiers', () => {
+    // 0xffbe (F1) + 18 = F19, above the keys real keyboards have.
+    assert.equal(NEUTRAL_KEYSYM, 0xffd0);
+    assert.deepEqual(keySequence(NEUTRAL_KEYSYM, 0), [
+        [NEUTRAL_KEYSYM, true], [NEUTRAL_KEYSYM, false],
+    ]);
 });

@@ -31,7 +31,10 @@ import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {KeyQueue, Phase, SwipeClaimer, keySequence, modsFromState} from './lib.js';
+import {
+    KeyQueue, NEUTRAL_KEYSYM, Phase, SwipeClaimer, keySequence, modsFromState,
+    shouldNeutralize,
+} from './lib.js';
 
 const BUS_NAME = 'io.github.hjosugi.TouchpadSnap';
 const OBJECT_PATH = '/io/github/hjosugi/TouchpadSnap';
@@ -330,6 +333,16 @@ class TouchpadSnapService {
         return modsFromState(state & HOLD_MASK, Clutter.ModifierType);
     }
 
+    // Turns the release of a modifier held through a claimed swipe into an
+    // ordinary one: without a key in between, Alt opens the focused window's
+    // menu bar and Super the overview. F19 stays F19 under either modifier and
+    // is unbound by default; see NEUTRAL_KEYSYM in lib.js. Nothing is sent if
+    // the modifier is already up.
+    _neutralizeLoneModifier(mods) {
+        if (shouldNeutralize(mods, this._heldMods()))
+            this._typeKeys(NEUTRAL_KEYSYM, 0);
+    }
+
     _typeKeys(keysym, mods) {
         if (!this._keyboard) {
             // Clutter.get_default_backend() was removed in GNOME Shell 51.
@@ -498,6 +511,11 @@ class TouchpadSnapService {
         const {stop, emit} = this._claimer.handle(phase, fingers, mods, app, dx, dy);
         if (emit)
             this._emit('Swipe', new GLib.Variant('(uuusdd)', emit));
+        // A claimed swipe is not a key, so a held Alt or Super would look like
+        // a lone press when it is finally released. Tap a harmless key while
+        // it is still down, after the swipe events so the claim is settled.
+        if (emit && (phase === Phase.END || phase === Phase.CANCEL))
+            this._neutralizeLoneModifier(emit[2]);
         return stop ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;
     }
 

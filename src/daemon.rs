@@ -323,6 +323,13 @@ impl Handler {
                 }
                 if matches!(phase, Phase::End | Phase::Cancel) {
                     self.recognizer.end();
+                    // A claimed swipe is not a key: leaving Alt or Super as
+                    // the only thing the system saw before the release would
+                    // open a menu, the overview or Start. The backend taps a
+                    // harmless key if the modifier is still down.
+                    if let Err(e) = backend.neutralize(claim.mods) {
+                        eprintln!("touchpad-snap: could not neutralize the lone modifier: {e:#}");
+                    }
                     self.claim = None;
                     self.context = None;
                     self.gesture_snapshot = None;
@@ -453,6 +460,8 @@ mod tests {
         /// What `send_keys` was asked to type: the shortcut and the
         /// modifiers held for the trigger.
         typed: RefCell<Vec<(String, Mods)>>,
+        /// What `neutralize` was asked to tap around.
+        neutralized: RefCell<Vec<Mods>>,
     }
 
     impl Fake {
@@ -474,6 +483,7 @@ mod tests {
                 activated: RefCell::new(vec![]),
                 huds: RefCell::new(vec![]),
                 typed: RefCell::new(vec![]),
+                neutralized: RefCell::new(vec![]),
             }
         }
     }
@@ -502,6 +512,10 @@ mod tests {
         }
         fn send_keys(&self, keys: Hotkey, held: Mods) -> Result<()> {
             self.typed.borrow_mut().push((keys.to_string(), held));
+            Ok(())
+        }
+        fn neutralize(&self, mods: Mods) -> Result<()> {
+            self.neutralized.borrow_mut().push(mods);
             Ok(())
         }
         fn describe(&self) -> String {
@@ -616,6 +630,38 @@ mod tests {
                 ("escape".to_string(), Mods::SUPER | Mods::ALT),
             ]
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_claimed_swipe_asks_for_neutralizing_only_at_its_end() {
+        let fake = Fake::new();
+        let dir =
+            std::env::temp_dir().join(format!("touchpad-snap-neutral-{}", std::process::id()));
+        let mut h = Handler::new(Config::default(), dir.join("state.json"), false);
+        let alt = |phase| Event::Swipe {
+            phase,
+            claim: Claim::gesture(3, Mods::ALT),
+            app_id: None,
+            dx: 0.0,
+            dy: 0.0,
+        };
+
+        h.handle(&fake, alt(Phase::Begin));
+        h.handle(&fake, alt(Phase::Update));
+        assert!(fake.neutralized.borrow().is_empty());
+
+        h.handle(&fake, alt(Phase::End));
+        assert_eq!(*fake.neutralized.borrow(), vec![Mods::ALT]);
+
+        // A cancelled swipe also leaves the modifier held.
+        h.handle(&fake, alt(Phase::Begin));
+        h.handle(&fake, alt(Phase::Cancel));
+        assert_eq!(*fake.neutralized.borrow(), vec![Mods::ALT, Mods::ALT]);
+
+        // Hotkeys press a real key, so they never need the tap.
+        h.handle(&fake, hotkey(0));
+        assert_eq!(fake.neutralized.borrow().len(), 2);
         let _ = std::fs::remove_dir_all(dir);
     }
 

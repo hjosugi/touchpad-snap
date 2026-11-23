@@ -399,6 +399,14 @@ libinput はコンポジタが同じジェスチャーを見るのを止めら�
   含むチェーンなら true、それ以外は false です。
 - `when`（任意）で、フォーカス中のアプリ・OS・デスクトップごとに
   バインディングを絞り込めます。詳しくは下の「条件（`when`）」を参照してください。
+- `Alt` または `Super` を押しながらの横取りしたスワイプも安全です。スワイプが終わると、
+  修飾キーがまだ押されている間に、どのアプリも使わないキー（GNOME では `F19`、
+  Windows では仮想キー `0xE8`。AutoHotkey と同じ手法）を一瞬だけ送ります。横取りした
+  スワイプはキー入力ではないため、これが無いと修飾キーを離しただけに見え、`Alt` では
+  メニューバー、`Super` ではアクティビティ画面（Windows ではスタート）が開きます。
+  先に修飾キーを離した場合は送りません。ホットキーや `keys` アクションには送りません
+  （すでに本物のキーを押しているため）。`F19` 自体を割り当てている稀なアプリでは、
+  この入力が見えることがあります。
 - `cycle`、`gesture`、`hud` は従来どおりです。`cycle.order` は `stable`、
   `position`、`mru`。`cycle.workspace` は `all` か `current`。
   `gesture.threshold` はスワイプとみなすまでの指の移動量（GNOME の
@@ -543,7 +551,7 @@ daemon のログに出して、それまでの設定のまま動き続けます�
 
 ヒント:
 
-- スワイプの修飾キーに `Super` 単体は避けてください。離したときに GNOME のアクティビティ画面（Windows ではスタートメニュー）が開くことがあります。`Ctrl`、`Ctrl+Alt`、`Shift` なら問題ありません。
+- 横取りしたスワイプなら、修飾キーは `Alt` や `Super` 単体でも問題ありません。離す前に無害なキーを一瞬送るので、修飾キーを単独で押したようにはなりません（メニューバーやアクティビティ画面、スタートが開くのを防ぎます）。`F19` を自前で割り当てているアプリだけは例外です。
 - Windows では先に標準の 3 / 4 本指ジェスチャーをオフにしてください。Precision Touchpad は同じ指の動きを生の HID 入力として報告しますが、Windows のシェルも独立してジェスチャーを処理するため、横取りはできません。
 - ホットキーが登録できない場合（GNOME や他のアプリが使用中）は daemon の起動時に表示されます。`touchpad-snap daemon -v` で全イベントをログに出せます。
 
@@ -568,7 +576,7 @@ nix flake check                # Nix のチェック一式: ビルド（cargo te
                                # module-eval、VM テスト
 ```
 
-e2e テストは動作中のデスクトップには一切触れません。専用の gnome-shell・D-Bus・HOME・dconf を立ち上げて使い捨てます。この gnome-shell は入力デバイスを読まないため、タッチパッドの経路は VM で確かめます。uinput の仮想タッチパッドから 3 本指スワイプを libinput・mutter・GNOME Shell に流し、Ctrl＋3 本指の左スワイプと Alt＋3 本指の上下スワイプでは、ワークスペースもアクティビティ画面も動かずにウィンドウが切り替わること、修飾キーなしの 3 本指では今まで通りどちらも動くことを確認します。D-Bus プロトコルは [gnome-extension/README.md](gnome-extension/README.md) を参照してください。CI では上記すべてを GNOME 46・48・49・50・51（Ubuntu、Debian、Fedora、Arch のコンテナ）、NixOS の VM、Windows Server 2022 で実行しています。
+e2e テストは動作中のデスクトップには一切触れません。専用の gnome-shell・D-Bus・HOME・dconf を立ち上げて使い捨てます。この gnome-shell は入力デバイスを読まないため、タッチパッドの経路は VM で確かめます。uinput の仮想タッチパッドから 3 本指スワイプを libinput・mutter・GNOME Shell に流し、Ctrl＋3 本指の左スワイプ、Alt＋3 本指の上下スワイプ、Super＋3 本指の左スワイプでは、ワークスペースもアクティビティ画面も動かずにウィンドウが切り替わること、修飾キーなしの 3 本指では今まで通りどちらも動くことを確認します。D-Bus プロトコルは [gnome-extension/README.md](gnome-extension/README.md) を参照してください。CI では上記すべてを GNOME 46・48・49・50・51（Ubuntu、Debian、Fedora、Arch のコンテナ）、NixOS の VM、Windows Server 2022 で実行しています。
 
 ## ライセンス
 
