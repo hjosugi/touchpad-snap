@@ -443,6 +443,17 @@
       ],
       "type": "string"
     },
+    "MouseButton": {
+      "description": "A mouse button a [`Trigger::Mouse`] can use.",
+      "enum": [
+        "left",
+        "right",
+        "middle",
+        "back",
+        "forward"
+      ],
+      "type": "string"
+    },
     "Order": {
       "description": "How the windows of one app are ordered while cycling.",
       "oneOf": [
@@ -477,6 +488,16 @@
           "type": "string"
         }
       ]
+    },
+    "ScrollDirection": {
+      "description": "A wheel direction, for [`Trigger::Mouse`] with `scroll`.",
+      "enum": [
+        "up",
+        "down",
+        "left",
+        "right"
+      ],
+      "type": "string"
     },
     "SwipeDirection": {
       "enum": [
@@ -605,6 +626,41 @@
           },
           "required": [
             "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A mouse button, optionally combined with scrolling that button.\nWindows only for now (Wayland does not hand buttons to the shell).",
+          "properties": {
+            "button": {
+              "$ref": "#/$defs/MouseButton"
+            },
+            "modifiers": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Modifier"
+              },
+              "type": "array"
+            },
+            "scroll": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ScrollDirection"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "const": "mouse",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "button"
           ],
           "type": "object"
         }

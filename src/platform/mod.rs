@@ -129,6 +129,12 @@ pub enum Event {
         fingers: u32,
         mods: Mods,
     },
+    /// A mouse button or button + scroll that matched a binding.
+    Mouse {
+        button: crate::config::MouseButton,
+        scroll: Option<crate::config::ScrollDirection>,
+        mods: Mods,
+    },
     /// Motion of a claimed touchpad swipe. `app_id` is the focused app at
     /// Begin when the platform knows it (GNOME protocol 4+); the daemon
     /// otherwise snapshots the focused window at Begin.

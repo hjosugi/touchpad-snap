@@ -317,6 +317,29 @@ impl Handler {
             Event::Cancel => {
                 self.cancel_session(backend);
             }
+            Event::Mouse {
+                button,
+                scroll,
+                mods,
+            } => {
+                let context = capture_context(backend, None);
+                if let Some(binding) = self.cfg.mouse_binding_for(button, scroll, mods, &context) {
+                    control::publish(serde_json::json!({
+                        "event": "mouse",
+                        "button": button.as_str(),
+                        "scroll": scroll.map(|s| s.as_str()),
+                        "mods": mods.0,
+                        "binding": binding.name,
+                        "trigger": binding.trigger.label(),
+                    }));
+                    let snapshot = if binding.has_exec() {
+                        self.context_snapshot(backend)
+                    } else {
+                        None
+                    };
+                    self.run_binding(backend, binding, Session::Fresh, snapshot.as_ref(), mods);
+                }
+            }
             Event::Pinch {
                 phase,
                 fingers,

@@ -110,6 +110,60 @@ pub enum Trigger {
         #[serde(default)]
         modifiers: Vec<Modifier>,
     },
+    /// A mouse button, optionally combined with scrolling that button.
+    /// Windows only for now (Wayland does not hand buttons to the shell).
+    #[serde(rename = "mouse")]
+    Mouse {
+        button: MouseButton,
+        #[serde(default)]
+        modifiers: Vec<Modifier>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scroll: Option<ScrollDirection>,
+    },
+}
+
+/// A mouse button a [`Trigger::Mouse`] can use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+    Back,
+    Forward,
+}
+
+impl MouseButton {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MouseButton::Left => "left",
+            MouseButton::Right => "right",
+            MouseButton::Middle => "middle",
+            MouseButton::Back => "back",
+            MouseButton::Forward => "forward",
+        }
+    }
+}
+
+/// A wheel direction, for [`Trigger::Mouse`] with `scroll`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ScrollDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl ScrollDirection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScrollDirection::Up => "up",
+            ScrollDirection::Down => "down",
+            ScrollDirection::Left => "left",
+            ScrollDirection::Right => "right",
+        }
+    }
 }
 
 fn default_pinch_fingers() -> u32 {
@@ -446,6 +500,24 @@ impl Trigger {
                     format!("hold-{fingers}")
                 } else {
                     format!("hold-{fingers}-{mods}")
+                }
+            }
+            Trigger::Mouse {
+                button,
+                modifiers,
+                scroll,
+            } => {
+                let mods = modifier_names(modifiers);
+                let base = match scroll {
+                    Some(scroll) => {
+                        format!("mouse-{}-scroll-{}", button.as_str(), scroll.as_str())
+                    }
+                    None => format!("mouse-{}", button.as_str()),
+                };
+                if mods.is_empty() {
+                    base
+                } else {
+                    format!("{base}-{mods}")
                 }
             }
         }
@@ -1118,9 +1190,10 @@ impl Config {
                             claim.matches_gesture(*fingers, mods_of(modifiers))
                                 && *bound == direction
                         }
-                        Trigger::Hotkey { .. } | Trigger::Pinch { .. } | Trigger::Hold { .. } => {
-                            false
-                        }
+                        Trigger::Hotkey { .. }
+                        | Trigger::Pinch { .. }
+                        | Trigger::Hold { .. }
+                        | Trigger::Mouse { .. } => false,
                     }
             })
             .collect()
@@ -1257,6 +1330,33 @@ impl Config {
                         &b.trigger,
                         Trigger::Hold { fingers: f, modifiers }
                             if *f == fingers && mods_of(modifiers) == mods
+                    )
+            }),
+            context,
+        )
+        .map(|(_, binding)| binding)
+    }
+
+    /// The one binding that fires for a mouse button or scroll in `context`.
+    pub fn mouse_binding_for(
+        &self,
+        button: MouseButton,
+        scroll: Option<ScrollDirection>,
+        mods: Mods,
+        context: &TriggerContext,
+    ) -> Option<&Binding> {
+        choose(
+            self.bindings.iter().enumerate().filter(|(_, b)| {
+                b.enabled
+                    && matches!(
+                        &b.trigger,
+                        Trigger::Mouse {
+                            button: bound,
+                            modifiers,
+                            scroll: bound_scroll,
+                        } if *bound == button
+                            && *bound_scroll == scroll
+                            && mods_of(modifiers) == mods
                     )
             }),
             context,
@@ -1555,6 +1655,7 @@ fn check_binding(binding: &Binding) -> Result<(), String> {
         Trigger::Hotkey { keys } => {
             Hotkey::parse(keys)?;
         }
+        Trigger::Mouse { .. } => {}
         Trigger::Pinch { fingers, .. } | Trigger::Hold { fingers, .. } => {
             if !(2..=5).contains(fingers) {
                 return Err(format!(
@@ -1817,6 +1918,53 @@ mod tests {
         assert_eq!(
             cfg.bindings[1].actions[2].shell_action(),
             Some("workspace.next")
+        );
+    }
+
+    #[test]
+    fn mouse_triggers_parse_and_match_button_scroll_and_modifiers() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"mouse","button":"back"},"actions":[{"type":"window.prev"}]},
+                    {"trigger":{"type":"mouse","button":"middle","scroll":"up","modifiers":["ctrl"]},
+                     "actions":[{"type":"window.next"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.bindings.len(), 2);
+        let context = TriggerContext::new(PlatformDescription::new("windows", None), None);
+        assert!(
+            cfg.mouse_binding_for(
+                crate::config::MouseButton::Back,
+                None,
+                Mods::default(),
+                &context
+            )
+            .is_some()
+        );
+        assert!(
+            cfg.mouse_binding_for(
+                crate::config::MouseButton::Middle,
+                Some(crate::config::ScrollDirection::Up),
+                Mods::CTRL,
+                &context
+            )
+            .is_some()
+        );
+        assert!(
+            cfg.mouse_binding_for(
+                crate::config::MouseButton::Middle,
+                Some(crate::config::ScrollDirection::Up),
+                Mods::default(),
+                &context
+            )
+            .is_none()
+        );
+        assert_eq!(cfg.bindings[0].trigger.label(), "mouse-back");
+        assert_eq!(
+            cfg.bindings[1].trigger.label(),
+            "mouse-middle-scroll-up-ctrl"
         );
     }
 

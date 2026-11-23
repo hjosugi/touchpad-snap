@@ -8,6 +8,7 @@
 //! as on GNOME work here too; Windows' own three/four-finger gestures have to
 //! be turned off in Settings, since raw input cannot intercept them.
 
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::path::Path;
@@ -17,7 +18,8 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, RECT, RPC_E_CHANGED_MODE,
+    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, RECT,
+    RPC_E_CHANGED_MODE, WPARAM,
 };
 use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows_sys::Win32::Graphics::Gdi::{
@@ -28,6 +30,7 @@ use windows_sys::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     CoUninitialize,
 };
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::{
     AttachThreadInput, CreateMutexW, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
@@ -35,17 +38,20 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
     KEYEVENTF_KEYUP, RegisterHotKey, SendInput, UnregisterHotKey, VIRTUAL_KEY, VK_CONTROL,
-    VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RIGHT, VK_RMENU,
-    VK_RSHIFT, VK_RWIN, VK_SHIFT,
+    VK_LBUTTON, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MBUTTON, VK_MENU,
+    VK_RBUTTON, VK_RCONTROL, VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_XBUTTON1,
+    VK_XBUTTON2,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, DispatchMessageW, EnumChildWindows, EnumWindows, GW_OWNER, GWL_EXSTYLE,
-    GetClassNameW, GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, HWND_TOP, IsIconic, IsWindow,
-    IsWindowVisible, IsZoomed, KillTimer, MSG, PostMessageW, PostQuitMessage, SW_MAXIMIZE,
-    SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOZORDER, SetForegroundWindow, SetTimer,
-    SetWindowPos, ShowWindow, TranslateMessage, WM_CLOSE, WM_HOTKEY, WM_TIMER, WS_EX_APPWINDOW,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    BringWindowToTop, CallNextHookEx, DispatchMessageW, EnumChildWindows, EnumWindows, GW_OWNER,
+    GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW,
+    GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, HHOOK, HWND_TOP,
+    IsIconic, IsWindow, IsWindowVisible, IsZoomed, KillTimer, MSG, MSLLHOOKSTRUCT, PostMessageW,
+    PostQuitMessage, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOZORDER,
+    SetForegroundWindow, SetTimer, SetWindowPos, SetWindowsHookExW, ShowWindow, TranslateMessage,
+    WH_MOUSE_LL, WM_CLOSE, WM_HOTKEY, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MOUSEHWHEEL,
+    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_TIMER, WM_XBUTTONDOWN, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, XBUTTON1,
 };
 use windows_sys::core::{BOOL, GUID, HRESULT};
 
@@ -53,7 +59,7 @@ use super::windows_hud::HudWindow;
 use super::windows_touchpad::{Sample, Source};
 use super::windows_tray::{self, Action, HotkeyStatus, Tray};
 use super::{Backend, Event, should_neutralize};
-use crate::config::{Claim, Config};
+use crate::config::{Claim, Config, MouseButton, ScrollDirection, Trigger};
 use crate::gesture::Phase;
 use crate::hotkey::{Hotkey, Key, Modifier, Mods, Named, Typed, typing_order};
 use crate::legacy;
@@ -976,6 +982,23 @@ pub fn run_daemon(
 
     let mut backend = Win32::new();
     backend.hud = HudWindow::new();
+    set_mouse_claims(&cfg);
+    let mouse_installed = cfg
+        .bindings
+        .iter()
+        .any(|b| matches!(b.trigger, Trigger::Mouse { .. }));
+    let _mouse_hook: HHOOK = if mouse_installed {
+        unsafe {
+            SetWindowsHookExW(
+                WH_MOUSE_LL,
+                Some(mouse_hook),
+                GetModuleHandleW(std::ptr::null()),
+                0,
+            )
+        }
+    } else {
+        std::ptr::null_mut()
+    };
     // Raw input needs a window to target; the touchpad module owns the hidden
     // message-only one. Without a Precision Touchpad it simply never fires.
     let touchpad = Source::new(!cfg.claims().is_empty());
@@ -988,6 +1011,9 @@ pub fn run_daemon(
     // tray's own messages carry their windows and are dispatched to them.
     while unsafe { GetMessageW(&mut msg, null_mut(), 0, 0) } > 0 {
         let mut changed = None;
+        for event in drain_mouse_events() {
+            changed = changed.or(handle(&backend, event));
+        }
         if !msg.hwnd.is_null() {
             unsafe {
                 TranslateMessage(&msg);
@@ -1044,6 +1070,7 @@ pub fn run_daemon(
             (registered, statuses) = register_hotkeys(&parsed, registered);
             hotkeys = parsed;
             cfg = new;
+            set_mouse_claims(&cfg);
             // A reload can change the claims; the next Begin picks them up.
             swipe_claim = None;
             if let Some(t) = tray.as_ref() {
@@ -1090,12 +1117,137 @@ pub fn run_daemon(
 /// How often to look at the modifiers while a hotkey's are held.
 const RELEASE_POLL_MS: u32 = 25;
 
-/// Watches for the release of a hotkey's modifiers, like Alt+Tab waits for
-/// Alt. Polled with `GetAsyncKeyState`, and only while they are held: no
-/// keyboard hook.
+thread_local! {
+    /// Mouse triggers the low-level hook may swallow; updated on reload.
+    static MOUSE_CLAIMS: RefCell<Vec<(MouseButton, Mods, Option<ScrollDirection>)>> =
+        const { RefCell::new(Vec::new()) };
+    /// Matched mouse events, drained by the daemon loop.
+    static MOUSE_EVENTS: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
+}
+
+fn set_mouse_claims(cfg: &Config) {
+    let claims = cfg
+        .bindings
+        .iter()
+        .filter(|b| b.enabled)
+        .filter_map(|b| match &b.trigger {
+            Trigger::Mouse {
+                button,
+                modifiers,
+                scroll,
+            } => Some((*button, crate::hotkey::mods_of(modifiers), *scroll)),
+            _ => None,
+        })
+        .collect();
+    MOUSE_CLAIMS.with(|claims_cell| *claims_cell.borrow_mut() = claims);
+}
+
+fn drain_mouse_events() -> Vec<Event> {
+    MOUSE_EVENTS.with(|events| events.take())
+}
+
+fn mouse_button_down(button: MouseButton) -> bool {
+    let vk = match button {
+        MouseButton::Left => VK_LBUTTON,
+        MouseButton::Right => VK_RBUTTON,
+        MouseButton::Middle => VK_MBUTTON,
+        MouseButton::Back => VK_XBUTTON1,
+        MouseButton::Forward => VK_XBUTTON2,
+    };
+    unsafe { GetAsyncKeyState(vk as i32) < 0 }
+}
+
+fn mouse_claim(button: MouseButton, scroll: Option<ScrollDirection>, mods: Mods) -> bool {
+    // For scroll triggers the button has to be held too (middle + wheel).
+    let button_held = scroll.is_none() || mouse_button_down(button);
+    MOUSE_CLAIMS.with(|claims| {
+        claims.borrow().iter().any(|(b, m, s)| {
+            *b == button && *m == mods && *s == scroll && (scroll.is_none() || button_held)
+        })
+    })
+}
+
+/// `WH_MOUSE_LL`: swallow a button or wheel only when a binding matches it,
+/// and queue the event for the daemon loop.
+unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code < 0 {
+        return unsafe { CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam) };
+    }
+    let info = unsafe { &*(lparam as *const MSLLHOOKSTRUCT) };
+    let mods = held_mods();
+    let message = wparam as u32;
+    let (button, scroll) = match message {
+        WM_MOUSEWHEEL => {
+            let delta = ((info.mouseData >> 16) & 0xffff) as u16 as i16;
+            let scroll = if delta > 0 {
+                ScrollDirection::Up
+            } else {
+                ScrollDirection::Down
+            };
+            // Which button is held is part of the match below.
+            (mouse_held_button(), Some(scroll))
+        }
+        WM_MOUSEHWHEEL => {
+            let delta = ((info.mouseData >> 16) & 0xffff) as u16 as i16;
+            let scroll = if delta > 0 {
+                ScrollDirection::Right
+            } else {
+                ScrollDirection::Left
+            };
+            (mouse_held_button(), Some(scroll))
+        }
+        WM_LBUTTONDOWN => (Some(MouseButton::Left), None),
+        WM_RBUTTONDOWN => (Some(MouseButton::Right), None),
+        WM_MBUTTONDOWN => (Some(MouseButton::Middle), None),
+        WM_XBUTTONDOWN => {
+            let which = (info.mouseData >> 16) as u16;
+            let button = if which == XBUTTON1 {
+                MouseButton::Back
+            } else {
+                MouseButton::Forward
+            };
+            (Some(button), None)
+        }
+        _ => {
+            return unsafe { CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam) };
+        }
+    };
+    let Some(button) = button else {
+        return unsafe { CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam) };
+    };
+    if !mouse_claim(button, scroll, mods) {
+        return unsafe { CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam) };
+    }
+    MOUSE_EVENTS.with(|events| {
+        events.borrow_mut().push(Event::Mouse {
+            button,
+            scroll,
+            mods,
+        });
+    });
+    1
+}
+
+/// The first mouse button held down, for wheel events; middle is the common
+/// "hold a button and scroll" choice, and X buttons follow.
+fn mouse_held_button() -> Option<MouseButton> {
+    [
+        MouseButton::Middle,
+        MouseButton::Back,
+        MouseButton::Forward,
+        MouseButton::Right,
+        MouseButton::Left,
+    ]
+    .into_iter()
+    .find(|button| mouse_button_down(*button))
+}
+
 /// Id for the temporary `modifiers+Esc` grab of a held session.
 const CANCEL_HOTKEY_ID: i32 = 0xF000;
 
+/// Watches for the release of a hotkey's modifiers, like Alt+Tab waits for
+/// Alt. Polled with `GetAsyncKeyState`, and only while they are held: no
+/// keyboard hook.
 #[derive(Default)]
 struct Release {
     timer: usize,
