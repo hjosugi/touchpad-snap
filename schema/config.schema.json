@@ -32,6 +32,34 @@
         },
         {
           "additionalProperties": false,
+          "description": "Focus the most recently used window of the next app.",
+          "properties": {
+            "type": {
+              "const": "app.next",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Focus the most recently used window of the previous app.",
+          "properties": {
+            "type": {
+              "const": "app.prev",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Wait before the next action in the chain.",
           "properties": {
             "ms": {

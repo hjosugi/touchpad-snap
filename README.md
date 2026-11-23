@@ -294,6 +294,7 @@ same; every name changed with it. After installing touchpad-snap as above:
 | Command | |
 |---|---|
 | `touchpad-snap next` / `prev` | Focus the next / previous window of the focused app. `--order`, `--workspace` override the config. |
+| `touchpad-snap next-app` / `prev-app` | Focus the most recently used window of the next / previous app. |
 | `touchpad-snap daemon [-v]` | Serve the configured hotkeys and swipes. |
 | `touchpad-snap list [--json]` | Show windows grouped by app. |
 | `touchpad-snap activate <id>` | Focus one window by id. |
@@ -510,9 +511,16 @@ default; an explicit `"bindings": []` turns all bindings off.
   (`fingers` 3–5; `direction` left, right, up or down; modifiers any of
   `ctrl`, `alt`, `shift`, `super`).
 - `actions` is a chain run in order. Today these are `window.next`,
-  `window.prev`, `delay` (`{ "type": "delay", "ms": 100 }`), `exec` (below)
-  and `keys` (below). Window/workspace/app actions are future releases; a
-  binding that uses one is skipped with a warning.
+  `window.prev`, `app.next`, `app.prev`, `delay`
+  (`{ "type": "delay", "ms": 100 }`), `exec` (below) and `keys` (below).
+  Window-management and workspace actions are future releases; a binding that
+  uses one is skipped with a warning.
+- `window.next` / `window.prev` stay within the focused app's windows;
+  `app.next` / `app.prev` move to the most recently used window of the next /
+  previous **app**. Apps are ordered by their most recent window, while
+  `cycle.workspace` and `cycle.include_minimized` still apply; the session
+  rules are the same, so a held trigger freezes the order and steps one app
+  further per repeat, and the HUD counts apps.
 - `keys` types a keyboard shortcut into the focused window,
   `{ "type": "keys", "keys": "Ctrl+Shift+Tab" }`: the same syntax as hotkeys
   (modifiers, then a letter, digit, `F1`–`F24`, an arrow, `Tab`, `Space`,
@@ -528,7 +536,8 @@ default; an explicit `"bindings": []` turns all bindings off.
   `enabled: false` keeps a binding in the file without registering it.
 - `repeat` says whether a swipe binding fires again every further
   `gesture.repeat_step` while the fingers stay down. When omitted it is true
-  for chains containing `window.next` / `window.prev`, false otherwise.
+  for chains containing `window.next` / `window.prev` / `app.next` /
+  `app.prev`, false otherwise.
 - `when` (optional) restricts a binding to the focused app, the OS and/or the
   desktop. See [Conditions (`when`)](#conditions-when) below.
 - `cycle`, `gesture` and `hud` work as before: `cycle.order` is `stable`,
@@ -572,7 +581,8 @@ the moment the trigger started, and the trigger itself:
 
 Only the variables a window provides are set; the daemon's own environment is
 never changed. An `exec` binding fires once per swipe unless `"repeat": true`
-(the default stays true for chains containing `window.next` / `window.prev`).
+(the default stays true for chains containing `window.next` / `window.prev` /
+`app.next` / `app.prev`).
 `config check` warns when the program of an argument list is not on `PATH`;
 a shell string cannot be checked and is only reported as such.
 

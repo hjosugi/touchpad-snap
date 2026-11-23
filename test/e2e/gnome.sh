@@ -258,6 +258,41 @@ ok "exec: a hotkey runs an argument list and a shell string, with the trigger in
 # What the daemon logged since `mark_log`.
 mark_log() { log_mark=$(wc -l <"$daemon_log"); }
 logged() { tail -n +$((log_mark + 1)) "$daemon_log" | grep -q "$1"; }
+
+# app.next / app.prev are the companion of window.next / window.prev: they
+# hop between apps, while the window actions stay inside one app.
+cat > "$XDG_CONFIG_HOME/touchpad-snap/config.json" <<'JSON'
+{
+  "bindings": [
+    {
+      "trigger": { "type": "hotkey", "keys": "Ctrl+Alt+J" },
+      "actions": [ { "type": "app.next" } ]
+    },
+    {
+      "trigger": { "type": "hotkey", "keys": "Ctrl+Alt+K" },
+      "actions": [ { "type": "app.prev" } ]
+    }
+  ]
+}
+JSON
+mark_log
+wait_for "daemon to load the app bindings" 15 logged "reloaded .*config.json"
+# Make the editors the most recent app and the calculator the second.
+focus_on "$calc"
+focus_on "${editors[0]}"
+sleep 0.5
+mark_log
+press_keys Control_L Alt_L j || fail "injecting Ctrl+Alt+J failed"
+wait_for "app.next → calculator" 15 focus_is "$calc"
+logged "hotkey Ctrl+Alt+J → AppNext (new press)" || fail "daemon did not log the app.next hotkey"
+press_keys Control_L Alt_L k || fail "injecting Ctrl+Alt+K failed"
+wait_for "app.prev → first editor" 15 focus_is "${editors[0]}"
+# Keeping the modifiers down steps one app further; with two apps it wraps.
+press_keys +Control_L +Alt_L j @150 j @300 -Alt_L -Control_L || fail "injecting a held Ctrl+Alt+J+J failed"
+wait_for "held Ctrl+Alt, J, J wraps back to the editor" 15 focus_is "${editors[0]}"
+logged "hotkey Ctrl+Alt+J → AppNext (keys still held)" || fail "the second app press did not continue the session"
+ok "app.next/app.prev hop between apps; a held session steps further"
+
 mark_log
 cat > "$XDG_CONFIG_HOME/touchpad-snap/config.json" <<'JSON'
 { "cycle": { "order": "mru" } }

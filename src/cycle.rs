@@ -237,6 +237,152 @@ pub fn pick(
     Pick::Jump(target)
 }
 
+/// The sentinel [`CycleState::app_key`] for app cycling.
+///
+/// Window cycling keys its state by the app of the focused window
+/// ([`Window::app_key`], which is a desktop id, `wm_class:…` or `pid:…`), so
+/// this value cannot collide with it. Keeping both sessions in one
+/// [`CycleState`] means the CLI and the daemon share the same file and the
+/// focus hint, without one kind of jump continuing the other's session.
+pub const APPS_KEY: &str = "__apps__";
+
+/// Picks the app to activate, and updates `state` for the next call.
+///
+/// Apps are always ordered most-recently-used, regardless of
+/// [`CycleOptions::order`] (that setting is about a single app's windows).
+/// The session rules are the same as for [`pick`]: while the trigger is held
+/// (or within `mru_session_ms`), the order frozen at the start is walked one
+/// app further per step; a new session starts from the focused app, with the
+/// app the previous session started from next.
+pub fn pick_app(
+    snapshot: &Snapshot,
+    step: Step,
+    session: Session,
+    opts: &CycleOptions,
+    state: &mut Option<CycleState>,
+    now_ms: u64,
+) -> Pick {
+    // As in `pick`: trust the last jump over a lagging snapshot, but only
+    // while it still agrees with what the backend reports (or reports
+    // nothing).
+    let focused_now = snapshot.focused().map(|w| w.id);
+    let recent = state
+        .as_ref()
+        .filter(|s| s.app_key == APPS_KEY)
+        .filter(|s| now_ms.saturating_sub(s.updated_ms) <= opts.focus_hint_ms)
+        .filter(|s| focused_now.is_none_or(|f| f == s.last_origin || f == s.last_target))
+        .and_then(|s| snapshot.get(s.last_target));
+
+    let Some(focused) = recent
+        .or_else(|| snapshot.focused())
+        .or_else(|| snapshot.windows.iter().min_by_key(|w| w.mru))
+    else {
+        return Pick::NoFocus;
+    };
+
+    let live = app_candidates(snapshot, focused, opts);
+    if live.len() < 2 {
+        return Pick::Alone;
+    }
+    let live_ids: Vec<u64> = live.iter().map(|w| w.id).collect();
+
+    // Continue only our own previous app session, and only when it ended on
+    // the app that is focused now.
+    let previous = state
+        .as_ref()
+        .filter(|s| s.app_key == APPS_KEY && s.last_target == focused.id);
+    let running = previous.filter(|s| match session {
+        Session::Held => true,
+        Session::Fresh => false,
+        Session::ByTime => now_ms.saturating_sub(s.updated_ms) <= opts.mru_session_ms,
+    });
+
+    let mut order: Vec<u64> = match running {
+        // Continue the frozen order, dropping apps that have gone (new ones
+        // are appended below).
+        Some(s) => s
+            .order
+            .iter()
+            .copied()
+            .filter(|id| live_ids.contains(id))
+            .collect(),
+        // A new session starts here. If the last one ended here too, the app
+        // it started from comes next, not the ones it passed on the way.
+        None => {
+            let mut order = vec![focused.id];
+            if let Some(&origin) = previous.and_then(|s| s.order.first())
+                && origin != focused.id
+                && live_ids.contains(&origin)
+            {
+                order.push(origin);
+            }
+            order
+        }
+    };
+    for id in &live_ids {
+        if !order.contains(id) {
+            order.push(*id);
+        }
+    }
+    let len = order.len();
+    let i = order.iter().position(|&id| id == focused.id).unwrap_or(0);
+    let target = match step {
+        Step::Next => order[(i + 1) % len],
+        Step::Prev => order[(i + len - 1) % len],
+    };
+    *state = Some(CycleState {
+        app_key: APPS_KEY.into(),
+        order,
+        last_origin: focused.id,
+        last_target: target,
+        updated_ms: now_ms,
+    });
+    Pick::Jump(target)
+}
+
+/// One representative window per app, most recently used first.
+///
+/// A window that is filtered out by `include_minimized`/`workspace` still
+/// keeps its app a candidate by standing in for it; the focused window always
+/// represents its own app, so the caller can find where the session is.
+pub fn app_candidates<'a>(
+    snapshot: &'a Snapshot,
+    focused: &Window,
+    opts: &CycleOptions,
+) -> Vec<&'a Window> {
+    let mut reps: Vec<&Window> = Vec::new();
+    for window in &snapshot.windows {
+        let included = window.id == focused.id
+            || (opts.include_minimized || !window.minimized)
+                && (opts.workspace == WorkspaceScope::All
+                    || window.is_on_workspace(snapshot.active_workspace));
+        if !included {
+            continue;
+        }
+        let key = window.app_key();
+        match reps.iter_mut().find(|rep| rep.app_key() == key) {
+            Some(rep) => {
+                let better = window.id == focused.id
+                    || (rep.id != focused.id && (window.mru, window.id) < (rep.mru, rep.id));
+                if better {
+                    *rep = window;
+                }
+            }
+            None => reps.push(window),
+        }
+    }
+    reps.sort_by_key(|w| (w.mru, w.id));
+    reps
+}
+
+/// The representative window ids from [`app_candidates`], in cycling order.
+pub fn app_order(snapshot: &Snapshot, focused: &Window, opts: &CycleOptions) -> Vec<u64> {
+    app_candidates(snapshot, focused, opts)
+        .into_iter()
+        .map(|w| w.id)
+        .collect()
+}
+
 /// The focused window's app-mates that may be jumped to, in cycling order.
 /// Always contains `focused` itself.
 pub fn candidates<'a>(
@@ -711,5 +857,293 @@ mod tests {
             )),
             4
         );
+    }
+
+    fn focused(s: &Snapshot) -> &Window {
+        s.focused().expect("a focused window")
+    }
+
+    #[test]
+    fn apps_are_ordered_by_their_most_recent_window() {
+        let opts = CycleOptions::default();
+        // App a's representative is its most recent window (10), not 40.
+        let s = snap(
+            vec![
+                win(10, "a", 0),
+                win(20, "b", 1),
+                win(30, "c", 2),
+                win(40, "a", 3),
+            ],
+            10,
+        );
+        assert_eq!(app_order(&s, focused(&s), &opts), vec![10, 20, 30]);
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut None,
+                0
+            )),
+            20
+        );
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Prev,
+                Session::ByTime,
+                &opts,
+                &mut None,
+                0
+            )),
+            30
+        );
+
+        // From b, next is the most recent other app.
+        let s = snap(
+            vec![
+                win(10, "a", 1),
+                win(20, "b", 0),
+                win(30, "c", 2),
+                win(40, "a", 3),
+            ],
+            20,
+        );
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut None,
+                0
+            )),
+            10
+        );
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Prev,
+                Session::ByTime,
+                &opts,
+                &mut None,
+                0
+            )),
+            30
+        );
+    }
+
+    #[test]
+    fn app_cycle_respects_workspace_and_minimized_filters() {
+        let opts = CycleOptions {
+            include_minimized: false,
+            workspace: WorkspaceScope::Current,
+            ..Default::default()
+        };
+        let mut a = win(1, "a", 0);
+        a.workspace = 0;
+        let mut b = win(2, "b", 1);
+        b.minimized = true;
+        let mut c = win(3, "c", 2);
+        c.workspace = 1;
+        let mut d = win(4, "d", 3);
+        d.workspace = -1; // sticky
+        let s = snap(vec![a, b, c, d], 1);
+        assert_eq!(app_order(&s, focused(&s), &opts), vec![1, 4]);
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut None,
+                0
+            )),
+            4
+        );
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Prev,
+                Session::ByTime,
+                &opts,
+                &mut None,
+                0
+            )),
+            4
+        );
+
+        // Even a filtered focused window keeps its app in the cycle.
+        let mut a = win(1, "a", 0);
+        a.minimized = true;
+        let s = snap(vec![a, win(2, "b", 1)], 1);
+        assert_eq!(app_order(&s, focused(&s), &opts), vec![1, 2]);
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut None,
+                0
+            )),
+            2
+        );
+    }
+
+    #[test]
+    fn a_single_app_is_alone_and_no_windows_means_no_focus() {
+        let opts = CycleOptions::default();
+        let s = snap(vec![win(1, "a", 0), win(2, "a", 1)], 1);
+        assert_eq!(
+            pick_app(&s, Step::Next, Session::ByTime, &opts, &mut None, 0),
+            Pick::Alone
+        );
+        let empty = Snapshot::default();
+        assert_eq!(
+            pick_app(&empty, Step::Next, Session::ByTime, &opts, &mut None, 0),
+            Pick::NoFocus
+        );
+    }
+
+    #[test]
+    fn app_sessions_freeze_the_order_while_held_and_after_release() {
+        let opts = CycleOptions::default(); // order does not affect apps
+        let mut state = None;
+        let s = snap(vec![win(1, "a", 0), win(2, "b", 1), win(3, "c", 2)], 1);
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::Fresh,
+                &opts,
+                &mut state,
+                0
+            )),
+            2
+        );
+        // Held for longer than mru_session_ms still continues the session.
+        let s = after(&s, 2);
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::Held,
+                &opts,
+                &mut state,
+                5_000
+            )),
+            3
+        );
+        // Released: a new press goes back to the app the session started from.
+        let s = after(&s, 3);
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::Fresh,
+                &opts,
+                &mut state,
+                9_000
+            )),
+            1
+        );
+
+        // By-time sessions dig on within mru_session_ms, then start over.
+        let mut state = None;
+        let s = snap(vec![win(1, "a", 0), win(2, "b", 1), win(3, "c", 2)], 1);
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                0
+            )),
+            2
+        );
+        let s = after(&s, 2);
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                500
+            )),
+            3
+        );
+        let s = after(&s, 3);
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::ByTime,
+                &opts,
+                &mut state,
+                10_000
+            )),
+            1
+        );
+    }
+
+    #[test]
+    fn the_app_sentinel_keeps_window_and_app_sessions_apart() {
+        let mut state = None;
+        let opts = mru_opts();
+        let s = snap(
+            vec![
+                win(3, "b", 0),
+                win(4, "b", 1),
+                win(1, "a", 2),
+                win(2, "a", 3),
+            ],
+            3,
+        );
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::Fresh,
+                &opts,
+                &mut state,
+                0
+            )),
+            1
+        );
+        assert_eq!(state.as_ref().unwrap().app_key, APPS_KEY);
+
+        // A window jump right after must not continue the app session.
+        let s = after(&s, 1);
+        assert_eq!(
+            jump(pick(
+                &s,
+                Step::Next,
+                Session::Fresh,
+                &opts,
+                &mut state,
+                9_000
+            )),
+            2
+        );
+        assert_eq!(state.as_ref().unwrap().app_key, "a");
+
+        // ...and the next app jump starts a fresh app session.
+        let s = after(&s, 2);
+        assert_eq!(
+            jump(pick_app(
+                &s,
+                Step::Next,
+                Session::Fresh,
+                &opts,
+                &mut state,
+                9_500
+            )),
+            3
+        );
+        assert_eq!(state.as_ref().unwrap().app_key, APPS_KEY);
     }
 }
