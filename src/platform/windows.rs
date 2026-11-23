@@ -55,7 +55,7 @@ use super::windows_tray::{self, Action, HotkeyStatus, Tray};
 use super::{Backend, Event, should_neutralize};
 use crate::config::{Claim, Config};
 use crate::gesture::Phase;
-use crate::hotkey::{Hotkey, Modifier, Mods, Typed, typing_order};
+use crate::hotkey::{Hotkey, Key, Modifier, Mods, Named, Typed, typing_order};
 use crate::legacy;
 use crate::model::{Snapshot, Window};
 
@@ -1005,6 +1005,10 @@ pub fn run_daemon(
             changed = match msg.message {
                 WM_HOTKEY => match msg.wParam as usize {
                     0 => None,
+                    id if id == CANCEL_HOTKEY_ID as usize => {
+                        unsafe { UnregisterHotKey(null_mut(), CANCEL_HOTKEY_ID) };
+                        handle(&backend, Event::Cancel)
+                    }
                     id => {
                         let index = id - 1;
                         let mods = hotkeys.get(index).map(|h| h.mods).unwrap_or_default();
@@ -1013,6 +1017,12 @@ pub fn run_daemon(
                         let changed = handle(&backend, Event::Hotkey { index, tracked });
                         if tracked {
                             release.watch(mods);
+                            let escape = Hotkey {
+                                mods,
+                                key: Key::Named(Named::Escape),
+                            };
+                            let (flags, vk) = escape.to_windows();
+                            unsafe { RegisterHotKey(null_mut(), CANCEL_HOTKEY_ID, flags, vk) };
                         }
                         changed
                     }
@@ -1020,6 +1030,7 @@ pub fn run_daemon(
                 WM_TIMER if msg.wParam == tick => handle(&backend, Event::Tick),
                 WM_TIMER if release.is_timer(msg.wParam) => {
                     if release.poll() {
+                        unsafe { UnregisterHotKey(null_mut(), CANCEL_HOTKEY_ID) };
                         handle(&backend, Event::Released)
                     } else {
                         None
@@ -1082,6 +1093,9 @@ const RELEASE_POLL_MS: u32 = 25;
 /// Watches for the release of a hotkey's modifiers, like Alt+Tab waits for
 /// Alt. Polled with `GetAsyncKeyState`, and only while they are held: no
 /// keyboard hook.
+/// Id for the temporary `modifiers+Esc` grab of a held session.
+const CANCEL_HOTKEY_ID: i32 = 0xF000;
+
 #[derive(Default)]
 struct Release {
     timer: usize,

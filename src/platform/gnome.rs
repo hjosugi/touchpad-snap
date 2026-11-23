@@ -487,6 +487,7 @@ fn parse_signal(msg: &Message, version: u32, hotkeys: &[Hotkey]) -> Option<Event
             Some(Event::Hotkey { index, tracked })
         }
         "AcceleratorReleased" => Some(Event::Released),
+        "Cancel" => Some(Event::Cancel),
         "Swipe" => {
             let (phase, fingers, mods, app_id, dx, dy) = if supports_app_claims(version) {
                 let (phase, fingers, mods, app_id, dx, dy): (u32, u32, u32, String, f64, f64) =

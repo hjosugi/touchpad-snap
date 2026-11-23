@@ -189,6 +189,23 @@ try {
     }
     Ok 'control: events streams a hotkey'
 
+    # Esc while the hotkey's modifiers are still held returns to the window
+    # the session started from.
+    & $Bin activate $n[0].id
+    WaitFor 'first Notepad focused before Esc' { (Focused) -eq $n[0].id }
+    [void][Win]::Send(0x11, $false)  # Ctrl down
+    [void][Win]::Send(0x12, $false)  # Alt down
+    [void][Win]::Send(0x4E, $false)  # N down
+    WaitFor 'Ctrl+Alt+N starts a session' { (Focused) -eq $n[1].id }
+    Start-Sleep -Milliseconds 200
+    [void][Win]::Send(0x1B, $false)  # Esc down
+    [void][Win]::Send(0x1B, $true)   # Esc up
+    WaitFor 'Esc returns to the first Notepad' { (Focused) -eq $n[0].id }
+    [void][Win]::Send(0x4E, $true)
+    [void][Win]::Send(0x12, $true)
+    [void][Win]::Send(0x11, $true)
+    Ok 'Esc cancels a held session and returns to its origin'
+
     # Alt+Tab-style sessions with order = "mru": presses while Ctrl+Alt stay
     # down dig further back however slowly they come; releasing commits, and
     # the windows passed on the way do not count as used.

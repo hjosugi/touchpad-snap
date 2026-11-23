@@ -310,6 +310,9 @@ impl Handler {
                 }
                 self.held = false;
             }
+            Event::Cancel => {
+                self.cancel_session(backend);
+            }
             Event::Swipe {
                 phase,
                 claim,
@@ -391,6 +394,50 @@ impl Handler {
             }
         }
         None
+    }
+
+    /// Esc during a held session: back to the window it started from, then
+    /// forget the session so the next trigger starts fresh.
+    fn cancel_session(&mut self, backend: &dyn Backend) {
+        self.held = false;
+        self.recognizer.end();
+        self.claim = None;
+        self.context = None;
+        self.gesture_snapshot = None;
+        self.swipe_jumps = 0;
+        self.fired.clear();
+
+        let Ok(snapshot) = backend.snapshot() else {
+            return;
+        };
+        let mut state = session::load(&self.state_path);
+        let was_apps = state.as_ref().is_some_and(|s| s.app_key == cycle::APPS_KEY);
+        let pick = cycle::cancel(&snapshot, &mut state);
+        session::save(&self.state_path, &None);
+        control::publish(serde_json::json!({"event": "cancel"}));
+        match pick {
+            Pick::Jump(id) => {
+                if let Err(e) = backend.activate(id) {
+                    eprintln!("touchpad-snap: cancel: {e:#}");
+                    return;
+                }
+                let place = if was_apps {
+                    place_in_apps(&snapshot, id, &self.cfg)
+                } else {
+                    place_in_cycle(&snapshot, id, &self.cfg)
+                };
+                if self.cfg.hud.enabled
+                    && let Some((index, total)) = place
+                    && let Err(e) = backend.show_hud(id, index, total, self.cfg.hud.duration_ms)
+                {
+                    eprintln!("touchpad-snap: could not show the overlay: {e:#}");
+                }
+                if self.verbose {
+                    eprintln!("touchpad-snap: cancel → {id}");
+                }
+            }
+            Pick::Alone | Pick::NoFocus => {}
+        }
     }
 
     /// Takes over a reloaded config and resets gesture state that belonged to

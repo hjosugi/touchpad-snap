@@ -90,6 +90,7 @@ fn keysym(name: &str) -> Option<u32> {
         "Page_Up" => 0xff55,
         "End" => 0xff57,
         "F9" => 0xffc6,
+        "Escape" => 0xff1b,
         s if s.len() == 1 && s.is_ascii() => s.as_bytes()[0] as u32,
         _ => return None,
     })

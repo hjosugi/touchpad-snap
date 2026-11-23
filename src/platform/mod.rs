@@ -111,6 +111,9 @@ pub enum Event {
     Hotkey { index: usize, tracked: bool },
     /// The modifiers of the last tracked hotkey have all been released.
     Released,
+    /// Esc was pressed while a session was held: go back to where it started
+    /// and end it.
+    Cancel,
     /// Motion of a claimed touchpad swipe. `app_id` is the focused app at
     /// Begin when the platform knows it (GNOME protocol 4+); the daemon
     /// otherwise snapshots the focused window at Begin.

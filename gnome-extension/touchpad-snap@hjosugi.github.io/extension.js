@@ -86,6 +86,7 @@ const IFACE_XML = `
     <signal name="AcceleratorReleased">
       <arg type="s" name="action"/>
     </signal>
+    <signal name="Cancel"/>
     <signal name="Swipe">
       <arg type="u" name="phase"/>
       <arg type="u" name="fingers"/>
@@ -226,6 +227,11 @@ class TouchpadSnapService {
         this._releaseId = 0;
         this._releaseMask = 0;
         this._releaseAction = '';
+        // Whether a hotkey session or a claimed swipe is in progress; a
+        // temporary Escape grab cancels it.
+        this._sessionActive = false;
+        this._swipeActive = false;
+        this._cancelAction = 0;
     }
 
     start() {
@@ -560,7 +566,10 @@ class TouchpadSnapService {
 
     _release() {
         this._keyQueue.clear();
+        this._sessionActive = false;
+        this._swipeActive = false;
         this._stopReleaseWatch();
+        this._stopCancel();
         this._ungrabAll();
         this._claimer.setClaims([]);
         if (this._ownerWatchId) {
@@ -592,6 +601,14 @@ class TouchpadSnapService {
     // -- input -----------------------------------------------------------------
 
     _onAccelerator(action) {
+        if (this._cancelAction && action === this._cancelAction) {
+            this._stopCancel();
+            this._stopReleaseWatch();
+            this._sessionActive = false;
+            this._swipeActive = false;
+            this._emit('Cancel', new GLib.Variant('()'));
+            return;
+        }
         const name = this._accels.get(action);
         if (name === undefined)
             return;
@@ -607,6 +624,8 @@ class TouchpadSnapService {
         const [, , mods] = global.get_pointer();
         this._releaseMask = mods & HOLD_MASK;
         this._releaseAction = name;
+        this._sessionActive = true;
+        this._grabCancel(this._releaseMask);
         if (!this._releaseId) {
             this._releaseId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, RELEASE_POLL_MS,
                 () => this._pollRelease());
@@ -618,8 +637,40 @@ class TouchpadSnapService {
         if (mods & this._releaseMask)
             return GLib.SOURCE_CONTINUE;
         this._releaseId = 0;
+        this._sessionActive = false;
+        this._stopCancel();
         this._emit('AcceleratorReleased', new GLib.Variant('(s)', [this._releaseAction]));
         return GLib.SOURCE_REMOVE;
+    }
+
+    _grabCancel(mask) {
+        this._stopCancel();
+        let accel = '';
+        if (mask & Clutter.ModifierType.SHIFT_MASK)
+            accel += '<Shift>';
+        if (mask & Clutter.ModifierType.CONTROL_MASK)
+            accel += '<Ctrl>';
+        if (mask & Clutter.ModifierType.MOD1_MASK)
+            accel += '<Alt>';
+        if (mask & Clutter.ModifierType.SUPER_MASK)
+            accel += '<Super>';
+        accel += 'Escape';
+        let action = global.display.grab_accelerator(accel, Meta.KeyBindingFlags.NONE);
+        if (action === Meta.KeyBindingAction.NONE)
+            action = global.display.grab_accelerator('Escape', Meta.KeyBindingFlags.NONE);
+        if (action === Meta.KeyBindingAction.NONE)
+            return;
+        Main.wm.allowKeybinding(Meta.external_binding_name_for_action(action), HOTKEY_MODES);
+        this._cancelAction = action;
+    }
+
+    _stopCancel() {
+        if (!this._cancelAction)
+            return;
+        Main.wm.allowKeybinding(
+            Meta.external_binding_name_for_action(this._cancelAction), Shell.ActionMode.NONE);
+        global.display.ungrab_accelerator(this._cancelAction);
+        this._cancelAction = 0;
     }
 
     _stopReleaseWatch() {
@@ -654,12 +705,20 @@ class TouchpadSnapService {
 
         const fingers = event.get_touchpad_gesture_finger_count();
         const [dx, dy] = event.get_gesture_motion_delta_unaccelerated();
+        if (phase === Phase.BEGIN && this._claimer.hasClaims) {
+            this._swipeActive = true;
+            this._grabCancel(0);
+        }
         const {stop, emit} = this._claimer.handle(phase, fingers, mods, app, dx, dy);
         if (emit)
             this._emit('Swipe', new GLib.Variant('(uuusdd)', emit));
         // A claimed swipe is not a key, so a held Alt or Super would look like
         // a lone press when it is finally released. Tap a harmless key while
         // it is still down, after the swipe events so the claim is settled.
+        if (phase === Phase.END || phase === Phase.CANCEL) {
+            this._swipeActive = false;
+            this._stopCancel();
+        }
         if (emit && (phase === Phase.END || phase === Phase.CANCEL))
             this._neutralizeLoneModifier(emit[2]);
         return stop ? Clutter.EVENT_STOP : Clutter.EVENT_PROPAGATE;

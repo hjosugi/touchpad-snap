@@ -343,6 +343,21 @@ wait_for "the release to be reported" 15 logged "hotkey modifiers released"
 press_keys Super_L Alt_L n || fail "injecting Super+Alt+N failed"
 wait_for "next press → back to the first editor" 15 focus_is "${editors3[0]}"
 ok "hotkey sessions: held modifiers keep digging past the timeout, release commits"
+
+# Esc while the modifiers are still held goes back to where the session
+# started and ends it. The extension sends the signal when it sees Esc; a
+# virtual keyboard cannot reach a dynamically grabbed Escape, so the signal
+# is emitted here while the real keys are held.
+focus_on "${editors[0]}"
+mark_log
+press_keys +Super_L +Alt_L n @800 -Alt_L -Super_L &
+inject_pid=$!
+sleep 0.4
+gdbus emit --session --object-path /io/github/hjosugi/TouchpadSnap     --signal io.github.hjosugi.TouchpadSnap1.Cancel >/dev/null
+wait "$inject_pid" || fail "injecting Super+Alt+N failed"
+wait_for "the cancel to be logged" 15 logged "cancel"
+wait_for "Esc → back to the first editor" 15 focus_is "${editors[0]}"
+ok "Esc cancels a held session and returns to its origin"
 rm "$XDG_CONFIG_HOME/touchpad-snap/config.json"
 
 # The `keys` action: Super+Alt+K types Ctrl+Shift+N, which opens a new text

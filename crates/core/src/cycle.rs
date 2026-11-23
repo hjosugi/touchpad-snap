@@ -106,6 +106,9 @@ pub struct CycleState {
     /// MRU order frozen at the start of the session (`Order::Mru` only),
     /// beginning with the window the session started from.
     pub order: Vec<u64>,
+    /// The window the session started from; what a cancel returns to.
+    #[serde(default)]
+    pub session_origin: u64,
     /// The window that was current when the last jump was made.
     #[serde(default)]
     pub last_origin: u64,
@@ -216,9 +219,11 @@ pub fn pick(
                 Step::Prev => (i + len - 1) % len,
             };
             let target = order[next];
+            let session_origin = running.map(|s| s.session_origin).unwrap_or(focused.id);
             *state = Some(CycleState {
                 app_key: key,
                 order,
+                session_origin,
                 last_origin: focused.id,
                 last_target: target,
                 updated_ms: now_ms,
@@ -227,14 +232,41 @@ pub fn pick(
         }
     };
 
+    let continuing = state
+        .as_ref()
+        .filter(|s| s.app_key == key)
+        .filter(|s| match session {
+            Session::Held => true,
+            Session::Fresh => false,
+            Session::ByTime => now_ms.saturating_sub(s.updated_ms) <= opts.mru_session_ms,
+        });
     *state = Some(CycleState {
         app_key: key,
         order: Vec::new(),
+        session_origin: continuing.map(|s| s.session_origin).unwrap_or(focused.id),
         last_origin: focused.id,
         last_target: target,
         updated_ms: now_ms,
     });
     Pick::Jump(target)
+}
+
+/// Returns to the window the current session started from and forgets the
+/// session. `Esc` while the keys or fingers are still down calls this.
+pub fn cancel(snapshot: &Snapshot, state: &mut Option<CycleState>) -> Pick {
+    let Some(session) = state.take() else {
+        return Pick::Alone;
+    };
+    let origin = if session.session_origin != 0 {
+        session.session_origin
+    } else {
+        session.order.first().copied().unwrap_or(0)
+    };
+    if origin != 0 && snapshot.get(origin).is_some() {
+        Pick::Jump(origin)
+    } else {
+        Pick::Alone
+    }
 }
 
 /// The sentinel [`CycleState::app_key`] for app cycling.
@@ -333,6 +365,7 @@ pub fn pick_app(
     *state = Some(CycleState {
         app_key: APPS_KEY.into(),
         order,
+        session_origin: running.map(|s| s.session_origin).unwrap_or(focused.id),
         last_origin: focused.id,
         last_target: target,
         updated_ms: now_ms,
@@ -690,6 +723,37 @@ mod tests {
             jump(pick(&s, Step::Next, Session::Fresh, &opts, &mut state, 100)),
             1
         );
+    }
+
+    #[test]
+    fn cancel_returns_to_the_session_origin_and_forgets_it() {
+        let opts = CycleOptions::default();
+        let mut state = None;
+        let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::Fresh, &opts, &mut state, 0)),
+            2
+        );
+        let s = after(&s, 2);
+        assert_eq!(jump(cancel(&s, &mut state)), 1);
+        assert!(state.is_none());
+
+        let opts = mru_opts();
+        let mut state = None;
+        let s = snap(vec![win(1, "a", 0), win(2, "a", 1), win(3, "a", 2)], 1);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::Fresh, &opts, &mut state, 0)),
+            2
+        );
+        let s = after(&s, 2);
+        assert_eq!(
+            jump(pick(&s, Step::Next, Session::Held, &opts, &mut state, 100)),
+            3
+        );
+        let s = after(&s, 3);
+        assert_eq!(jump(cancel(&s, &mut state)), 1);
+        assert!(state.is_none());
+        assert_eq!(cancel(&s, &mut state), Pick::Alone);
     }
 
     #[test]
