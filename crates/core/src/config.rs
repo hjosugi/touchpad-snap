@@ -53,6 +53,9 @@ pub struct Binding {
 
 impl Binding {
     pub fn repeats(&self) -> bool {
+        if self.is_destructive() {
+            return false;
+        }
         self.repeat.unwrap_or_else(|| {
             self.actions.iter().any(|a| {
                 matches!(
@@ -61,6 +64,13 @@ impl Binding {
                 )
             })
         })
+    }
+
+    /// Actions that must not run again within one held gesture.
+    pub fn is_destructive(&self) -> bool {
+        self.actions
+            .iter()
+            .any(|a| matches!(a, Action::WindowClose))
     }
 
     /// Whether the chain runs a program, and so needs the trigger window.
@@ -116,6 +126,89 @@ pub enum Action {
     /// modifiers the trigger itself is held with are released for it.
     #[serde(rename = "keys")]
     Keys { keys: String },
+    /// Minimize the focused window.
+    #[serde(rename = "window.minimize")]
+    WindowMinimize,
+    /// Maximize the focused window.
+    #[serde(rename = "window.maximize")]
+    WindowMaximize,
+    /// Restore the focused window from maximized or fullscreen.
+    #[serde(rename = "window.restore")]
+    WindowRestore,
+    /// Toggle maximization of the focused window.
+    #[serde(rename = "window.toggle_maximize")]
+    WindowToggleMaximize,
+    /// Toggle fullscreen for the focused window (no general Windows API;
+    /// bind `keys` with F11 there).
+    #[serde(rename = "window.fullscreen")]
+    WindowFullscreen,
+    /// Close the focused window. Never repeats within one gesture.
+    #[serde(rename = "window.close")]
+    WindowClose,
+    /// Move and resize the focused window to a half or quarter of its monitor.
+    #[serde(rename = "window.tile")]
+    WindowTile { to: TileTarget },
+    /// Move the focused window to the next or previous monitor.
+    #[serde(rename = "window.move_to_monitor")]
+    WindowMoveToMonitor { to: Direction },
+    /// Move the focused window to the next or previous workspace.
+    #[serde(rename = "window.move_to_workspace")]
+    WindowMoveToWorkspace { to: Direction },
+    /// Switch to the next workspace / virtual desktop.
+    #[serde(rename = "workspace.next")]
+    WorkspaceNext,
+    /// Switch to the previous workspace / virtual desktop.
+    #[serde(rename = "workspace.prev")]
+    WorkspacePrev,
+    /// Toggle the overview (Mission Control / Task View).
+    #[serde(rename = "overview.toggle")]
+    OverviewToggle,
+}
+
+/// Where [`Action::WindowTile`] puts the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum TileTarget {
+    Left,
+    Right,
+    Top,
+    Bottom,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl TileTarget {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TileTarget::Left => "left",
+            TileTarget::Right => "right",
+            TileTarget::Top => "top",
+            TileTarget::Bottom => "bottom",
+            TileTarget::TopLeft => "top-left",
+            TileTarget::TopRight => "top-right",
+            TileTarget::BottomLeft => "bottom-left",
+            TileTarget::BottomRight => "bottom-right",
+        }
+    }
+}
+
+/// Next or previous, for monitor/workspace moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Direction {
+    Next,
+    Prev,
+}
+
+impl Direction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Direction::Next => "next",
+            Direction::Prev => "prev",
+        }
+    }
 }
 
 impl Action {
@@ -156,9 +249,78 @@ impl Action {
             | Action::Prev
             | Action::AppNext
             | Action::AppPrev
-            | Action::Delay { .. } => {}
+            | Action::Delay { .. }
+            | Action::WindowMinimize
+            | Action::WindowMaximize
+            | Action::WindowRestore
+            | Action::WindowToggleMaximize
+            | Action::WindowFullscreen
+            | Action::WindowClose
+            | Action::WindowTile { .. }
+            | Action::WindowMoveToMonitor { .. }
+            | Action::WindowMoveToWorkspace { .. }
+            | Action::WorkspaceNext
+            | Action::WorkspacePrev
+            | Action::OverviewToggle => {}
         }
         Ok(())
+    }
+}
+
+impl Action {
+    /// The extension's `WindowAction` name and argument, when this acts on a
+    /// window.
+    pub fn window_action(&self) -> Option<(&'static str, String)> {
+        match self {
+            Action::WindowMinimize => Some(("window.minimize", String::new())),
+            Action::WindowMaximize => Some(("window.maximize", String::new())),
+            Action::WindowRestore => Some(("window.restore", String::new())),
+            Action::WindowToggleMaximize => Some(("window.toggle_maximize", String::new())),
+            Action::WindowFullscreen => Some(("window.fullscreen", String::new())),
+            Action::WindowClose => Some(("window.close", String::new())),
+            Action::WindowTile { to } => Some(("window.tile", to.as_str().into())),
+            Action::WindowMoveToMonitor { to } => {
+                Some(("window.move_to_monitor", to.as_str().into()))
+            }
+            Action::WindowMoveToWorkspace { to } => {
+                Some(("window.move_to_workspace", to.as_str().into()))
+            }
+            _ => None,
+        }
+    }
+
+    /// The extension's `ShellAction` name, when this acts on the desktop.
+    pub fn shell_action(&self) -> Option<&'static str> {
+        match self {
+            Action::WorkspaceNext => Some("workspace.next"),
+            Action::WorkspacePrev => Some("workspace.prev"),
+            Action::OverviewToggle => Some("overview.toggle"),
+            _ => None,
+        }
+    }
+
+    /// A short label for logs and status.
+    pub fn label(&self) -> String {
+        match self {
+            Action::Next => "window.next".into(),
+            Action::Prev => "window.prev".into(),
+            Action::AppNext => "app.next".into(),
+            Action::AppPrev => "app.prev".into(),
+            Action::Delay { ms } => format!("delay {ms} ms"),
+            Action::Exec { command, .. } => format!("exec {}", command.display()),
+            Action::Keys { keys } => format!("keys {keys}"),
+            action => action
+                .window_action()
+                .map(|(name, arg)| {
+                    if arg.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{name} {arg}")
+                    }
+                })
+                .or_else(|| action.shell_action().map(str::to_string))
+                .unwrap_or_default(),
+        }
     }
 }
 
@@ -1452,7 +1614,7 @@ mod tests {
                 "bindings": [
                     {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+J"},"when":{"title":"Firefox"},"actions":[{"type":"window.next"}]},
                     {"trigger":{"type":"tap","fingers":3},"actions":[{"type":"window.next"}]},
-                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"actions":[{"type":"window.close"}]},
+                    {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+K"},"actions":[{"type":"window.frobnicate"}]},
                     {"trigger":{"type":"hotkey","keys":"Ctrl+Alt+L"},"actions":[{"type":"window.next"}]}
                 ]
             }"#,
@@ -1466,6 +1628,36 @@ mod tests {
                 .all(|p| p.severity == Severity::Warning)
         );
         assert!(cfg.report().problems[0].message.contains("when.title"));
+    }
+
+    #[test]
+    fn window_and_desktop_actions_parse_and_close_never_repeats() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"name":"close","repeat":true,"trigger":{"type":"swipe","fingers":3,"direction":"down"},
+                     "actions":[{"type":"window.close"}]},
+                    {"name":"tile","trigger":{"type":"hotkey","keys":"Ctrl+Alt+T"},
+                     "actions":[{"type":"window.tile","to":"bottom-right"},
+                                {"type":"window.move_to_monitor","to":"next"},
+                                {"type":"workspace.next"},
+                                {"type":"overview.toggle"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.bindings.len(), 2);
+        assert!(
+            !cfg.bindings[0].repeats(),
+            "close must not repeat in one gesture"
+        );
+        assert_eq!(
+            cfg.bindings[1].actions[0].window_action(),
+            Some(("window.tile", "bottom-right".into()))
+        );
+        assert_eq!(
+            cfg.bindings[1].actions[2].shell_action(),
+            Some("workspace.next")
+        );
     }
 
     #[test]

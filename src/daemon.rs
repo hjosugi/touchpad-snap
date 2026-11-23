@@ -126,25 +126,10 @@ fn action_label(binding: &Binding) -> String {
     binding
         .actions
         .iter()
-        .map(|action| match action {
-            Action::Next => "Next".to_string(),
-            Action::Prev => "Prev".to_string(),
-            Action::AppNext => "AppNext".to_string(),
-            Action::AppPrev => "AppPrev".to_string(),
-            Action::Delay { ms } => format!("delay {ms} ms"),
-            Action::Exec { command, shell } => {
-                if *shell {
-                    format!("exec (shell) {}", command.display())
-                } else {
-                    format!("exec {}", command.display())
-                }
-            }
-            Action::Keys { keys } => format!("keys {keys}"),
-        })
+        .map(Action::label)
         .collect::<Vec<_>>()
         .join(" + ")
 }
-
 /// Watches the config file by content: the daemon reads it on every tick
 /// (it is tiny), which needs no platform file-watching API and does not
 /// depend on mtime granularity.
@@ -526,6 +511,16 @@ pub fn run_actions(
                 // Config gets here.
                 Err(e) => eprintln!("touchpad-snap: keys: {e}"),
             },
+            action => {
+                let result = match (action.window_action(), action.shell_action()) {
+                    (Some((name, arg)), _) => backend.window_action(name, &arg),
+                    (None, Some(name)) => backend.shell_action(name),
+                    (None, None) => Ok(()),
+                };
+                if let Err(e) = result {
+                    eprintln!("touchpad-snap: {}: {e:#}", action.label());
+                }
+            }
         }
     }
 }

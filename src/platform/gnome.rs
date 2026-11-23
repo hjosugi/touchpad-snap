@@ -33,7 +33,7 @@ pub const INTERFACE: &str = "io.github.hjosugi.TouchpadSnap1";
 /// version 3 the AcceleratorReleased signal, version 4 per-app swipe claims
 /// and the app id in the Swipe signal, and version 5 SendKeys (the `keys`
 /// action). Older extensions still work, without the features above.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 pub const EXTENSION_UUID: &str = "touchpad-snap@hjosugi.github.io";
 
 /// Whether an extension of `version` understands app-filtered swipe claims.
@@ -90,6 +90,7 @@ impl Gnome {
                 }
                 3 => "per-app swipe claims and the `keys` action",
                 4 => "the `keys` action",
+                5 => "the window, workspace and overview actions",
                 _ => "nothing",
             };
             eprintln!(
@@ -165,6 +166,30 @@ impl Gnome {
 impl Backend for Gnome {
     fn protocol(&self) -> Option<u32> {
         self.protocol_version().ok()
+    }
+
+    fn window_action(&self, name: &str, arg: &str) -> Result<()> {
+        let ok: bool = self
+            .proxy
+            .call("WindowAction", &(0u64, name, arg))
+            .map_err(|e| self.explain(e))?;
+        if !ok {
+            anyhow::bail!(
+                "GNOME refused {name} {arg} (no focused window, or an unsupported action)"
+            );
+        }
+        Ok(())
+    }
+
+    fn shell_action(&self, name: &str) -> Result<()> {
+        let ok: bool = self
+            .proxy
+            .call("ShellAction", &(name,))
+            .map_err(|e| self.explain(e))?;
+        if !ok {
+            anyhow::bail!("GNOME refused {name}");
+        }
+        Ok(())
     }
 
     fn snapshot(&self) -> Result<Snapshot> {

@@ -39,7 +39,7 @@ import {
 const BUS_NAME = 'io.github.hjosugi.TouchpadSnap';
 const OBJECT_PATH = '/io/github/hjosugi/TouchpadSnap';
 const INTERFACE = 'io.github.hjosugi.TouchpadSnap1';
-const PROTOCOL_VERSION = 5;
+const PROTOCOL_VERSION = 6;
 
 const IFACE_XML = `
 <node>
@@ -69,6 +69,16 @@ const IFACE_XML = `
     </method>
     <method name="SetSwipeClaims">
       <arg type="a(uuas)" direction="in" name="claims"/>
+    </method>
+    <method name="WindowAction">
+      <arg type="t" direction="in" name="id"/>
+      <arg type="s" direction="in" name="action"/>
+      <arg type="s" direction="in" name="arg"/>
+      <arg type="b" direction="out" name="ok"/>
+    </method>
+    <method name="ShellAction">
+      <arg type="s" direction="in" name="action"/>
+      <arg type="b" direction="out" name="ok"/>
     </method>
     <signal name="AcceleratorActivated">
       <arg type="s" name="action"/>
@@ -308,6 +318,142 @@ class TouchpadSnapService {
             return false;
         this._hud.show(window, index, total, durationMs);
         return true;
+    }
+
+    // Window and desktop actions for the daemon. One entry point each, so a
+    // new action needs no protocol bump: an unknown name returns false and
+    // the daemon logs it. `id` 0 means the focused window.
+    WindowAction(id, action, arg) {
+        const window = id === 0 ? global.display.focus_window :
+            global.display.list_all_windows().find(w => w.get_id() === id);
+        if (!window)
+            return false;
+
+        const time = global.display.get_current_time_roundtrip();
+        switch (action) {
+        case 'window.minimize':
+            window.minimize();
+            return true;
+        case 'window.maximize':
+            window.maximize();
+            return true;
+        case 'window.restore':
+            if (window.minimized)
+                window.unminimize();
+            window.unmaximize();
+            if (window.is_fullscreen())
+                window.unmake_fullscreen();
+            return true;
+        case 'window.toggle_maximize':
+            if (window.maximized_horizontally && window.maximized_vertically)
+                window.unmaximize();
+            else
+                window.maximize();
+            return true;
+        case 'window.fullscreen':
+            if (window.is_fullscreen())
+                window.unmake_fullscreen();
+            else
+                window.make_fullscreen();
+            return true;
+        case 'window.close':
+            window.delete(time);
+            return true;
+        case 'window.tile':
+            return this._tile(window, arg);
+        case 'window.move_to_monitor': {
+            const count = global.display.get_n_monitors();
+            if (count < 2)
+                return false;
+            const current = window.get_monitor();
+            const next = arg === 'prev' ?
+                (current + count - 1) % count : (current + 1) % count;
+            window.move_to_monitor(next);
+            return true;
+        }
+        case 'window.move_to_workspace': {
+            const count = global.workspace_manager.n_workspaces;
+            if (count < 2)
+                return false;
+            const current = window.get_workspace()?.index() ??
+                global.workspace_manager.get_active_workspace_index();
+            const next = arg === 'prev' ?
+                (current + count - 1) % count : (current + 1) % count;
+            const workspace = global.workspace_manager.get_workspace_by_index(next);
+            if (!workspace)
+                return false;
+            window.change_workspace(workspace);
+            return true;
+        }
+        default:
+            return false;
+        }
+    }
+
+    _tile(window, target) {
+        const area = Main.layoutManager.getWorkAreaForMonitor(window.get_monitor());
+        const halfWidth = Math.floor(area.width / 2);
+        const halfHeight = Math.floor(area.height / 2);
+        let x = area.x;
+        let y = area.y;
+        let width = halfWidth;
+        let height = halfHeight;
+        switch (target) {
+        case 'left':
+            height = area.height;
+            break;
+        case 'right':
+            x = area.x + halfWidth;
+            height = area.height;
+            break;
+        case 'top':
+            width = area.width;
+            break;
+        case 'bottom':
+            width = area.width;
+            y = area.y + halfHeight;
+            break;
+        case 'top-left':
+            break;
+        case 'top-right':
+            x = area.x + halfWidth;
+            break;
+        case 'bottom-left':
+            y = area.y + halfHeight;
+            break;
+        case 'bottom-right':
+            x = area.x + halfWidth;
+            y = area.y + halfHeight;
+            break;
+        default:
+            return false;
+        }
+        window.unmaximize();
+        window.move_resize_frame(true, x, y, width, height);
+        return true;
+    }
+
+    ShellAction(action) {
+        switch (action) {
+        case 'workspace.next':
+        case 'workspace.prev': {
+            const manager = global.workspace_manager;
+            const count = manager.n_workspaces;
+            if (count < 2)
+                return false;
+            const current = manager.get_active_workspace_index();
+            const next = action === 'workspace.prev' ?
+                (current + count - 1) % count : (current + 1) % count;
+            manager.get_workspace_by_index(next)?.activate(
+                global.display.get_current_time_roundtrip());
+            return true;
+        }
+        case 'overview.toggle':
+            Main.overview.toggle();
+            return true;
+        default:
+            return false;
+        }
     }
 
     // Types a shortcut into the focused window with a virtual keyboard, as

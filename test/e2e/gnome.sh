@@ -15,9 +15,9 @@ ok "extension loaded and owns io.github.hjosugi.TouchpadSnap"
 
 version=$(gdbus call --session --dest io.github.hjosugi.TouchpadSnap --object-path /io/github/hjosugi/TouchpadSnap \
     --method org.freedesktop.DBus.Properties.Get io.github.hjosugi.TouchpadSnap1 ProtocolVersion)
-[[ $version == "(<uint32 5>,)" ]] || fail "unexpected protocol version: $version"
+[[ $version == "(<uint32 6>,)" ]] || fail "unexpected protocol version: $version"
 [[ $(list_json | jq '.windows | length') == 0 ]] || fail "expected no windows initially"
-ok "protocol 5, empty list at startup"
+ok "protocol 6, empty list at startup"
 
 e2e_open_clients
 # A window gets its size a moment after it is mapped.
@@ -34,7 +34,8 @@ echo "$json" | jq -e 'all(.windows[]; .id > 0 and .pid > 0 and .width > 0 and .h
     || fail "every window needs id, pid and geometry"
 ok "three windows, the two editors share an app (${editors[*]}), calculator $calc"
 
-tps list | grep -q "TextEditor" || fail "`touchpad-snap list` does not show the editors"
+listed=$(tps list) || fail "`touchpad-snap list` failed"
+grep -q "TextEditor" <<<"$listed" || fail "`touchpad-snap list` does not show the editors"
 ok "touchpad-snap list"
 
 # Focus the first editor, then cycle with the binary. Asserted on keyboard
@@ -116,7 +117,7 @@ press_keys Super_L Alt_L n || fail "injecting Super+Alt+N failed"
 wait_for "Super+Alt+N → second editor" 15 focus_is "${editors[1]}"
 press_keys Super_L Alt_L p || fail "injecting Super+Alt+P failed"
 wait_for "Super+Alt+P → first editor" 15 focus_is "${editors[0]}"
-grep -q "hotkey Super+Alt+N → Next (new press)" "$daemon_log" || fail "daemon did not log the hotkey"
+grep -q "hotkey Super+Alt+N → window.next (new press)" "$daemon_log" || fail "daemon did not log the hotkey"
 wait_for "the release of Super+Alt to be reported" 15 grep -q "hotkey modifiers released" "$daemon_log"
 ok "hotkeys: Super+Alt+N / Super+Alt+P cycle the editors through the daemon"
 
@@ -124,7 +125,8 @@ ok "hotkeys: Super+Alt+N / Super+Alt+P cycle the editors through the daemon"
 # executes one action through it, events streams what the daemon sees.
 tps status --json | jq -e '.pid > 0 and (.bindings | length) >= 2 and (.hotkeys_failed | length) == 0' >/dev/null \
     || fail "status did not describe the daemon"
-tps status | grep -q "binding" || fail "status has no bindings"
+status_text=$(tps status) || fail "status failed"
+grep -q "binding" <<<"$status_text" || fail "status has no bindings"
 focus_on "${editors[0]}"
 tps run window.next || fail "run window.next failed"
 wait_for "run window.next → second editor" 15 focus_is "${editors[1]}"
@@ -305,13 +307,13 @@ sleep 0.5
 mark_log
 press_keys Control_L Alt_L j || fail "injecting Ctrl+Alt+J failed"
 wait_for "app.next → calculator" 15 focus_is "$calc"
-logged "hotkey Ctrl+Alt+J → AppNext (new press)" || fail "daemon did not log the app.next hotkey"
+logged "hotkey Ctrl+Alt+J → app.next (new press)" || fail "daemon did not log the app.next hotkey"
 press_keys Control_L Alt_L k || fail "injecting Ctrl+Alt+K failed"
 wait_for "app.prev → first editor" 15 focus_is "${editors[0]}"
 # Keeping the modifiers down steps one app further; with two apps it wraps.
 press_keys +Control_L +Alt_L j @150 j @300 -Alt_L -Control_L || fail "injecting a held Ctrl+Alt+J+J failed"
 wait_for "held Ctrl+Alt, J, J wraps back to the editor" 15 focus_is "${editors[0]}"
-logged "hotkey Ctrl+Alt+J → AppNext (keys still held)" || fail "the second app press did not continue the session"
+logged "hotkey Ctrl+Alt+J → app.next (keys still held)" || fail "the second app press did not continue the session"
 ok "app.next/app.prev hop between apps; a held session steps further"
 
 mark_log
@@ -333,8 +335,8 @@ mark_log
 # Hold Super+Alt, press N, wait longer than mru_session_ms (1 s), press N again.
 press_keys +Super_L +Alt_L n @1500 n @300 -Alt_L -Super_L || fail "injecting a held Super+Alt+N+N failed"
 wait_for "held Super+Alt, N, N → third editor" 15 focus_is "${editors3[2]}"
-logged "hotkey Super+Alt+N → Next (new press)" || fail "the first press did not start a session"
-logged "hotkey Super+Alt+N → Next (keys still held)" || fail "the second press did not continue the session"
+logged "hotkey Super+Alt+N → window.next (new press)" || fail "the first press did not start a session"
+logged "hotkey Super+Alt+N → window.next (keys still held)" || fail "the second press did not continue the session"
 wait_for "the release to be reported" 15 logged "hotkey modifiers released"
 # The shell's MRU order is now e2, e1, e0, but e1 was only passed through:
 # a new press goes back to e0, where the session started.
@@ -377,7 +379,7 @@ ok "second daemon refused"
 
 doctor=$(tps doctor 2>&1) || fail "doctor reported problems: $doctor"
 echo "$doctor"
-grep -q "protocol 5" <<<"$doctor" || fail "doctor does not see the extension"
+grep -q "protocol 6" <<<"$doctor" || fail "doctor does not see the extension"
 ok "doctor"
 
 # What window-jump, this program's old name, can leave behind: its GNOME
@@ -400,6 +402,30 @@ tps autostart enable >/dev/null || fail "autostart enable failed"
 tps autostart disable >/dev/null || fail "autostart disable failed"
 doctor=$(tps doctor 2>&1) || fail "doctor still reports problems: $doctor"
 ok "doctor reports what window-jump left behind; autostart enable replaces its entry"
+
+# Window and desktop actions, through the extension's generic entry points.
+minimized() { list_json | jq -r --argjson id "$1" '.windows[] | select(.id == $id) | .minimized'; }
+restored() { [[ $(minimized "$1") == "false" ]]; }
+focus_on "${editors[0]}"
+[[ $(call WindowAction "uint64 ${editors[0]}" "window.minimize" "") == "(true,)" ]] || fail "window.minimize failed"
+wait_for "the window is minimized" 15 minimized "${editors[0]}"
+[[ $(call WindowAction "uint64 ${editors[0]}" "window.restore" "") == "(true,)" ]] || fail "window.restore failed"
+wait_for "the window is restored" 15 restored "${editors[0]}"
+[[ $(call WindowAction "uint64 ${editors[0]}" "window.tile" "left") == "(true,)" ]] || fail "window.tile failed"
+[[ $(call WindowAction "uint64 ${editors[0]}" "window.maximize" "") == "(true,)" ]] || fail "window.maximize failed"
+[[ $(call WindowAction "uint64 ${editors[0]}" "window.toggle_maximize" "") == "(true,)" ]] || fail "window.toggle_maximize failed"
+[[ $(call WindowAction "uint64 ${editors[0]}" "window.restore" "") == "(true,)" ]] || fail "restoring after maximize failed"
+[[ $(call ShellAction "overview.toggle") == "(true,)" ]] || fail "overview.toggle failed"
+sleep 1
+[[ $(call ShellAction "overview.toggle") == "(true,)" ]] || fail "toggling the overview back failed"
+ok "actions: minimize, restore, tile, maximize, overview"
+
+# A destructive action (close) works once; close the calculator, which no
+# later test needs.
+[[ $(call WindowAction "uint64 $calc" "window.close" "") == "(true,)" ]] || fail "window.close failed"
+closed() { [[ $(list_json | jq --argjson id "$calc" '[.windows[] | select(.id == $id)] | length') == 0 ]]; }
+wait_for "the calculator to close" 15 closed
+ok "actions: window.close"
 
 # When the daemon goes away, the extension lets go of its keys at once.
 kill "$daemon_pid"

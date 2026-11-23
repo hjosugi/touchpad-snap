@@ -72,6 +72,16 @@ pub trait Backend {
     fn neutralize(&self, _mods: Mods) -> Result<()> {
         Ok(())
     }
+    /// Acts on the focused window: `name` is one of the `window.*` action
+    /// names, `arg` its argument (`tile` target, `next`/`prev`).
+    fn window_action(&self, _name: &str, _arg: &str) -> Result<()> {
+        anyhow::bail!("window actions are not supported on this desktop yet")
+    }
+    /// Acts on the desktop: `workspace.next` / `workspace.prev` /
+    /// `overview.toggle`.
+    fn shell_action(&self, _name: &str) -> Result<()> {
+        anyhow::bail!("desktop actions are not supported on this desktop yet")
+    }
     /// One line for `touchpad-snap doctor`.
     fn describe(&self) -> String;
     /// The desktop bridge's protocol version, when it has one.

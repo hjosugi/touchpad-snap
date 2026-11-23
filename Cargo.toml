@@ -4,6 +4,7 @@ resolver = "3"
 
 [package]
 name = "touchpad-snap"
+default-run = "touchpad-snap"
 version = "0.6.0"
 edition = "2024"
 rust-version = "1.88"

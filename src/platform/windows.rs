@@ -20,6 +20,10 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, RECT, RPC_E_CHANGED_MODE,
 };
 use windows_sys::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
+use windows_sys::Win32::Graphics::Gdi::{
+    EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    MonitorFromWindow,
+};
 use windows_sys::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     CoUninitialize,
@@ -37,10 +41,11 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, DispatchMessageW, EnumChildWindows, EnumWindows, GW_OWNER, GWL_EXSTYLE,
     GetClassNameW, GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
-    IsWindowVisible, KillTimer, MSG, PostQuitMessage, SW_RESTORE, SetForegroundWindow, SetTimer,
-    ShowWindow, TranslateMessage, WM_HOTKEY, WM_TIMER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW,
+    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, HWND_TOP, IsIconic, IsWindow,
+    IsWindowVisible, IsZoomed, KillTimer, MSG, PostMessageW, PostQuitMessage, SW_MAXIMIZE,
+    SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOZORDER, SetForegroundWindow, SetTimer,
+    SetWindowPos, ShowWindow, TranslateMessage, WM_CLOSE, WM_HOTKEY, WM_TIMER, WS_EX_APPWINDOW,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 use windows_sys::core::{BOOL, GUID, HRESULT};
 
@@ -257,6 +262,63 @@ impl Backend for Win32 {
                 "Windows accepted {accepted} of {} key events (a window of an elevated program in front blocks them)",
                 inputs.len()
             );
+        }
+        Ok(())
+    }
+
+    fn window_action(&self, name: &str, arg: &str) -> Result<()> {
+        let hwnd = unsafe { GetForegroundWindow() };
+        if hwnd.is_null() {
+            bail!("no window is focused");
+        }
+        match name {
+            "window.minimize" => {
+                unsafe { ShowWindow(hwnd, SW_MINIMIZE) };
+            }
+            "window.maximize" => {
+                unsafe { ShowWindow(hwnd, SW_MAXIMIZE) };
+            }
+            "window.restore" => {
+                unsafe { ShowWindow(hwnd, SW_RESTORE) };
+            }
+            "window.toggle_maximize" => {
+                let command = if unsafe { IsZoomed(hwnd) } != 0 {
+                    SW_RESTORE
+                } else {
+                    SW_MAXIMIZE
+                };
+                unsafe { ShowWindow(hwnd, command) };
+            }
+            "window.fullscreen" => {
+                bail!("no general fullscreen API on Windows; bind a `keys` action (F11) instead");
+            }
+            "window.close" => {
+                unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
+            }
+            "window.tile" => tile(hwnd, arg)?,
+            "window.move_to_monitor" => move_to_monitor(hwnd, arg)?,
+            "window.move_to_workspace" => {
+                bail!("moving a window to another virtual desktop has no public API on Windows");
+            }
+            other => bail!("{other} is not a window action"),
+        }
+        Ok(())
+    }
+
+    fn shell_action(&self, name: &str) -> Result<()> {
+        let key = match name {
+            "workspace.next" => VK_RIGHT,
+            "workspace.prev" => VK_LEFT,
+            "overview.toggle" => {
+                if !send_win_tab() {
+                    bail!("Windows refused Win+Tab");
+                }
+                return Ok(());
+            }
+            other => bail!("{other} is not a desktop action"),
+        };
+        if !send_win_ctrl(key) {
+            bail!("Windows refused the virtual-desktop shortcut");
         }
         Ok(())
     }
@@ -539,6 +601,127 @@ fn win_ctrl_chord(key: VIRTUAL_KEY) -> [INPUT; 6] {
         inputs[2 * keys.len() - 1 - i] = key_input(*key, true);
     }
     inputs
+}
+
+fn send_win_tab() -> bool {
+    let keys = [VK_LWIN, 0x09]; // VK_TAB
+    let mut inputs = [INPUT::default(); 4];
+    for (i, key) in keys.iter().enumerate() {
+        inputs[i] = key_input(*key as VIRTUAL_KEY, false);
+        inputs[2 * keys.len() - 1 - i] = key_input(*key as VIRTUAL_KEY, true);
+    }
+    let accepted = unsafe {
+        SendInput(
+            inputs.len() as u32,
+            inputs.as_ptr(),
+            size_of::<INPUT>() as i32,
+        )
+    };
+    accepted == inputs.len() as u32
+}
+
+/// The work area of the monitor the window is on.
+fn monitor_work_area(hwnd: HWND) -> Result<RECT> {
+    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    if monitor.is_null() {
+        bail!("the window is not on a monitor");
+    }
+    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+    info.cbSize = size_of::<MONITORINFO>() as u32;
+    if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 {
+        bail!("could not read the monitor's work area");
+    }
+    Ok(info.rcWork)
+}
+
+fn tile(hwnd: HWND, target: &str) -> Result<()> {
+    let area = monitor_work_area(hwnd)?;
+    let width = area.right - area.left;
+    let height = area.bottom - area.top;
+    let half_width = width / 2;
+    let half_height = height / 2;
+    let (x, y, w, h) = match target {
+        "left" => (area.left, area.top, half_width, height),
+        "right" => (area.left + half_width, area.top, half_width, height),
+        "top" => (area.left, area.top, width, half_height),
+        "bottom" => (area.left, area.top + half_height, width, half_height),
+        "top-left" => (area.left, area.top, half_width, half_height),
+        "top-right" => (area.left + half_width, area.top, half_width, half_height),
+        "bottom-left" => (area.left, area.top + half_height, half_width, half_height),
+        "bottom-right" => (
+            area.left + half_width,
+            area.top + half_height,
+            half_width,
+            half_height,
+        ),
+        other => bail!("unknown tile target `{other}`"),
+    };
+    unsafe {
+        ShowWindow(hwnd, SW_RESTORE);
+        SetWindowPos(hwnd, HWND_TOP, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    Ok(())
+}
+
+fn monitors() -> Vec<(isize, RECT)> {
+    unsafe extern "system" fn collect(
+        monitor: HMONITOR,
+        _: HDC,
+        _: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        unsafe {
+            let monitors = &mut *(data as *mut Vec<(isize, RECT)>);
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(monitor, &mut info) != 0 {
+                monitors.push((monitor as isize, info.rcWork));
+            }
+        }
+        1
+    }
+    let mut monitors = Vec::new();
+    unsafe {
+        EnumDisplayMonitors(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            Some(collect),
+            &mut monitors as *mut _ as LPARAM,
+        );
+    }
+    monitors
+}
+
+fn move_to_monitor(hwnd: HWND, direction: &str) -> Result<()> {
+    let monitors = monitors();
+    if monitors.len() < 2 {
+        bail!("there is only one monitor");
+    }
+    let current = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) } as isize;
+    let index = monitors
+        .iter()
+        .position(|(monitor, _)| *monitor == current)
+        .unwrap_or(0);
+    let next = match direction {
+        "prev" => (index + monitors.len() - 1) % monitors.len(),
+        "next" => (index + 1) % monitors.len(),
+        other => bail!("expected next or prev, got `{other}`"),
+    };
+    let area = monitors[next].1;
+    let width = area.right - area.left;
+    let height = area.bottom - area.top;
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            HWND_TOP,
+            area.left,
+            area.top,
+            width,
+            height,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+    Ok(())
 }
 
 /// Types `keys` with `SendInput` while the `held` modifiers are physically

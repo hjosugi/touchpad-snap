@@ -118,6 +118,186 @@
             "keys"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Minimize the focused window.",
+          "properties": {
+            "type": {
+              "const": "window.minimize",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Maximize the focused window.",
+          "properties": {
+            "type": {
+              "const": "window.maximize",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Restore the focused window from maximized or fullscreen.",
+          "properties": {
+            "type": {
+              "const": "window.restore",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Toggle maximization of the focused window.",
+          "properties": {
+            "type": {
+              "const": "window.toggle_maximize",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Toggle fullscreen for the focused window (no general Windows API;\nbind `keys` with F11 there).",
+          "properties": {
+            "type": {
+              "const": "window.fullscreen",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Close the focused window. Never repeats within one gesture.",
+          "properties": {
+            "type": {
+              "const": "window.close",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Move and resize the focused window to a half or quarter of its monitor.",
+          "properties": {
+            "to": {
+              "$ref": "#/$defs/TileTarget"
+            },
+            "type": {
+              "const": "window.tile",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Move the focused window to the next or previous monitor.",
+          "properties": {
+            "to": {
+              "$ref": "#/$defs/Direction"
+            },
+            "type": {
+              "const": "window.move_to_monitor",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Move the focused window to the next or previous workspace.",
+          "properties": {
+            "to": {
+              "$ref": "#/$defs/Direction"
+            },
+            "type": {
+              "const": "window.move_to_workspace",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Switch to the next workspace / virtual desktop.",
+          "properties": {
+            "type": {
+              "const": "workspace.next",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Switch to the previous workspace / virtual desktop.",
+          "properties": {
+            "type": {
+              "const": "workspace.prev",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Toggle the overview (Mission Control / Task View).",
+          "properties": {
+            "type": {
+              "const": "overview.toggle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -193,6 +373,14 @@
         }
       },
       "type": "object"
+    },
+    "Direction": {
+      "description": "Next or previous, for monitor/workspace moves.",
+      "enum": [
+        "next",
+        "prev"
+      ],
+      "type": "string"
     },
     "ExecCommand": {
       "anyOf": [
@@ -281,6 +469,20 @@
         "right",
         "up",
         "down"
+      ],
+      "type": "string"
+    },
+    "TileTarget": {
+      "description": "Where [`Action::WindowTile`] puts the window.",
+      "enum": [
+        "left",
+        "right",
+        "top",
+        "bottom",
+        "top-left",
+        "top-right",
+        "bottom-left",
+        "bottom-right"
       ],
       "type": "string"
     },

@@ -276,6 +276,38 @@ try {
     [void][Win]::Chord(0x45)  # E
     WaitFor 'no modifier left stuck after the keys action' { [Win]::NotepadText([IntPtr]$n[0].id).Length -gt $before } 5
     Ok 'daemon: the keys action types W with Ctrl and Alt released, and leaves nothing stuck'
+    # Window actions through the daemon: minimize, restore, maximize,
+    # toggle_maximize, tile, and close.
+    & $Bin activate $n[0].id
+    WaitFor 'first Notepad focused for the actions' { (Focused) -eq $n[0].id }
+    & $Bin run '{"type":"window.minimize"}'
+    WaitFor 'window.minimize' {
+        (Snapshot | Where-Object { $_.id -eq $n[0].id }).minimized -eq $true
+    }
+    & $Bin run '{"type":"window.restore"}'
+    WaitFor 'window.restore' {
+        (Snapshot | Where-Object { $_.id -eq $n[0].id }).minimized -ne $true
+    }
+    & $Bin run '{"type":"window.maximize"}'
+    & $Bin run '{"type":"window.toggle_maximize"}'
+    & $Bin run '{"type":"window.restore"}'
+    & $Bin run '{"type":"window.tile","to":"left"}'
+    Ok 'actions: minimize, restore, maximize, toggle_maximize, tile'
+
+    $closing = Start-Process notepad -PassThru
+    $procs += $closing
+    WaitFor 'the extra Notepad to open' {
+        @(Snapshot | Where-Object { $_.pid -eq $closing.Id }).Count -ge 1
+    }
+    $closingWindow = Snapshot | Where-Object { $_.pid -eq $closing.Id } | Select-Object -First 1
+    & $Bin activate $closingWindow.id
+    WaitFor 'the extra Notepad focused' { (Focused) -eq $closingWindow.id }
+    & $Bin run '{"type":"window.close"}'
+    WaitFor 'window.close' {
+        @(Snapshot | Where-Object { $_.id -eq $closingWindow.id }).Count -eq 0
+    }
+    Ok 'actions: window.close'
+
     if ($VirtualDesktops) {
         # A second desktop, with one Notepad on it. Win+Ctrl+D switches to the
         # new desktop, so the Notepad starts there.

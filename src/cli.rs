@@ -311,6 +311,15 @@ fn parse_action(text: &str) -> Result<Action> {
         "window.prev" | "prev" => Ok(Action::Prev),
         "app.next" | "next-app" => Ok(Action::AppNext),
         "app.prev" | "prev-app" => Ok(Action::AppPrev),
+        "window.minimize" => Ok(Action::WindowMinimize),
+        "window.maximize" => Ok(Action::WindowMaximize),
+        "window.restore" => Ok(Action::WindowRestore),
+        "window.toggle_maximize" => Ok(Action::WindowToggleMaximize),
+        "window.fullscreen" => Ok(Action::WindowFullscreen),
+        "window.close" => Ok(Action::WindowClose),
+        "workspace.next" => Ok(Action::WorkspaceNext),
+        "workspace.prev" => Ok(Action::WorkspacePrev),
+        "overview.toggle" => Ok(Action::OverviewToggle),
         _ => serde_json::from_str(text)
             .map_err(|e| anyhow::anyhow!("`{text}` is not an action or action JSON: {e}")),
     }

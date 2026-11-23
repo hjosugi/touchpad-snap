@@ -144,17 +144,8 @@ impl Status {
 }
 
 fn action_label(action: &Action) -> String {
-    match action {
-        Action::Next => "window.next".into(),
-        Action::Prev => "window.prev".into(),
-        Action::AppNext => "app.next".into(),
-        Action::AppPrev => "app.prev".into(),
-        Action::Delay { ms } => format!("delay {ms}"),
-        Action::Exec { command, .. } => format!("exec {}", command.display()),
-        Action::Keys { keys } => format!("keys {keys}"),
-    }
+    action.label()
 }
-
 struct Context {
     status: Mutex<Status>,
     subscribers: Mutex<Vec<mpsc::Sender<String>>>,
