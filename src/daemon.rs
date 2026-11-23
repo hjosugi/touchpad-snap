@@ -211,6 +211,8 @@ pub struct Handler {
     /// The pinch in progress: fingers, modifiers, the context captured at
     /// Begin and the final scale seen.
     pinch: Option<(u32, Mods, TriggerContext, f64)>,
+    /// Binding index waiting for the second key of a sequence.
+    pending_sequence: Option<usize>,
     state_path: PathBuf,
     watch: Option<ConfigWatch>,
     verbose: bool,
@@ -229,6 +231,7 @@ impl Handler {
             gesture_snapshot: None,
             held: false,
             pinch: None,
+            pending_sequence: None,
             state_path,
             watch: None,
             verbose,
@@ -293,6 +296,14 @@ impl Handler {
                             }
                         );
                     }
+                    if let Trigger::Sequence { then, .. } = &binding.trigger {
+                        if let Err(e) = backend.start_sequence(then) {
+                            eprintln!("touchpad-snap: sequence: {e:#}");
+                            return None;
+                        }
+                        self.pending_sequence = Some(binding.index);
+                        return None;
+                    }
                     let held = match &binding.trigger {
                         Trigger::Hotkey { keys } => {
                             Hotkey::parse(keys).map(|h| h.mods).unwrap_or_default()
@@ -316,6 +327,49 @@ impl Handler {
             }
             Event::Cancel => {
                 self.cancel_session(backend);
+            }
+            Event::Sequence => {
+                let index = self.pending_sequence.take()?;
+                let binding = self.cfg.bindings.iter().find(|b| b.index == index)?;
+                let snapshot = if binding.has_exec() {
+                    self.context_snapshot(backend)
+                } else {
+                    None
+                };
+                control::publish(serde_json::json!({
+                    "event": "sequence",
+                    "binding": binding.name,
+                    "trigger": binding.trigger.label(),
+                }));
+                self.run_binding(
+                    backend,
+                    binding,
+                    Session::Fresh,
+                    snapshot.as_ref(),
+                    Mods::default(),
+                );
+            }
+            Event::DoubleTap { modifier } => {
+                let context = capture_context(backend, None);
+                if let Some(binding) = self.cfg.double_tap_binding_for(modifier, &context) {
+                    let snapshot = if binding.has_exec() {
+                        self.context_snapshot(backend)
+                    } else {
+                        None
+                    };
+                    control::publish(serde_json::json!({
+                        "event": "double_tap",
+                        "binding": binding.name,
+                        "trigger": binding.trigger.label(),
+                    }));
+                    self.run_binding(
+                        backend,
+                        binding,
+                        Session::Fresh,
+                        snapshot.as_ref(),
+                        Mods::default(),
+                    );
+                }
             }
             Event::Mouse {
                 button,
@@ -508,6 +562,7 @@ impl Handler {
         self.swipe_jumps = 0;
         self.fired.clear();
         self.pinch = None;
+        self.pending_sequence = None;
 
         let Ok(snapshot) = backend.snapshot() else {
             return;

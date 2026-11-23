@@ -15,9 +15,9 @@ ok "extension loaded and owns io.github.hjosugi.TouchpadSnap"
 
 version=$(gdbus call --session --dest io.github.hjosugi.TouchpadSnap --object-path /io/github/hjosugi/TouchpadSnap \
     --method org.freedesktop.DBus.Properties.Get io.github.hjosugi.TouchpadSnap1 ProtocolVersion)
-[[ $version == "(<uint32 7>,)" ]] || fail "unexpected protocol version: $version"
+[[ $version == "(<uint32 8>,)" ]] || fail "unexpected protocol version: $version"
 [[ $(list_json | jq '.windows | length') == 0 ]] || fail "expected no windows initially"
-ok "protocol 7, empty list at startup"
+ok "protocol 8, empty list at startup"
 
 e2e_open_clients
 # A window gets its size a moment after it is mapped.
@@ -394,7 +394,7 @@ ok "second daemon refused"
 
 doctor=$(tps doctor 2>&1) || fail "doctor reported problems: $doctor"
 echo "$doctor"
-grep -q "protocol 7" <<<"$doctor" || fail "doctor does not see the extension"
+grep -q "protocol 8" <<<"$doctor" || fail "doctor does not see the extension"
 ok "doctor"
 
 # What window-jump, this program's old name, can leave behind: its GNOME

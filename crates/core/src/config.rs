@@ -110,6 +110,17 @@ pub enum Trigger {
         #[serde(default)]
         modifiers: Vec<Modifier>,
     },
+    /// A modifier tapped twice quickly (Ctrl, Ctrl).
+    #[serde(rename = "double_tap")]
+    DoubleTap { modifier: Modifier },
+    /// A hotkey prefix followed by one key (Super+Alt+W, then M).
+    #[serde(rename = "sequence")]
+    Sequence {
+        /// The prefix, in the usual hotkey syntax.
+        keys: String,
+        /// One letter or digit pressed after the prefix.
+        then: String,
+    },
     /// A mouse button, optionally combined with scrolling that button.
     /// Windows only for now (Wayland does not hand buttons to the shell).
     #[serde(rename = "mouse")]
@@ -502,6 +513,16 @@ impl Trigger {
                     format!("hold-{fingers}-{mods}")
                 }
             }
+            Trigger::DoubleTap { modifier } => {
+                let name = match modifier {
+                    Modifier::Shift => "shift",
+                    Modifier::Ctrl => "ctrl",
+                    Modifier::Alt => "alt",
+                    Modifier::Super => "super",
+                };
+                format!("double-tap-{name}")
+            }
+            Trigger::Sequence { keys, then } => format!("sequence-{keys}-{then}"),
             Trigger::Mouse {
                 button,
                 modifiers,
@@ -1057,7 +1078,11 @@ impl Config {
     pub fn hotkeys(&self) -> Vec<Hotkey> {
         let mut hotkeys = Vec::new();
         for binding in self.bindings.iter().filter(|b| b.enabled) {
-            if let Trigger::Hotkey { keys } = &binding.trigger
+            let keys = match &binding.trigger {
+                Trigger::Hotkey { keys } | Trigger::Sequence { keys, .. } => Some(keys),
+                _ => None,
+            };
+            if let Some(keys) = keys
                 && let Ok(hotkey) = Hotkey::parse(keys)
                 && !hotkeys.contains(&hotkey)
             {
@@ -1073,7 +1098,11 @@ impl Config {
             .enumerate()
             .filter(|(_, b)| {
                 b.enabled
-                    && matches!(&b.trigger, Trigger::Hotkey { keys } if Hotkey::parse(keys).ok() == Some(hotkey))
+                    && matches!(
+                        &b.trigger,
+                        Trigger::Hotkey { keys } | Trigger::Sequence { keys, .. }
+                            if Hotkey::parse(keys).ok() == Some(hotkey)
+                    )
             })
             .collect()
     }
@@ -1193,7 +1222,9 @@ impl Config {
                         Trigger::Hotkey { .. }
                         | Trigger::Pinch { .. }
                         | Trigger::Hold { .. }
-                        | Trigger::Mouse { .. } => false,
+                        | Trigger::Mouse { .. }
+                        | Trigger::DoubleTap { .. }
+                        | Trigger::Sequence { .. } => false,
                     }
             })
             .collect()
@@ -1330,6 +1361,25 @@ impl Config {
                         &b.trigger,
                         Trigger::Hold { fingers: f, modifiers }
                             if *f == fingers && mods_of(modifiers) == mods
+                    )
+            }),
+            context,
+        )
+        .map(|(_, binding)| binding)
+    }
+
+    /// The one binding that fires when `modifier` is double-tapped.
+    pub fn double_tap_binding_for(
+        &self,
+        modifier: Modifier,
+        context: &TriggerContext,
+    ) -> Option<&Binding> {
+        choose(
+            self.bindings.iter().enumerate().filter(|(_, b)| {
+                b.enabled
+                    && matches!(
+                        &b.trigger,
+                        Trigger::DoubleTap { modifier: bound } if *bound == modifier
                     )
             }),
             context,
@@ -1656,6 +1706,15 @@ fn check_binding(binding: &Binding) -> Result<(), String> {
             Hotkey::parse(keys)?;
         }
         Trigger::Mouse { .. } => {}
+        Trigger::DoubleTap { .. } => {}
+        Trigger::Sequence { keys, then } => {
+            Hotkey::parse(keys)?;
+            if then.chars().count() != 1 || !then.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return Err(format!(
+                    "sequence `then` must be one letter or digit, not `{then}`"
+                ));
+            }
+        }
         Trigger::Pinch { fingers, .. } | Trigger::Hold { fingers, .. } => {
             if !(2..=5).contains(fingers) {
                 return Err(format!(
@@ -1918,6 +1977,43 @@ mod tests {
         assert_eq!(
             cfg.bindings[1].actions[2].shell_action(),
             Some("workspace.next")
+        );
+    }
+
+    #[test]
+    fn sequence_prefixes_are_hotkeys_and_double_taps_match() {
+        let cfg = json(
+            r#"{
+                "bindings": [
+                    {"trigger":{"type":"sequence","keys":"Ctrl+Alt+W","then":"M"},
+                     "actions":[{"type":"window.next"}]},
+                    {"trigger":{"type":"double_tap","modifier":"ctrl"},
+                     "actions":[{"type":"app.next"}]}
+                ]
+            }"#,
+        );
+        assert_eq!(cfg.bindings.len(), 2);
+        assert_eq!(cfg.hotkeys().len(), 1);
+        assert_eq!(
+            cfg.hotkey_binding(0).map(|b| b.trigger.label()),
+            Some("sequence-Ctrl+Alt+W-M".into())
+        );
+        let context = TriggerContext::new(PlatformDescription::new("linux", Some("gnome")), None);
+        assert!(
+            cfg.double_tap_binding_for(Modifier::Ctrl, &context)
+                .is_some()
+        );
+        assert!(
+            cfg.double_tap_binding_for(Modifier::Alt, &context)
+                .is_none()
+        );
+        assert!(
+            json(
+                r#"{"bindings":[{"trigger":{"type":"sequence","keys":"Ctrl+Alt+W","then":"MM"},
+                "actions":[{"type":"window.next"}]}]}"#
+            )
+            .bindings
+            .is_empty()
         );
     }
 

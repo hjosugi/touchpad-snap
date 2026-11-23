@@ -631,6 +631,48 @@
         },
         {
           "additionalProperties": false,
+          "description": "A modifier tapped twice quickly (Ctrl, Ctrl).",
+          "properties": {
+            "modifier": {
+              "$ref": "#/$defs/Modifier"
+            },
+            "type": {
+              "const": "double_tap",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "modifier"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A hotkey prefix followed by one key (Super+Alt+W, then M).",
+          "properties": {
+            "keys": {
+              "description": "The prefix, in the usual hotkey syntax.",
+              "type": "string"
+            },
+            "then": {
+              "description": "One letter or digit pressed after the prefix.",
+              "type": "string"
+            },
+            "type": {
+              "const": "sequence",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "keys",
+            "then"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "A mouse button, optionally combined with scrolling that button.\nWindows only for now (Wayland does not hand buttons to the shell).",
           "properties": {
             "button": {

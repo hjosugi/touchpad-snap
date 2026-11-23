@@ -8,13 +8,14 @@
 //! as on GNOME work here too; Windows' own three/four-finger gestures have to
 //! be turned off in Settings, since raw input cannot intercept them.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::path::Path;
 use std::ptr::null_mut;
 use std::sync::Once;
 use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::{Result, bail};
 use windows_sys::Win32::Foundation::{
@@ -269,6 +270,25 @@ impl Backend for Win32 {
                 inputs.len()
             );
         }
+        Ok(())
+    }
+
+    fn start_sequence(&self, then: &str) -> Result<()> {
+        let ch = then.chars().next().unwrap_or_default();
+        if then.chars().count() != 1 || !ch.is_ascii_alphanumeric() {
+            bail!("a sequence suffix must be one letter or digit");
+        }
+        unsafe { UnregisterHotKey(null_mut(), SEQUENCE_HOTKEY_ID) };
+        let vk = ch.to_ascii_uppercase() as u32;
+        if unsafe { RegisterHotKey(null_mut(), SEQUENCE_HOTKEY_ID, 0, vk) } == 0 {
+            bail!("could not arm the sequence suffix `{then}` (another app uses it)");
+        }
+        let previous = SEQUENCE_TIMER.with(|timer| timer.replace(0));
+        if previous != 0 {
+            unsafe { KillTimer(null_mut(), previous) };
+        }
+        let timer = unsafe { SetTimer(null_mut(), 0, SEQUENCE_TIMEOUT_MS, None) };
+        SEQUENCE_TIMER.with(|cell| cell.set(timer));
         Ok(())
     }
 
@@ -999,6 +1019,14 @@ pub fn run_daemon(
     } else {
         std::ptr::null_mut()
     };
+    let double_tap_installed = cfg
+        .bindings
+        .iter()
+        .any(|b| matches!(b.trigger, Trigger::DoubleTap { .. }));
+    if double_tap_installed {
+        let timer = unsafe { SetTimer(null_mut(), 0, 25, None) };
+        DOUBLE_TAP_TIMER.with(|cell| cell.set(timer));
+    }
     // Raw input needs a window to target; the touchpad module owns the hidden
     // message-only one. Without a Precision Touchpad it simply never fires.
     let touchpad = Source::new(!cfg.claims().is_empty());
@@ -1035,6 +1063,14 @@ pub fn run_daemon(
                         unsafe { UnregisterHotKey(null_mut(), CANCEL_HOTKEY_ID) };
                         handle(&backend, Event::Cancel)
                     }
+                    id if id == SEQUENCE_HOTKEY_ID as usize => {
+                        unsafe { UnregisterHotKey(null_mut(), SEQUENCE_HOTKEY_ID) };
+                        let timer = SEQUENCE_TIMER.with(|timer| timer.replace(0));
+                        if timer != 0 {
+                            unsafe { KillTimer(null_mut(), timer) };
+                        }
+                        handle(&backend, Event::Sequence)
+                    }
                     id => {
                         let index = id - 1;
                         let mods = hotkeys.get(index).map(|h| h.mods).unwrap_or_default();
@@ -1054,6 +1090,17 @@ pub fn run_daemon(
                     }
                 },
                 WM_TIMER if msg.wParam == tick => handle(&backend, Event::Tick),
+                WM_TIMER if SEQUENCE_TIMER.with(|timer| timer.get()) == msg.wParam => {
+                    SEQUENCE_TIMER.with(|timer| timer.set(0));
+                    unsafe {
+                        KillTimer(null_mut(), msg.wParam);
+                        UnregisterHotKey(null_mut(), SEQUENCE_HOTKEY_ID);
+                    }
+                    None
+                }
+                WM_TIMER if DOUBLE_TAP_TIMER.with(|timer| timer.get()) == msg.wParam => DOUBLE_TAP
+                    .with(|detector| detector.borrow_mut().poll())
+                    .and_then(|event| handle(&backend, event)),
                 WM_TIMER if release.is_timer(msg.wParam) => {
                     if release.poll() {
                         unsafe { UnregisterHotKey(null_mut(), CANCEL_HOTKEY_ID) };
@@ -1244,6 +1291,56 @@ fn mouse_held_button() -> Option<MouseButton> {
 
 /// Id for the temporary `modifiers+Esc` grab of a held session.
 const CANCEL_HOTKEY_ID: i32 = 0xF000;
+/// Id for the one-key suffix of a sequence, and how long it stays armed.
+const SEQUENCE_HOTKEY_ID: i32 = 0xF001;
+const SEQUENCE_TIMEOUT_MS: u32 = 2_000;
+
+thread_local! {
+    /// Timer that disarms an unused sequence suffix.
+    static SEQUENCE_TIMER: Cell<usize> = const { Cell::new(0) };
+    /// Polling timer for modifier double-taps.
+    static DOUBLE_TAP_TIMER: Cell<usize> = const { Cell::new(0) };
+    static DOUBLE_TAP: RefCell<DoubleTapDetector> = RefCell::new(DoubleTapDetector::default());
+}
+
+/// Recognises press-release-press of one modifier from the polled key state.
+#[derive(Default)]
+struct DoubleTapDetector {
+    previous: Mods,
+    last_release: Option<(Modifier, Instant)>,
+}
+
+impl DoubleTapDetector {
+    fn poll(&mut self) -> Option<Event> {
+        let now = held_mods();
+        let rising = now.0 & !self.previous.0;
+        let falling = self.previous.0 & !now.0;
+        self.previous = now;
+        if falling != 0 && falling.count_ones() == 1 {
+            self.last_release = Some((modifier_of(falling)?, Instant::now()));
+            return None;
+        }
+        if rising != 0 && rising.count_ones() == 1 {
+            let modifier = modifier_of(rising)?;
+            let (last, at) = self.last_release?;
+            if last == modifier && at.elapsed() < std::time::Duration::from_millis(400) {
+                self.last_release = None;
+                return Some(Event::DoubleTap { modifier });
+            }
+        }
+        None
+    }
+}
+
+fn modifier_of(bits: u32) -> Option<Modifier> {
+    match Mods(bits) {
+        Mods::SHIFT => Some(Modifier::Shift),
+        Mods::CTRL => Some(Modifier::Ctrl),
+        Mods::ALT => Some(Modifier::Alt),
+        Mods::SUPER => Some(Modifier::Super),
+        _ => None,
+    }
+}
 
 /// Watches for the release of a hotkey's modifiers, like Alt+Tab waits for
 /// Alt. Polled with `GetAsyncKeyState`, and only while they are held: no

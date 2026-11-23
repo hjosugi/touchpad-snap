@@ -22,7 +22,7 @@ use zbus::{MatchRule, Message};
 use super::{Backend, Event};
 use crate::config::{Claim, Config};
 use crate::gesture::Phase;
-use crate::hotkey::{Hotkey, Mods};
+use crate::hotkey::{Hotkey, Modifier, Mods};
 use crate::legacy;
 use crate::model::Snapshot;
 
@@ -33,7 +33,7 @@ pub const INTERFACE: &str = "io.github.hjosugi.TouchpadSnap1";
 /// version 3 the AcceleratorReleased signal, version 4 per-app swipe claims
 /// and the app id in the Swipe signal, and version 5 SendKeys (the `keys`
 /// action). Older extensions still work, without the features above.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 pub const EXTENSION_UUID: &str = "touchpad-snap@hjosugi.github.io";
 
 /// Whether an extension of `version` understands app-filtered swipe claims.
@@ -92,6 +92,7 @@ impl Gnome {
                 4 => "the `keys` action",
                 5 => "the window, workspace and overview actions",
                 6 => "pinch and hold gestures",
+                7 => "modifier double-taps and key sequences",
                 _ => "nothing",
             };
             eprintln!(
@@ -186,6 +187,13 @@ impl Gnome {
 impl Backend for Gnome {
     fn protocol(&self) -> Option<u32> {
         self.protocol_version().ok()
+    }
+
+    fn start_sequence(&self, then: &str) -> Result<()> {
+        self.proxy
+            .call_method("SetSequence", &(then,))
+            .map_err(|e| self.explain(e))?;
+        Ok(())
     }
 
     fn window_action(&self, name: &str, arg: &str) -> Result<()> {
@@ -508,6 +516,18 @@ fn parse_signal(msg: &Message, version: u32, hotkeys: &[Hotkey]) -> Option<Event
         }
         "AcceleratorReleased" => Some(Event::Released),
         "Cancel" => Some(Event::Cancel),
+        "Sequence" => Some(Event::Sequence),
+        "DoubleTap" => {
+            let (name,): (String,) = msg.body().deserialize().ok()?;
+            let modifier = match name.as_str() {
+                "shift" => Modifier::Shift,
+                "ctrl" => Modifier::Ctrl,
+                "alt" => Modifier::Alt,
+                "super" => Modifier::Super,
+                _ => return None,
+            };
+            Some(Event::DoubleTap { modifier })
+        }
         "Pinch" => {
             let (phase, fingers, mods, scale): (u32, u32, u32, f64) =
                 msg.body().deserialize().ok()?;

@@ -13,7 +13,7 @@ use anyhow::Result;
 
 use crate::config::{Claim, Config};
 use crate::gesture::Phase;
-use crate::hotkey::{Hotkey, Mods};
+use crate::hotkey::{Hotkey, Modifier, Mods};
 use crate::model::Snapshot;
 use crate::when::PlatformDescription;
 
@@ -82,6 +82,10 @@ pub trait Backend {
     fn shell_action(&self, _name: &str) -> Result<()> {
         anyhow::bail!("desktop actions are not supported on this desktop yet")
     }
+    /// Arms the one-key sequence `then` after its prefix hotkey fired.
+    fn start_sequence(&self, _then: &str) -> Result<()> {
+        anyhow::bail!("key sequences are not supported on this desktop yet")
+    }
     /// One line for `touchpad-snap doctor`.
     fn describe(&self) -> String;
     /// The desktop bridge's protocol version, when it has one.
@@ -129,6 +133,10 @@ pub enum Event {
         fingers: u32,
         mods: Mods,
     },
+    /// The second key of a sequence was pressed.
+    Sequence,
+    /// A modifier was double-tapped (the extension's own detector).
+    DoubleTap { modifier: Modifier },
     /// A mouse button or button + scroll that matched a binding.
     Mouse {
         button: crate::config::MouseButton,

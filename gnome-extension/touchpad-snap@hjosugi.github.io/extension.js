@@ -39,7 +39,7 @@ import {
 const BUS_NAME = 'io.github.hjosugi.TouchpadSnap';
 const OBJECT_PATH = '/io/github/hjosugi/TouchpadSnap';
 const INTERFACE = 'io.github.hjosugi.TouchpadSnap1';
-const PROTOCOL_VERSION = 7;
+const PROTOCOL_VERSION = 8;
 
 const IFACE_XML = `
 <node>
@@ -76,6 +76,9 @@ const IFACE_XML = `
     <method name="SetHoldClaims">
       <arg type="a(uu)" direction="in" name="claims"/>
     </method>
+    <method name="SetSequence">
+      <arg type="s" direction="in" name="then"/>
+    </method>
     <method name="WindowAction">
       <arg type="t" direction="in" name="id"/>
       <arg type="s" direction="in" name="action"/>
@@ -104,6 +107,10 @@ const IFACE_XML = `
       <arg type="u" name="fingers"/>
       <arg type="u" name="mods"/>
     </signal>
+    <signal name="Sequence"/>
+    <signal name="DoubleTap">
+      <arg type="s" name="modifier"/>
+    </signal>
     <signal name="Swipe">
       <arg type="u" name="phase"/>
       <arg type="u" name="fingers"/>
@@ -131,6 +138,15 @@ const HOLD_MASK = Clutter.ModifierType.SHIFT_MASK | Clutter.ModifierType.CONTROL
 // How often to look at the modifiers while a hotkey's are held. Only while
 // they are: the watch stops at the release.
 const RELEASE_POLL_MS = 25;
+const DOUBLE_TAP_MS = 400;
+
+// Modifier key symbols and their `when`-style names.
+const MODIFIER_KEYS = new Map([
+    [0xffe1, 'shift'], [0xffe2, 'shift'],
+    [0xffe3, 'ctrl'], [0xffe4, 'ctrl'],
+    [0xffe9, 'alt'], [0xffea, 'alt'],
+    [0xffeb, 'super'], [0xffec, 'super'],
+]);
 
 const PHASES = new Map([
     [Clutter.TouchpadGesturePhase.BEGIN, Phase.BEGIN],
@@ -254,6 +270,11 @@ class TouchpadSnapService {
         this._sessionActive = false;
         this._swipeActive = false;
         this._cancelAction = 0;
+        // The one-key suffix armed by a sequence prefix, and the last
+        // modifier tap for double-tap detection.
+        this._sequence = '';
+        this._lastTap = {name: '', time: 0};
+        this._keyId = 0;
     }
 
     start() {
@@ -282,6 +303,12 @@ class TouchpadSnapService {
             // Older Clutter without per-event-type signal details.
             this._capturedId = global.stage.connect('captured-event', onTouchpad);
         }
+        const onKey = (_actor, event) => this._onKey(event);
+        try {
+            this._keyId = global.stage.connect('captured-event::key', onKey);
+        } catch {
+            this._keyId = global.stage.connect('captured-event', onKey);
+        }
     }
 
     stop() {
@@ -297,6 +324,10 @@ class TouchpadSnapService {
         if (this._capturedId) {
             global.stage.disconnect(this._capturedId);
             this._capturedId = 0;
+        }
+        if (this._keyId) {
+            global.stage.disconnect(this._keyId);
+            this._keyId = 0;
         }
         if (this._acceleratorId) {
             global.display.disconnect(this._acceleratorId);
@@ -582,6 +613,10 @@ class TouchpadSnapService {
         this._holdClaims = claims;
     }
 
+    SetSequence(then) {
+        this._sequence = then;
+    }
+
     // -- daemon bookkeeping ----------------------------------------------------
 
     // One daemon at a time: a new caller replaces the previous one.
@@ -598,6 +633,7 @@ class TouchpadSnapService {
         this._keyQueue.clear();
         this._sessionActive = false;
         this._swipeActive = false;
+        this._sequence = '';
         this._stopReleaseWatch();
         this._stopCancel();
         this._ungrabAll();
@@ -703,6 +739,11 @@ class TouchpadSnapService {
             Meta.external_binding_name_for_action(this._cancelAction), Shell.ActionMode.NONE);
         global.display.ungrab_accelerator(this._cancelAction);
         this._cancelAction = 0;
+        // The one-key suffix armed by a sequence prefix, and the last
+        // modifier tap for double-tap detection.
+        this._sequence = '';
+        this._lastTap = {name: '', time: 0};
+        this._keyId = 0;
     }
 
     _stopReleaseWatch() {
@@ -710,6 +751,37 @@ class TouchpadSnapService {
             GLib.Source.remove(this._releaseId);
             this._releaseId = 0;
         }
+    }
+
+    // Sequence suffixes and modifier double-taps. Sequence prefixes are real
+    // accelerators; the next key is read here. A double tap needs no key to
+    // remember, so it is detected from the modifier presses themselves.
+    _onKey(event) {
+        if (event.type() !== Clutter.EventType.KEY_PRESS)
+            return Clutter.EVENT_PROPAGATE;
+        const symbol = event.get_key_symbol();
+        if (this._sequence) {
+            const wanted = this._sequence.toUpperCase();
+            this._sequence = '';
+            if (symbol > 0 && String.fromCharCode(symbol).toUpperCase() === wanted) {
+                this._emit('Sequence', new GLib.Variant('()'));
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        }
+        const name = MODIFIER_KEYS.get(symbol);
+        if (!name) {
+            this._lastTap = {name: '', time: 0};
+            return Clutter.EVENT_PROPAGATE;
+        }
+        const now = GLib.get_monotonic_time() / 1000;
+        if (this._lastTap.name === name && now - this._lastTap.time <= DOUBLE_TAP_MS) {
+            this._lastTap = {name: '', time: 0};
+            this._emit('DoubleTap', new GLib.Variant('(s)', [name]));
+        } else {
+            this._lastTap = {name, time: now};
+        }
+        return Clutter.EVENT_PROPAGATE;
     }
 
     _onTouchpad(event) {
