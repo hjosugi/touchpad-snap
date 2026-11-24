@@ -357,7 +357,6 @@ impl Device {
 
         let (x, y, spread) = self
             .point(report)
-            .map(|(x, y, spread)| (x, y, spread))
             .or_else(|| self.single_point(report).map(|(x, y)| (x, y, 0.0)))?;
         Some((contacts, x, y, spread))
     }
