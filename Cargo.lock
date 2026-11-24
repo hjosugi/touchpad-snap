@@ -2805,7 +2805,7 @@ checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
 name = "touchpad-snap"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2820,7 +2820,7 @@ dependencies = [
 
 [[package]]
 name = "touchpad-snap-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2832,7 +2832,7 @@ dependencies = [
 
 [[package]]
 name = "touchpad-snap-gui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "dirs",

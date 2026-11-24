@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.0] - 2026-11-25
 
 ### Added
 
@@ -42,7 +42,7 @@
   open apps as clickable app patterns, and the refused hotkeys in the status
   line make the first version complete. **Record gesture** asks the daemon to
   claim every swipe, pinch and hold for a moment, then fills in the trigger
-  from what was performed (GNOME; Windows shows that gesturerecording is not
+  from what was performed (GNOME; Windows shows that gesture recording is not
   supported there). (#18, #42)
 - Packaging for AUR, winget and Scoop, generated from the release checksums;
   optional Windows code signing in the release workflow, and a guide for
@@ -54,10 +54,10 @@
   conditions, window model and cycling logic live in `touchpad-snap-core`;
   the daemon, CLI and backends re-export them, so nothing embeds a GUI
   toolkit in the daemon. (#40)
-- GNOME extension protocol 8 adds pinch/hold claims, sequence suffixes,
-  modifier double-taps, `Cancel` and the generic window/desktop actions.
-  Older extensions keep working without the newer triggers. (#17, #35, #43,
-  #45)
+- GNOME extension protocol 9 adds pinch/hold claims, sequence suffixes,
+  modifier double-taps, `Cancel`, the generic window/desktop actions and the
+  recorder's `SetRecording`. Older extensions keep working without the newer
+  triggers. (#17, #35, #43, #45, #42)
 
 ## [0.6.0] - 2026-11-23
 
