@@ -44,6 +44,16 @@ pub enum Request {
     },
     /// Stream events as JSON lines until the client disconnects.
     Subscribe,
+    /// Claim every touchpad gesture for a moment and return the first one as
+    /// a trigger. Times out with an error.
+    Record {
+        #[serde(default = "default_record_timeout")]
+        timeout_ms: u64,
+    },
+}
+
+fn default_record_timeout() -> u64 {
+    15_000
 }
 
 /// The answer to a request. `error` is set instead of the payload on failure.
@@ -58,6 +68,8 @@ pub struct Response {
     pub pick: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<Value>,
 }
 
 impl Response {
@@ -152,10 +164,13 @@ struct Context {
     config_path: PathBuf,
     state_path: PathBuf,
     verbose: bool,
+    /// The waiting `Record` client, if any.
+    recorder: Mutex<Option<mpsc::Sender<Value>>>,
 }
 
 static CONTEXT: OnceLock<Arc<Context>> = OnceLock::new();
 static RELOAD: AtomicBool = AtomicBool::new(false);
+static RECORDING: AtomicBool = AtomicBool::new(false);
 
 /// Slot for a `Subscribe` client.
 fn subscribe(context: &Context) -> mpsc::Receiver<String> {
@@ -212,6 +227,24 @@ pub fn take_reload() -> bool {
     RELOAD.swap(false, Ordering::SeqCst)
 }
 
+/// Whether a `Record` request is waiting for a trigger.
+pub fn recording() -> bool {
+    RECORDING.load(Ordering::SeqCst)
+}
+
+/// Hands a recorded trigger to the waiting client. Returns whether one was
+/// waiting (only the first event of a recording is delivered).
+pub fn record(event: Value) -> bool {
+    let Some(context) = CONTEXT.get() else {
+        return false;
+    };
+    let sender = context.recorder.lock().expect("control recorder").take();
+    let Some(sender) = sender else {
+        return false;
+    };
+    sender.send(event).is_ok()
+}
+
 /// Starts the control channel for this process.
 ///
 /// Fails with "another touchpad-snap daemon is already running" if the
@@ -228,6 +261,7 @@ pub fn start(
         config_path,
         state_path,
         verbose,
+        recorder: Mutex::new(None),
     });
     CONTEXT
         .set(context.clone())
@@ -339,7 +373,39 @@ fn handle(request: Request, context: &Context) -> Response {
             workspace,
         } => run_jump(context, &step, order, workspace),
         Request::Run { binding, action } => run_binding(context, binding, action),
+        Request::Record { timeout_ms } => record_trigger(context, timeout_ms),
         Request::Subscribe => Response::error("subscribe needs a streaming connection"),
+    }
+}
+
+fn record_trigger(context: &Context, timeout_ms: u64) -> Response {
+    let result = (|| -> Result<Value> {
+        let backend = crate::platform::connect()?;
+        backend.set_recording(true)?;
+        let (tx, rx) = mpsc::channel();
+        *context.recorder.lock().expect("control recorder") = Some(tx);
+        RECORDING.store(true, Ordering::SeqCst);
+        let outcome = rx.recv_timeout(std::time::Duration::from_millis(timeout_ms));
+        RECORDING.store(false, Ordering::SeqCst);
+        *context.recorder.lock().expect("control recorder") = None;
+        let stopped = backend.set_recording(false);
+        if let Err(e) = stopped {
+            eprintln!("touchpad-snap: could not stop recording: {e:#}");
+        }
+        match outcome {
+            Ok(event) => Ok(event),
+            Err(_) => anyhow::bail!(
+                "no gesture within {} s (is the daemon running and the touchpad active?)",
+                timeout_ms / 1000
+            ),
+        }
+    })();
+    match result {
+        Ok(event) => Response {
+            event: Some(event),
+            ..Response::ok()
+        },
+        Err(e) => Response::error(format!("{e:#}")),
     }
 }
 
@@ -696,6 +762,9 @@ mod tests {
         let jump: Request =
             serde_json::from_str(r#"{"cmd":"jump","step":"next-app","order":"mru"}"#).unwrap();
         assert!(matches!(jump, Request::Jump { .. }));
+
+        let record: Request = serde_json::from_str(r#"{"cmd":"record"}"#).unwrap();
+        assert!(matches!(record, Request::Record { timeout_ms: 15_000 }));
     }
 
     #[test]

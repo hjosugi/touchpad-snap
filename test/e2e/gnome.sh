@@ -15,9 +15,9 @@ ok "extension loaded and owns io.github.hjosugi.TouchpadSnap"
 
 version=$(gdbus call --session --dest io.github.hjosugi.TouchpadSnap --object-path /io/github/hjosugi/TouchpadSnap \
     --method org.freedesktop.DBus.Properties.Get io.github.hjosugi.TouchpadSnap1 ProtocolVersion)
-[[ $version == "(<uint32 8>,)" ]] || fail "unexpected protocol version: $version"
+[[ $version == "(<uint32 9>,)" ]] || fail "unexpected protocol version: $version"
 [[ $(list_json | jq '.windows | length') == 0 ]] || fail "expected no windows initially"
-ok "protocol 8, empty list at startup"
+ok "protocol 9, empty list at startup"
 
 e2e_open_clients
 # A window gets its size a moment after it is mapped.
@@ -169,6 +169,27 @@ swipe 2 3 4 '' 0.0 0.0
 wait_for "Alt + swipe up → first editor" 15 focus_is "${editors[0]}"
 grep -q "swipe Up with 3 fingers" "$daemon_log" || fail "daemon did not log the swipe up"
 ok "swipes: Ctrl + left and Alt + up jump, unbound swipes do not"
+
+# The recorder: the daemon claims every gesture, returns the first as a
+# trigger, and runs none of the bound actions.
+focus_on "${editors[0]}"
+record_file="$E2E_ROOT/record.json"
+record_err="$E2E_ROOT/record.err"
+tps record --timeout 5 >"$record_file" 2>"$record_err" &
+record_pid=$!
+e2e_pids+=($record_pid)
+sleep 1
+swipe 0 3 2 '' 0.0 0.0
+swipe 1 3 2 '' -70.0 0.0
+swipe 1 3 2 '' -70.0 0.0
+swipe 2 3 2 '' 0.0 0.0
+wait_for "the recorder to return a trigger" 15 test -s "$record_file"
+wait "$record_pid" || fail "record failed: $(cat "$record_err")"
+jq -e '.event == "swipe" and .fingers == 3 and .direction == "left" and .modifiers == ["ctrl"]' \
+    "$record_file" >/dev/null || fail "unexpected recorded trigger: $(cat "$record_file")"
+sleep 0.5
+focus_is "${editors[0]}" || fail "recording ran a bound action"
+ok "recorder: claims an unbound gesture and returns it as a trigger"
 
 # Conditions: the same swipe means different things per app. The daemon gets
 # the app the gesture started in with the signal (as protocol 4's extension
@@ -394,7 +415,7 @@ ok "second daemon refused"
 
 doctor=$(tps doctor 2>&1) || fail "doctor reported problems: $doctor"
 echo "$doctor"
-grep -q "protocol 8" <<<"$doctor" || fail "doctor does not see the extension"
+grep -q "protocol 9" <<<"$doctor" || fail "doctor does not see the extension"
 ok "doctor"
 
 # What window-jump, this program's old name, can leave behind: its GNOME

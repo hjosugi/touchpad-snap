@@ -37,7 +37,10 @@
   imports bindings as JSON (imports list every `exec` command first). One-step
   undo of the last save, a shortcut-capture button for hotkey triggers, the
   open apps as clickable app patterns, and the refused hotkeys in the status
-  line make the first version complete. (#18, #42)
+  line make the first version complete. **Record gesture** asks the daemon to
+  claim every swipe, pinch and hold for a moment, then fills in the trigger
+  from what was performed (GNOME; Windows shows that gesturerecording is not
+  supported there). (#18, #42)
 - Packaging for AUR, winget and Scoop, generated from the release checksums;
   optional Windows code signing in the release workflow, and a guide for
   submitting the extension to extensions.gnome.org. (#12, #14, #15)

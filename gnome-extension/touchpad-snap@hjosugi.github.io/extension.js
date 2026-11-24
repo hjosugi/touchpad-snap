@@ -40,7 +40,7 @@ import {
 const BUS_NAME = 'io.github.hjosugi.TouchpadSnap';
 const OBJECT_PATH = '/io/github/hjosugi/TouchpadSnap';
 const INTERFACE = 'io.github.hjosugi.TouchpadSnap1';
-const PROTOCOL_VERSION = 8;
+const PROTOCOL_VERSION = 9;
 // Meta.Window.maximize()/unmaximize() lost their flags argument in GNOME 49.
 const SHELL_MAJOR = Number.parseInt(ShellConfig.PACKAGE_VERSION.split('.')[0], 10);
 const MAXIMIZE_TAKES_FLAGS = SHELL_MAJOR < 49;
@@ -82,6 +82,9 @@ const IFACE_XML = `
     </method>
     <method name="SetSequence">
       <arg type="s" direction="in" name="then"/>
+    </method>
+    <method name="SetRecording">
+      <arg type="b" direction="in" name="on"/>
     </method>
     <method name="WindowAction">
       <arg type="t" direction="in" name="id"/>
@@ -291,6 +294,9 @@ class TouchpadSnapService {
         // The one-key suffix armed by a sequence prefix, and the last
         // modifier tap for double-tap detection.
         this._sequence = '';
+        // Claim every gesture for the settings window's recorder.
+        this._recording = false;
+        this._recordingSwipe = false;
         this._lastTap = {name: '', time: 0};
         this._keyId = 0;
     }
@@ -635,6 +641,12 @@ class TouchpadSnapService {
         this._sequence = then;
     }
 
+    SetRecording(on) {
+        this._recording = on;
+        if (!on)
+            this._recordingSwipe = false;
+    }
+
     // -- daemon bookkeeping ----------------------------------------------------
 
     // One daemon at a time: a new caller replaces the previous one.
@@ -760,6 +772,9 @@ class TouchpadSnapService {
         // The one-key suffix armed by a sequence prefix, and the last
         // modifier tap for double-tap detection.
         this._sequence = '';
+        // Claim every gesture for the settings window's recorder.
+        this._recording = false;
+        this._recordingSwipe = false;
         this._lastTap = {name: '', time: 0};
         this._keyId = 0;
     }
@@ -816,7 +831,7 @@ class TouchpadSnapService {
     }
 
     _onSwipe(event) {
-        if (!this._claimer.hasClaims)
+        if (!this._claimer.hasClaims && !this._recording)
             return Clutter.EVENT_PROPAGATE;
 
         const phase = PHASES.get(event.get_gesture_phase());
@@ -825,6 +840,25 @@ class TouchpadSnapService {
 
         let mods = 0;
         let app = [];
+        if (this._recording) {
+            if (phase === Phase.BEGIN) {
+                this._recordingSwipe = true;
+                mods = this._gestureMods(event);
+                app = this._appIdentifiers();
+            } else if (!this._recordingSwipe) {
+                return Clutter.EVENT_PROPAGATE;
+            } else {
+                mods = this._gestureMods(event);
+            }
+            const fingers = event.get_touchpad_gesture_finger_count();
+            const [dx, dy] = event.get_gesture_motion_delta_unaccelerated();
+            this._emit('Swipe', new GLib.Variant('(uuusdd)', [
+                phase, fingers, mods, app[0] ?? '', dx, dy,
+            ]));
+            if (phase === Phase.END || phase === Phase.CANCEL)
+                this._recordingSwipe = false;
+            return Clutter.EVENT_STOP;
+        }
         if (phase === Phase.BEGIN) {
             // Leave the overview, lock screen and modal dialogs alone.
             if (Main.actionMode !== Shell.ActionMode.NORMAL) {
@@ -869,7 +903,7 @@ class TouchpadSnapService {
     }
 
     _onPinch(event) {
-        if (this._pinchClaims.length === 0)
+        if (this._pinchClaims.length === 0 && !this._recording)
             return Clutter.EVENT_PROPAGATE;
         const phase = PHASES.get(event.get_gesture_phase());
         if (phase === undefined)
@@ -879,7 +913,8 @@ class TouchpadSnapService {
                 return Clutter.EVENT_PROPAGATE;
             const fingers = event.get_touchpad_gesture_finger_count();
             const mods = this._gestureMods(event);
-            this._pinchClaimed = this._claimed(this._pinchClaims, fingers, mods);
+            this._pinchClaimed = this._recording ||
+                this._claimed(this._pinchClaims, fingers, mods);
             if (!this._pinchClaimed)
                 return Clutter.EVENT_PROPAGATE;
         } else if (!this._pinchClaimed) {
@@ -901,7 +936,7 @@ class TouchpadSnapService {
     }
 
     _onHold(event) {
-        if (this._holdClaims.length === 0)
+        if (this._holdClaims.length === 0 && !this._recording)
             return Clutter.EVENT_PROPAGATE;
         const phase = PHASES.get(event.get_gesture_phase());
         if (phase === undefined)
@@ -911,7 +946,8 @@ class TouchpadSnapService {
                 return Clutter.EVENT_PROPAGATE;
             const fingers = event.get_touchpad_gesture_finger_count();
             const mods = this._gestureMods(event);
-            this._holdClaimed = this._claimed(this._holdClaims, fingers, mods);
+            this._holdClaimed = this._recording ||
+                this._claimed(this._holdClaims, fingers, mods);
             if (!this._holdClaimed)
                 return Clutter.EVENT_PROPAGATE;
         } else if (!this._holdClaimed) {

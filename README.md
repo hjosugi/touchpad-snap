@@ -321,7 +321,9 @@ window is available in English and Japanese. **Try** runs the selected binding
 through the daemon, **Live** streams what the daemon sees (hotkeys, swipes,
 pinches, holds, mouse triggers), and bindings can be exported to or imported
 from a JSON file; importing lists every `exec` command before anything is
-added. **Capture shortcut** fills a hotkey trigger from the keys pressed;
+added. **Record gesture** asks the daemon to claim every swipe, pinch and hold
+for a moment and fills the trigger from what you performed (GNOME);
+**Capture shortcut** fills a hotkey trigger from the keys pressed;
 **Open apps** offers the running apps as `when.app` patterns; **Undo** steps
 back over the last save.
 
@@ -552,7 +554,7 @@ default; an explicit `"bindings": []` turns all bindings off.
   they are released for the shortcut and pressed again; on GNOME a virtual
   keyboard cannot release a key you hold, so the shortcut is typed when you
   let go of the modifier (and dropped if you hold it for more than 3 s).
-  Needs the GNOME extension with protocol 8 (log in again after updating).
+  Needs the GNOME extension with protocol 9 (log in again after updating).
   Other desktops report the action as unsupported.
 - `name` is optional and is only used in logs and `config check`.
   `enabled: false` keeps a binding in the file without registering it.

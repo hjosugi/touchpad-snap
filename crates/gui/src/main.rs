@@ -64,6 +64,7 @@ struct App {
     capture_hotkey: bool,
     available_apps: Vec<String>,
     writable: bool,
+    record_rx: Option<std::sync::mpsc::Receiver<Result<serde_json::Value, String>>>,
 }
 
 impl App {
@@ -98,9 +99,145 @@ impl App {
             capture_hotkey: false,
             available_apps: Vec::new(),
             writable: load_error.is_none() && !legacy,
+            record_rx: None,
         };
         app.sync_when();
         app
+    }
+
+    fn start_recording(&mut self) {
+        if self.record_rx.is_some() {
+            return;
+        }
+        let child = Command::new("touchpad-snap")
+            .args(["record", "--timeout", "15"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        let child = match child {
+            Ok(child) => child,
+            Err(e) => {
+                self.message = format!("{} {e}", self.t("Error:", "エラー:"));
+                return;
+            }
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let lang = self.lang;
+        std::thread::spawn(move || {
+            let result = match child.wait_with_output() {
+                Ok(output) if output.status.success() => {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    match serde_json::from_str::<serde_json::Value>(text.trim()) {
+                        Ok(value) => Ok(value),
+                        Err(e) => Err(format!("{e}")),
+                    }
+                }
+                Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+                Err(e) => Err(format!("{e}")),
+            };
+            let _ = (lang, tx.send(result));
+        });
+        self.record_rx = Some(rx);
+        self.message = self
+            .t(
+                "Recording: perform the gesture now (15 s)…",
+                "記録中: 15 秒以内にジェスチャーを行ってください…",
+            )
+            .into();
+    }
+
+    fn poll_recording(&mut self) {
+        let Some(rx) = &self.record_rx else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(value)) => {
+                self.record_rx = None;
+                self.apply_recorded(value);
+            }
+            Ok(Err(error)) => {
+                self.record_rx = None;
+                self.message = format!("{} {error}", self.t("Recording failed:", "記録に失敗:"));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.record_rx = None;
+            }
+        }
+    }
+
+    fn apply_recorded(&mut self, value: serde_json::Value) {
+        let modifiers = value["modifiers"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|item| match item.as_str()? {
+                        "ctrl" => Some(Modifier::Ctrl),
+                        "alt" => Some(Modifier::Alt),
+                        "shift" => Some(Modifier::Shift),
+                        "super" => Some(Modifier::Super),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let trigger = match value["event"].as_str().unwrap_or_default() {
+            "hotkey" => Some(Trigger::Hotkey {
+                keys: value["keys"].as_str().unwrap_or_default().to_string(),
+            }),
+            "swipe" => value["direction"]
+                .as_str()
+                .and_then(swipe_direction)
+                .map(|direction| Trigger::Swipe {
+                    fingers: value["fingers"].as_u64().unwrap_or(3) as u32,
+                    modifiers,
+                    direction,
+                }),
+            "pinch" => Some(Trigger::Pinch {
+                fingers: value["fingers"].as_u64().unwrap_or(2) as u32,
+                modifiers,
+                direction: if value["direction"].as_str() == Some("out") {
+                    PinchDirection::Out
+                } else {
+                    PinchDirection::In
+                },
+            }),
+            "hold" => Some(Trigger::Hold {
+                fingers: value["fingers"].as_u64().unwrap_or(2) as u32,
+                modifiers,
+            }),
+            "double_tap" => value["modifier"]
+                .as_str()
+                .and_then(modifier_value)
+                .map(|modifier| Trigger::DoubleTap { modifier }),
+            "mouse" => value["button"]
+                .as_str()
+                .and_then(mouse_button)
+                .map(|button| Trigger::Mouse {
+                    button,
+                    modifiers,
+                    scroll: value["scroll"].as_str().and_then(scroll_direction),
+                }),
+            _ => None,
+        };
+        match trigger {
+            Some(trigger) => {
+                if let Some(binding) = self.cfg.bindings.get_mut(self.selected) {
+                    binding.trigger = trigger;
+                }
+                self.message = self
+                    .t("Recorded a trigger", "トリガーを記録しました")
+                    .into();
+            }
+            None => {
+                self.message = self
+                    .t(
+                        "The recorded event is not a known trigger.",
+                        "記録されたイベントをトリガーにできません。",
+                    )
+                    .into();
+            }
+        }
     }
 
     fn start_events(&mut self) {
@@ -479,6 +616,7 @@ impl eframe::App for App {
             }
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+        self.poll_recording();
         if let Some(child) = &mut self.events_child
             && matches!(child.try_wait(), Ok(Some(_)))
         {
@@ -740,6 +878,15 @@ impl App {
                 .clicked()
             {
                 self.capture_hotkey = true;
+            }
+            if ui
+                .add_enabled(
+                    self.record_rx.is_none(),
+                    egui::Button::new(self.t("Record gesture", "ジェスチャーを記録")),
+                )
+                .clicked()
+            {
+                self.start_recording();
             }
             if self.capture_hotkey {
                 ui.label(self.t(
@@ -1385,6 +1532,48 @@ fn hotkey_key_name(key: egui::Key) -> String {
         egui::Key::PageUp => "pageup".into(),
         egui::Key::PageDown => "pagedown".into(),
         other => format!("{other:?}"),
+    }
+}
+
+fn modifier_value(name: &str) -> Option<Modifier> {
+    match name {
+        "ctrl" => Some(Modifier::Ctrl),
+        "alt" => Some(Modifier::Alt),
+        "shift" => Some(Modifier::Shift),
+        "super" => Some(Modifier::Super),
+        _ => None,
+    }
+}
+
+fn swipe_direction(name: &str) -> Option<touchpad_snap_core::gesture::SwipeDirection> {
+    use touchpad_snap_core::gesture::SwipeDirection;
+    match name {
+        "left" => Some(SwipeDirection::Left),
+        "right" => Some(SwipeDirection::Right),
+        "up" => Some(SwipeDirection::Up),
+        "down" => Some(SwipeDirection::Down),
+        _ => None,
+    }
+}
+
+fn mouse_button(name: &str) -> Option<MouseButton> {
+    match name {
+        "left" => Some(MouseButton::Left),
+        "right" => Some(MouseButton::Right),
+        "middle" => Some(MouseButton::Middle),
+        "back" => Some(MouseButton::Back),
+        "forward" => Some(MouseButton::Forward),
+        _ => None,
+    }
+}
+
+fn scroll_direction(name: &str) -> Option<ScrollDirection> {
+    match name {
+        "up" => Some(ScrollDirection::Up),
+        "down" => Some(ScrollDirection::Down),
+        "left" => Some(ScrollDirection::Left),
+        "right" => Some(ScrollDirection::Right),
+        _ => None,
     }
 }
 

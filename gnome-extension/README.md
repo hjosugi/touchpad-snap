@@ -9,7 +9,7 @@ claims. Install it together with the `touchpad-snap` binary.
 machine, app pattern matching), unit-tested with Node: `npm test` at the
 repository root.
 
-## D-Bus protocol (version 8)
+## D-Bus protocol (version 9)
 
 | | |
 |---|---|
@@ -54,6 +54,9 @@ repository root.
 - `SetSequence(s then)` — arm the one letter or digit that finishes a
   sequence after its prefix hotkey fired; an empty string disarms it.
   *(Since version 7.)*
+- `SetRecording(b on)` — while true, claim every swipe, pinch and hold and
+  forward it even without a matching claim, for the settings window's
+  gesture recorder. *(Since version 9.)*
 - `WindowAction(t id, s action, s arg) → b ok` — act on a window (`id` 0 is
   the focused one): `window.minimize`, `maximize`, `restore`,
   `toggle_maximize`, `fullscreen`, `close`, `tile`, `move_to_monitor`,

@@ -82,6 +82,13 @@ pub trait Backend {
     fn shell_action(&self, _name: &str) -> Result<()> {
         anyhow::bail!("desktop actions are not supported on this desktop yet")
     }
+    /// Claims every touchpad gesture for the recorder. Only GNOME can see
+    /// unclaimed gestures.
+    fn set_recording(&self, _on: bool) -> Result<()> {
+        anyhow::bail!(
+            "recording gestures needs the GNOME extension; use the shortcut capture for hotkeys"
+        )
+    }
     /// Arms the one-key sequence `then` after its prefix hotkey fired.
     fn start_sequence(&self, _then: &str) -> Result<()> {
         anyhow::bail!("key sequences are not supported on this desktop yet")

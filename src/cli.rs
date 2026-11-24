@@ -88,6 +88,12 @@ enum Command {
     Events,
     /// Open the settings window
     Settings,
+    /// Claim the next gesture and print it as a trigger (for the GUI)
+    Record {
+        /// Give up after this many seconds
+        #[arg(long, default_value_t = 15)]
+        timeout: u64,
+    },
 }
 
 #[derive(clap::Args, Debug)]
@@ -305,6 +311,16 @@ fn dispatch(cli: Cli) -> Result<()> {
             true
         }),
         Command::Settings => settings(&config_path),
+        Command::Record { timeout } => {
+            let response = control::request(&control::Request::Record {
+                timeout_ms: timeout.saturating_mul(1000),
+            })?;
+            let event = response
+                .event
+                .ok_or_else(|| anyhow::anyhow!("the daemon recorded nothing"))?;
+            println!("{}", serde_json::to_string(&event)?);
+            Ok(())
+        }
     }
 }
 

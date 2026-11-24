@@ -33,7 +33,7 @@ pub const INTERFACE: &str = "io.github.hjosugi.TouchpadSnap1";
 /// version 3 the AcceleratorReleased signal, version 4 per-app swipe claims
 /// and the app id in the Swipe signal, and version 5 SendKeys (the `keys`
 /// action). Older extensions still work, without the features above.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 pub const EXTENSION_UUID: &str = "touchpad-snap@hjosugi.github.io";
 
 /// Whether an extension of `version` understands app-filtered swipe claims.
@@ -93,6 +93,7 @@ impl Gnome {
                 5 => "the window, workspace and overview actions",
                 6 => "pinch and hold gestures",
                 7 => "modifier double-taps and key sequences",
+                8 => "gesture recording",
                 _ => "nothing",
             };
             eprintln!(
@@ -187,6 +188,13 @@ impl Gnome {
 impl Backend for Gnome {
     fn protocol(&self) -> Option<u32> {
         self.protocol_version().ok()
+    }
+
+    fn set_recording(&self, on: bool) -> Result<()> {
+        self.proxy
+            .call_method("SetRecording", &(on,))
+            .map_err(|e| self.explain(e))?;
+        Ok(())
     }
 
     fn start_sequence(&self, then: &str) -> Result<()> {

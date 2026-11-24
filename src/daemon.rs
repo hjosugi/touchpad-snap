@@ -12,7 +12,7 @@ use crate::control;
 use crate::cycle::{self, Pick, Session, Step};
 use crate::exec::{self, ActionContext};
 use crate::gesture::{Phase, SwipeRecognizer};
-use crate::hotkey::{Hotkey, Mods};
+use crate::hotkey::{Hotkey, Modifier, Mods};
 use crate::model::Snapshot;
 use crate::platform::{self, Backend, Event};
 use crate::session;
@@ -106,6 +106,32 @@ fn place_in_apps(
     let key = target.app_key();
     let index = list.iter().position(|w| w.app_key() == key)? + 1;
     Some((index, list.len()))
+}
+
+fn modifier_name(modifier: Modifier) -> &'static str {
+    match modifier {
+        Modifier::Shift => "shift",
+        Modifier::Ctrl => "ctrl",
+        Modifier::Alt => "alt",
+        Modifier::Super => "super",
+    }
+}
+
+fn mod_names(mods: Mods) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if mods.contains(Mods::SHIFT) {
+        names.push("shift");
+    }
+    if mods.contains(Mods::CTRL) {
+        names.push("ctrl");
+    }
+    if mods.contains(Mods::ALT) {
+        names.push("alt");
+    }
+    if mods.contains(Mods::SUPER) {
+        names.push("super");
+    }
+    names
 }
 
 /// Says which bindings were skipped and why, and how to finish a migration.
@@ -213,6 +239,8 @@ pub struct Handler {
     pinch: Option<(u32, Mods, TriggerContext, f64)>,
     /// Binding index waiting for the second key of a sequence.
     pending_sequence: Option<usize>,
+    /// Motion accumulated for the gesture recorder.
+    record_swipe: Option<(u32, Mods, f64, f64)>,
     state_path: PathBuf,
     watch: Option<ConfigWatch>,
     verbose: bool,
@@ -232,6 +260,7 @@ impl Handler {
             held: false,
             pinch: None,
             pending_sequence: None,
+            record_swipe: None,
             state_path,
             watch: None,
             verbose,
@@ -252,6 +281,10 @@ impl Handler {
     /// Handles one event. Returns the new config when it was reloaded, so the
     /// platform can register the new hotkeys and swipes.
     pub fn handle(&mut self, backend: &dyn Backend, event: Event) -> Option<Config> {
+        if control::recording() && !matches!(event, Event::Tick | Event::Reload) {
+            self.record_event(event);
+            return None;
+        }
         match event {
             Event::Tick => {
                 let force = control::take_reload();
@@ -549,6 +582,101 @@ impl Handler {
             }
         }
         None
+    }
+
+    /// Turns an event into a trigger for the recorder instead of running a
+    /// binding. Only the gesture that completes the trigger is published.
+    fn record_event(&mut self, event: Event) {
+        match event {
+            Event::Hotkey { index, .. } => {
+                if let Some(hotkey) = self.cfg.hotkeys().get(index) {
+                    control::record(serde_json::json!({
+                        "event": "hotkey",
+                        "keys": hotkey.to_string(),
+                    }));
+                }
+            }
+            Event::Swipe {
+                phase,
+                claim,
+                app_id: _,
+                dx,
+                dy,
+            } => match phase {
+                Phase::Begin => self.record_swipe = Some((claim.fingers, claim.mods, 0.0, 0.0)),
+                Phase::Update => {
+                    if let Some((_, _, x, y)) = self.record_swipe.as_mut() {
+                        *x += dx;
+                        *y += dy;
+                    }
+                }
+                Phase::End | Phase::Cancel => {
+                    let Some((fingers, mods, dx, dy)) = self.record_swipe.take() else {
+                        return;
+                    };
+                    let direction = if dx.abs() >= dy.abs() {
+                        if dx < 0.0 { "left" } else { "right" }
+                    } else if dy < 0.0 {
+                        "up"
+                    } else {
+                        "down"
+                    };
+                    control::record(serde_json::json!({
+                        "event": "swipe",
+                        "fingers": fingers,
+                        "modifiers": mod_names(mods),
+                        "direction": direction,
+                    }));
+                }
+            },
+            Event::Pinch {
+                phase,
+                fingers,
+                mods,
+                scale,
+            } => {
+                if phase == Phase::End {
+                    control::record(serde_json::json!({
+                        "event": "pinch",
+                        "fingers": fingers,
+                        "modifiers": mod_names(mods),
+                        "direction": if scale < 1.0 { "in" } else { "out" },
+                    }));
+                }
+            }
+            Event::Hold {
+                phase,
+                fingers,
+                mods,
+            } => {
+                if phase == Phase::Begin {
+                    control::record(serde_json::json!({
+                        "event": "hold",
+                        "fingers": fingers,
+                        "modifiers": mod_names(mods),
+                    }));
+                }
+            }
+            Event::DoubleTap { modifier } => {
+                control::record(serde_json::json!({
+                    "event": "double_tap",
+                    "modifier": modifier_name(modifier),
+                }));
+            }
+            Event::Mouse {
+                button,
+                scroll,
+                mods,
+            } => {
+                control::record(serde_json::json!({
+                    "event": "mouse",
+                    "button": button.as_str(),
+                    "scroll": scroll.map(|s| s.as_str()),
+                    "modifiers": mod_names(mods),
+                }));
+            }
+            Event::Sequence | Event::Released | Event::Cancel | Event::Tick | Event::Reload => {}
+        }
     }
 
     /// Esc during a held session: back to the window it started from, then

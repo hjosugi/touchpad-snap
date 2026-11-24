@@ -243,7 +243,9 @@ Windows のトレイメニューの **Settings…**）で、バインディン�
 経由で実行し、**Live** は daemon が見ているイベント（ホットキー、スワイプ、
 ピンチ、ホールド、マウス）を流します。バインディングは JSON ファイルへ
 書き出し・取り込みでき、取り込み時は `exec` コマンドを実行前に一覧します。
-**Capture shortcut** は押したキーからホットキーを作り、**Open apps** は起動中の
+**Record gesture** は daemon に一瞬すべてのスワイプ・ピンチ・ホールドを
+claim させ、行った操作からトリガーを作ります（GNOME）。**Capture shortcut**
+は押したキーからホットキーを作り、**Open apps** は起動中の
 アプリを `when.app` の候補にし、**Undo** は直前の保存を戻します。
 
 GUI は別バイナリです。Linux では `cargo install --locked --path crates/gui`
