@@ -1,0 +1,23 @@
+PackageIdentifier: hjosugi.touchpad-snap
+PackageVersion: 0.7.0
+InstallerType: zip
+NestedInstallerType: portable
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/hjosugi/touchpad-snap/releases/download/v0.7.0/touchpad-snap-v0.7.0-x86_64-pc-windows-msvc.zip
+    InstallerSha256: BEB8FB15ADF930CF334B426F3D3178250DE20F0746DF95EEC231751F563E5F8B
+    NestedInstallerFiles:
+      - RelativeFilePath: touchpad-snap-v0.7.0-x86_64-pc-windows-msvc\touchpad-snap.exe
+        PortableCommandAlias: touchpad-snap
+      - RelativeFilePath: touchpad-snap-v0.7.0-x86_64-pc-windows-msvc\touchpad-snapw.exe
+        PortableCommandAlias: touchpad-snapw
+  - Architecture: arm64
+    InstallerUrl: https://github.com/hjosugi/touchpad-snap/releases/download/v0.7.0/touchpad-snap-v0.7.0-aarch64-pc-windows-msvc.zip
+    InstallerSha256: 3F73FB249C6E749669C82E950BC9E12CF85BE21DA2A66A65E10FC000D5D3439B
+    NestedInstallerFiles:
+      - RelativeFilePath: touchpad-snap-v0.7.0-aarch64-pc-windows-msvc\touchpad-snap.exe
+        PortableCommandAlias: touchpad-snap
+      - RelativeFilePath: touchpad-snap-v0.7.0-aarch64-pc-windows-msvc\touchpad-snapw.exe
+        PortableCommandAlias: touchpad-snapw
+ManifestType: installer
+ManifestVersion: 1.6.0

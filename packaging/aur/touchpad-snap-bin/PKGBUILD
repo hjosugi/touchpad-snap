@@ -1,6 +1,6 @@
 # Maintainer: Avishai Kofun <https://github.com/hjosugi>
 pkgname=touchpad-snap-bin
-pkgver=0.6.0
+pkgver=0.7.0
 pkgrel=1
 pkgdesc="Bind touchpad gestures and keyboard shortcuts to window and desktop actions (prebuilt)"
 arch=('x86_64' 'aarch64')
@@ -15,10 +15,10 @@ source_x86_64=("${url}/releases/download/v${pkgver}/touchpad-snap-v${pkgver}-x86
                "${url}/releases/download/v${pkgver}/touchpad-snap@hjosugi.github.io.shell-extension.zip")
 source_aarch64=("${url}/releases/download/v${pkgver}/touchpad-snap-v${pkgver}-aarch64-unknown-linux-musl.tar.gz"
                 "${url}/releases/download/v${pkgver}/touchpad-snap@hjosugi.github.io.shell-extension.zip")
-sha256sums_x86_64=('d079f89d32e8eefa1bbb4233da3c7e15999393cc63417d25d8064c64bb4ca413'
-                   '0095afc97e88fbe7fce39a07448e7a6ce095d02582c3f995614267d9b1a438e3')
-sha256sums_aarch64=('44168095571ae2729f3276857cd4a7170e52eec3d27a20ff068d429ec5444953'
-                    '0095afc97e88fbe7fce39a07448e7a6ce095d02582c3f995614267d9b1a438e3')
+sha256sums_x86_64=('84c323ca1d554948a41ecdbe876984364bfa0aef6f6c595d69bb9c4717699f13'
+                   'e02d9bb71f944d2d526d71cefb3c918c5cde0df4c0b9bbd0a2750b37d2f90ae0')
+sha256sums_aarch64=('118cbf824447a45552e5ac87f166daafb3e76733c99380628cbe3e50515c1001'
+                    'e02d9bb71f944d2d526d71cefb3c918c5cde0df4c0b9bbd0a2750b37d2f90ae0')
 noextract=("touchpad-snap-v${pkgver}-${CARCH}-unknown-linux-musl.tar.gz")
 
 package() {

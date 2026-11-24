@@ -37,7 +37,11 @@ def sums_for(version: str, path: Path | None) -> dict[str, str]:
                  "--pattern", "SHA256SUMS", "--dir", tmp, "--clobber"],
                 check=True,
             )
-            path = Path(tmp) / "SHA256SUMS"
+            return parse_sums(Path(tmp) / "SHA256SUMS")
+    return parse_sums(path)
+
+
+def parse_sums(path: Path) -> dict[str, str]:
     sums = {}
     for line in path.read_text().splitlines():
         if not line.strip():

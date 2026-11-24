@@ -1,18 +1,18 @@
 {
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Bind touchpad gestures and keyboard shortcuts to window and desktop actions.",
   "homepage": "https://github.com/hjosugi/touchpad-snap",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/hjosugi/touchpad-snap/releases/download/v0.6.0/touchpad-snap-v0.6.0-x86_64-pc-windows-msvc.zip",
-      "hash": "05ed7cc8dc409ae85539204ea65527cdf888c00612a6982f268dd5937387c8cd",
-      "extract_dir": "touchpad-snap-v0.6.0-x86_64-pc-windows-msvc"
+      "url": "https://github.com/hjosugi/touchpad-snap/releases/download/v0.7.0/touchpad-snap-v0.7.0-x86_64-pc-windows-msvc.zip",
+      "hash": "beb8fb15adf930cf334b426f3d3178250de20f0746df95eec231751f563e5f8b",
+      "extract_dir": "touchpad-snap-v0.7.0-x86_64-pc-windows-msvc"
     },
     "arm64": {
-      "url": "https://github.com/hjosugi/touchpad-snap/releases/download/v0.6.0/touchpad-snap-v0.6.0-aarch64-pc-windows-msvc.zip",
-      "hash": "6469a8bed65eb9b60c1a535c57bdd36a4ca1282c7458ccc20cfd0e815a7f14ad",
-      "extract_dir": "touchpad-snap-v0.6.0-aarch64-pc-windows-msvc"
+      "url": "https://github.com/hjosugi/touchpad-snap/releases/download/v0.7.0/touchpad-snap-v0.7.0-aarch64-pc-windows-msvc.zip",
+      "hash": "3f73fb249c6e749669c82e950bc9e12cf85be21da2a66a65e10fc000d5d3439b",
+      "extract_dir": "touchpad-snap-v0.7.0-aarch64-pc-windows-msvc"
     }
   },
   "bin": [
