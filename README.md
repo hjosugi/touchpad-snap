@@ -734,8 +734,8 @@ any trigger can carry a `when` (`app`/`not_app`, `os`, `desktop`).
 |---|---|---|
 | `hotkey` | `keys`: `"Super+Alt+N"` | all |
 | `swipe` | `fingers` 3–5, `modifiers`, `direction`: left/right/up/down | GNOME, Windows touchpad, libinput |
-| `pinch` | `fingers` 2–5, `modifiers`, `direction`: `in` / `out` | GNOME |
-| `hold` | `fingers` 2–5, `modifiers` | GNOME |
+| `pinch` | `fingers` 2–5, `modifiers`, `direction`: `in` / `out` | GNOME, Windows, libinput |
+| `hold` | `fingers` 2–5, `modifiers` | GNOME, Windows, libinput |
 | `sequence` | `keys`: prefix hotkey, `then`: one letter or digit | GNOME, Windows |
 | `double_tap` | `modifier`: `ctrl` / `alt` / `shift` / `super` | GNOME, Windows |
 | `mouse` | `button`: left/right/middle/back/forward, `modifiers`, `scroll`: up/down/left/right | Windows |
@@ -757,6 +757,8 @@ any trigger can carry a `when` (`app`/`not_app`, `os`, `desktop`).
 | `exec` | `command` (argument list or, with `"shell": true`, a string) | all |
 | `delay` | `ms` | all |
 
+Taps are not exposed by GNOME's touchpad gesture events (only swipes, pinch and
+hold), so there is no tap trigger; bind a mouse button or a shortcut instead.
 A binding that cannot work on this platform is skipped with a warning;
 `touchpad-snap config check` and the GUI list them.
 

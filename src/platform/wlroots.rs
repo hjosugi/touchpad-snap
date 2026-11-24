@@ -187,6 +187,8 @@ fn run_gestures(cfg: &Config, verbose: bool, handle: &mut super::Handler) -> Res
     let keepalive = tx.clone();
     let gestures = super::libinput::GestureSource::spawn(
         cfg.claims_for(&super::current_platform()),
+        cfg.pinch_claims(),
+        cfg.hold_claims(),
         tx,
         verbose,
     );
@@ -210,6 +212,7 @@ fn run_gestures(cfg: &Config, verbose: bool, handle: &mut super::Handler) -> Res
         }
         if let Some(new) = changed {
             gestures.set_claims(new.claims_for(&super::current_platform()));
+            gestures.set_gesture_claims(new.pinch_claims(), new.hold_claims());
         }
     }
     Ok(())

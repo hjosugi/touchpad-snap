@@ -513,6 +513,8 @@ pub fn run_hotkeys_with(
         let (gesture_tx, gesture_rx) = std::sync::mpsc::channel::<Event>();
         let source = super::libinput::GestureSource::spawn(
             cfg.claims_for(&super::current_platform()),
+            cfg.pinch_claims(),
+            cfg.hold_claims(),
             gesture_tx,
             verbose,
         );
@@ -561,7 +563,10 @@ pub fn run_hotkeys_with(
             let claims = new.claims_for(&super::current_platform());
             hotkeys = new.hotkeys();
             #[cfg(feature = "libinput")]
-            gestures.set_claims(claims);
+            {
+                gestures.set_claims(claims);
+                gestures.set_gesture_claims(new.pinch_claims(), new.hold_claims());
+            }
             #[cfg(not(feature = "libinput"))]
             let _ = claims;
             eprintln!(

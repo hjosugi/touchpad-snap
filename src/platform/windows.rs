@@ -14,8 +14,7 @@ use std::mem::size_of;
 use std::path::Path;
 use std::ptr::null_mut;
 use std::sync::Once;
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use windows_sys::Win32::Foundation::{
@@ -1057,6 +1056,7 @@ pub fn run_daemon(
     // message-only one. Without a Precision Touchpad it simply never fires.
     let touchpad = Source::new(!cfg.claims().is_empty());
     let mut swipe_claim: Option<Claim> = None;
+    let mut touch_gesture: Option<TouchGesture> = None;
     // A tray that Windows refuses is not fatal: hotkeys must still work.
     let mut tray = Tray::new(&statuses);
     let mut msg: MSG = unsafe { std::mem::zeroed() };
@@ -1076,7 +1076,10 @@ pub fn run_daemon(
             // The hidden window's WndProc parsed any WM_INPUT into samples.
             if let Some(touchpad) = &touchpad {
                 for sample in touchpad.drain() {
-                    if let Some(event) = swipe_event(&cfg, &mut swipe_claim, sample) {
+                    if let Some(event) = swipe_event(&cfg, &mut swipe_claim, &sample) {
+                        changed = handle(&backend, event);
+                    }
+                    for event in gesture_events(&cfg, &mut touch_gesture, &sample) {
                         changed = handle(&backend, event);
                     }
                 }
@@ -1412,7 +1415,7 @@ fn modifiers_down(mods: Mods) -> bool {
 /// Turns a parsed touchpad sample into a swipe event, but only for a
 /// (finger count, modifiers) combination the config claims. Modifiers are
 /// sampled at Begin, as on GNOME.
-fn swipe_event(cfg: &Config, active: &mut Option<Claim>, sample: Sample) -> Option<Event> {
+fn swipe_event(cfg: &Config, active: &mut Option<Claim>, sample: &Sample) -> Option<Event> {
     match sample.phase {
         Phase::Begin => {
             let claim = Claim::gesture(sample.fingers, held_mods());
@@ -1453,6 +1456,109 @@ fn swipe_event(cfg: &Config, active: &mut Option<Claim>, sample: Sample) -> Opti
                 dx: 0.0,
                 dy: 0.0,
             })
+        }
+    }
+}
+
+/// A multi-finger gesture in progress on the Precision Touchpad.
+struct TouchGesture {
+    fingers: u32,
+    mods: Mods,
+    start: Instant,
+    start_spread: f64,
+    last_spread: f64,
+    motion: f64,
+    pinch: Option<(u32, Mods)>,
+    hold: Option<(u32, Mods)>,
+}
+
+/// Turns the samples of a raw touchpad gesture into pinch/hold events.
+/// Windows reports contacts, so both are measured from their spread and the
+/// time they stay down; the gesture is delivered when the fingers lift.
+fn gesture_events(cfg: &Config, active: &mut Option<TouchGesture>, sample: &Sample) -> Vec<Event> {
+    match sample.phase {
+        Phase::Begin => {
+            let mods = held_mods();
+            let fingers = sample.fingers;
+            let pinch = cfg
+                .pinch_claims()
+                .into_iter()
+                .find(|(f, m)| *f == fingers && *m == mods);
+            let hold = cfg
+                .hold_claims()
+                .into_iter()
+                .find(|(f, m)| *f == fingers && *m == mods);
+            *active = (pinch.is_some() || hold.is_some()).then_some(TouchGesture {
+                fingers,
+                mods,
+                start: Instant::now(),
+                start_spread: sample.spread,
+                last_spread: sample.spread,
+                motion: 0.0,
+                pinch,
+                hold,
+            });
+            Vec::new()
+        }
+        Phase::Update => {
+            if let Some(gesture) = active.as_mut() {
+                gesture.last_spread = sample.spread;
+                gesture.motion += sample.dx.abs() + sample.dy.abs();
+            }
+            Vec::new()
+        }
+        Phase::End | Phase::Cancel => {
+            let Some(gesture) = active.take() else {
+                return Vec::new();
+            };
+            if sample.phase == Phase::Cancel {
+                return Vec::new();
+            }
+            let scale = if gesture.start_spread > 1.0 {
+                gesture.last_spread / gesture.start_spread
+            } else {
+                1.0
+            };
+            if gesture.pinch.is_some() && !(0.9..=1.1).contains(&scale) {
+                return vec![
+                    Event::Pinch {
+                        phase: Phase::Begin,
+                        fingers: gesture.fingers,
+                        mods: gesture.mods,
+                        scale: 1.0,
+                    },
+                    Event::Pinch {
+                        phase: Phase::Update,
+                        fingers: gesture.fingers,
+                        mods: gesture.mods,
+                        scale,
+                    },
+                    Event::Pinch {
+                        phase: Phase::End,
+                        fingers: gesture.fingers,
+                        mods: gesture.mods,
+                        scale,
+                    },
+                ];
+            }
+            if gesture.hold.is_some()
+                && gesture.start.elapsed() >= Duration::from_millis(500)
+                && gesture.motion < 40.0
+            {
+                return vec![
+                    Event::Hold {
+                        phase: Phase::Begin,
+                        fingers: gesture.fingers,
+                        mods: gesture.mods,
+                    },
+                    Event::Hold {
+                        phase: Phase::End,
+                        fingers: gesture.fingers,
+                        mods: gesture.mods,
+                    },
+                ];
+            }
+            Vec::new()
         }
     }
 }

@@ -16,9 +16,12 @@
   asks it too and the socket is the second-instance check. (#41)
 - Esc cancels a held session and returns to the window it started from
   (`touchpad-snap` restores the origin and forgets the windows passed). (#43)
-- Pinch and hold triggers on GNOME, with the extension claiming
-  `(fingers, modifiers)` pairs: `{ "type": "pinch", "direction": "in" }` and
-  `{ "type": "hold", "fingers": 3 }`. (#17)
+- Pinch and hold triggers, with `(fingers, modifiers)` claims:
+  `{ "type": "pinch", "direction": "in" }` and
+  `{ "type": "hold", "fingers": 3 }`. GNOME claims them through the extension,
+  libinput reads the native pinch/hold events, and the Windows Precision
+  Touchpad measures contact spread and resting time (delivered when the
+  fingers lift). Tap is not exposed by GNOME, so there is no tap trigger. (#17)
 - Mouse button triggers on Windows, including a held button + wheel
   (`{ "type": "mouse", "button": "back", "scroll": "up" }`), swallowed only
   while a binding matches. (#44)

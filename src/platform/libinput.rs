@@ -165,7 +165,8 @@ use input::event::EventTrait;
 use input::event::device::DeviceEvent;
 #[cfg(feature = "libinput")]
 use input::event::gesture::{
-    GestureEndEvent, GestureEvent, GestureEventCoordinates, GestureEventTrait, GestureSwipeEvent,
+    GestureEndEvent, GestureEvent, GestureEventCoordinates, GestureEventTrait, GestureHoldEvent,
+    GesturePinchEvent, GesturePinchEventTrait, GestureSwipeEvent,
 };
 #[cfg(feature = "libinput")]
 use input::event::keyboard::{KeyState, KeyboardEvent, KeyboardEventTrait};
@@ -226,6 +227,8 @@ impl LibinputInterface for Interface {
 #[cfg(feature = "libinput")]
 pub struct GestureSource {
     claims: Arc<Mutex<Vec<Claim>>>,
+    pinch: Arc<Mutex<Vec<(u32, crate::hotkey::Mods)>>>,
+    hold: Arc<Mutex<Vec<(u32, crate::hotkey::Mods)>>>,
     stop: Arc<AtomicBool>,
 }
 
@@ -234,24 +237,62 @@ impl GestureSource {
     /// Starts the reader thread. `claims` filters which gestures become
     /// [`Event::Swipe`]s; use [`GestureSource::set_claims`] after a config
     /// reload.
-    pub fn spawn(claims: Vec<Claim>, tx: mpsc::Sender<Event>, verbose: bool) -> Self {
+    pub fn spawn(
+        claims: Vec<Claim>,
+        pinch: Vec<(u32, crate::hotkey::Mods)>,
+        hold: Vec<(u32, crate::hotkey::Mods)>,
+        tx: mpsc::Sender<Event>,
+        verbose: bool,
+    ) -> Self {
         let claims = Arc::new(Mutex::new(claims));
+        let pinch = Arc::new(Mutex::new(pinch));
+        let hold = Arc::new(Mutex::new(hold));
         let stop = Arc::new(AtomicBool::new(false));
         let thread_claims = Arc::clone(&claims);
+        let thread_pinch = Arc::clone(&pinch);
+        let thread_hold = Arc::clone(&hold);
         let thread_stop = Arc::clone(&stop);
         let spawned = std::thread::Builder::new()
             .name("touchpad-snap-libinput".into())
-            .spawn(move || run(thread_claims, thread_stop, tx, verbose));
+            .spawn(move || {
+                run(
+                    thread_claims,
+                    thread_pinch,
+                    thread_hold,
+                    thread_stop,
+                    tx,
+                    verbose,
+                )
+            });
         if let Err(e) = spawned {
             eprintln!("touchpad-snap: could not start the libinput gesture thread: {e}");
         }
-        Self { claims, stop }
+        Self {
+            claims,
+            pinch,
+            hold,
+            stop,
+        }
     }
 
     /// Replaces the set of claims after a config reload.
     pub fn set_claims(&self, claims: Vec<Claim>) {
         if let Ok(mut current) = self.claims.lock() {
             *current = claims;
+        }
+    }
+
+    /// Replaces the pinch/hold claims after a config reload.
+    pub fn set_gesture_claims(
+        &self,
+        pinch: Vec<(u32, crate::hotkey::Mods)>,
+        hold: Vec<(u32, crate::hotkey::Mods)>,
+    ) {
+        if let Ok(mut current) = self.pinch.lock() {
+            *current = pinch;
+        }
+        if let Ok(mut current) = self.hold.lock() {
+            *current = hold;
         }
     }
 }
@@ -266,6 +307,8 @@ impl Drop for GestureSource {
 #[cfg(feature = "libinput")]
 fn run(
     claims: Arc<Mutex<Vec<Claim>>>,
+    pinch_claims: Arc<Mutex<Vec<(u32, crate::hotkey::Mods)>>>,
+    hold_claims: Arc<Mutex<Vec<(u32, crate::hotkey::Mods)>>>,
     stop: Arc<AtomicBool>,
     tx: mpsc::Sender<Event>,
     verbose: bool,
@@ -283,6 +326,8 @@ fn run(
 
     let mut modifiers = ModifierState::default();
     let mut session = SwipeSession::default();
+    let mut pinch: Option<Claim> = None;
+    let mut hold: Option<Claim> = None;
     let mut found_touchpad = false;
     let mut reported_startup = false;
     let mut idle_rounds = 0u32;
@@ -353,6 +398,93 @@ fn run(
                         }
                         _ => {}
                     },
+                    InputEvent::Gesture(GestureEvent::Pinch(event)) => match event {
+                        GesturePinchEvent::Begin(begin) => {
+                            let fingers = begin.finger_count().max(0) as u32;
+                            let mods = modifiers.mods();
+                            if pinch_claims
+                                .lock()
+                                .map(|c| c.contains(&(fingers, mods)))
+                                .unwrap_or(false)
+                            {
+                                let claim = Claim {
+                                    fingers,
+                                    mods,
+                                    apps: Vec::new(),
+                                };
+                                pinch = Some(claim.clone());
+                                if send_pinch(&tx, crate::gesture::Phase::Begin, claim, 1.0)
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                        GesturePinchEvent::Update(update) => {
+                            if let Some(claim) = &pinch
+                                && send_pinch(
+                                    &tx,
+                                    crate::gesture::Phase::Update,
+                                    claim.clone(),
+                                    update.scale(),
+                                )
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        GesturePinchEvent::End(end) => {
+                            if let Some(claim) = pinch.take()
+                                && send_pinch(&tx, crate::gesture::Phase::End, claim, end.scale())
+                                    .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        _ => {}
+                    },
+                    InputEvent::Gesture(GestureEvent::Hold(event)) => match event {
+                        GestureHoldEvent::Begin(begin) => {
+                            let fingers = begin.finger_count().max(0) as u32;
+                            let mods = modifiers.mods();
+                            if hold_claims
+                                .lock()
+                                .map(|c| c.contains(&(fingers, mods)))
+                                .unwrap_or(false)
+                            {
+                                let claim = Claim {
+                                    fingers,
+                                    mods,
+                                    apps: Vec::new(),
+                                };
+                                hold = Some(claim.clone());
+                                if tx
+                                    .send(Event::Hold {
+                                        phase: crate::gesture::Phase::Begin,
+                                        fingers,
+                                        mods,
+                                    })
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                        GestureHoldEvent::End(_) => {
+                            if let Some(claim) = hold.take()
+                                && tx
+                                    .send(Event::Hold {
+                                        phase: crate::gesture::Phase::End,
+                                        fingers: claim.fingers,
+                                        mods: claim.mods,
+                                    })
+                                    .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 }
             }
@@ -389,6 +521,21 @@ fn run(
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+}
+
+#[cfg(feature = "libinput")]
+fn send_pinch(
+    tx: &mpsc::Sender<Event>,
+    phase: crate::gesture::Phase,
+    claim: Claim,
+    scale: f64,
+) -> Result<(), mpsc::SendError<Event>> {
+    tx.send(Event::Pinch {
+        phase,
+        fingers: claim.fingers,
+        mods: claim.mods,
+        scale,
+    })
 }
 
 #[cfg(feature = "libinput")]

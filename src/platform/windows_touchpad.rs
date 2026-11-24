@@ -55,6 +55,9 @@ pub struct Sample {
     pub dx: f64,
     pub dy: f64,
     pub fingers: u32,
+    /// Mean distance of the contacts from their centre, in raw touchpad
+    /// units; 0 with a single contact. Pinch direction is its change.
+    pub spread: f64,
 }
 
 thread_local! {
@@ -218,13 +221,14 @@ fn process_report(handle: HANDLE, report: &mut [u8]) {
             std::collections::hash_map::Entry::Occupied(slot) => slot.into_mut(),
             std::collections::hash_map::Entry::Vacant(slot) => slot.insert(Device::new(handle)?),
         };
-        let (contacts, x, y) = device.parse(report)?;
+        let (contacts, x, y, spread) = device.parse(report)?;
         let (phase, dx, dy) = device.tracker.feed(contacts, x, y)?;
         Some(Sample {
             phase,
             dx,
             dy,
             fingers: device.tracker.fingers(),
+            spread,
         })
     });
     if let Some(sample) = sample {
@@ -323,7 +327,7 @@ impl Device {
     }
 
     /// `(contacts, x, y)` from one report, or `None` if it cannot be parsed.
-    fn parse(&self, report: &mut [u8]) -> Option<(u32, i32, i32)> {
+    fn parse(&self, report: &mut [u8]) -> Option<(u32, i32, i32, f64)> {
         let prep = self.preparsed.as_ptr() as isize;
         let mut contact_count = 0u32;
         // SAFETY: report is one full HID input report for this device.
@@ -343,7 +347,7 @@ impl Device {
             return None;
         }
         if contact_count == 0 {
-            return Some((0, 0, 0));
+            return Some((0, 0, 0, 0.0));
         }
 
         // Tip Switch tells touching contacts from hovering ones; when the
@@ -351,12 +355,15 @@ impl Device {
         let tips = self.tip_count(report);
         let contacts = if tips > 0 { tips } else { contact_count };
 
-        let (x, y) = self.point(report).or_else(|| self.single_point(report))?;
-        Some((contacts, x, y))
+        let (x, y, spread) = self
+            .point(report)
+            .map(|(x, y, spread)| (x, y, spread))
+            .or_else(|| self.single_point(report).map(|(x, y)| (x, y, 0.0)))?;
+        Some((contacts, x, y, spread))
     }
 
-    /// Mean X/Y over every contact in the report.
-    fn point(&self, report: &mut [u8]) -> Option<(i32, i32)> {
+    /// Mean X/Y over every contact in the report, and their spread.
+    fn point(&self, report: &mut [u8]) -> Option<(i32, i32, f64)> {
         let prep = self.preparsed.as_ptr() as isize;
         let max = unsafe { HidP_MaxDataListLength(HidP_Input, prep) } as usize;
         if max == 0 {
@@ -381,7 +388,21 @@ impl Device {
         let data = &data[..len as usize];
         let x = mean_value(data, &self.x_items)?;
         let y = mean_value(data, &self.y_items)?;
-        Some((x.round() as i32, y.round() as i32))
+        let xs = values(data, &self.x_items);
+        let ys = values(data, &self.y_items);
+        let spread = if xs.len() >= 2 && xs.len() == ys.len() {
+            let mx = xs.iter().sum::<f64>() / xs.len() as f64;
+            let my = ys.iter().sum::<f64>() / ys.len() as f64;
+            let sum: f64 = xs
+                .iter()
+                .zip(&ys)
+                .map(|(x, y)| (x - mx).powi(2) + (y - my).powi(2))
+                .sum();
+            (sum / xs.len() as f64).sqrt()
+        } else {
+            0.0
+        };
+        Some((x.round() as i32, y.round() as i32, spread))
     }
 
     /// Fallback for descriptors whose X/Y are single values: ask the parser
@@ -538,6 +559,17 @@ fn logical_range(caps: &[HIDP_VALUE_CAPS], usage: u16) -> Option<f64> {
         let range = cap.LogicalMax as f64 - cap.LogicalMin as f64;
         (range > 0.0).then_some(range)
     })
+}
+
+fn values(data: &[HIDP_DATA], items: &[(u16, u16)]) -> Vec<f64> {
+    data.iter()
+        .filter(|item| {
+            items
+                .iter()
+                .any(|&(lo, hi)| (lo..=hi).contains(&item.DataIndex))
+        })
+        .map(|item| unsafe { item.Anonymous.RawValue } as i32 as f64)
+        .collect()
 }
 
 fn mean_value(data: &[HIDP_DATA], items: &[(u16, u16)]) -> Option<f64> {
