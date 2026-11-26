@@ -304,6 +304,7 @@ same; every name changed with it. After installing touchpad-snap as above:
 | `touchpad-snap status [--json]` | Ask the running daemon for its version, backend, bindings and hotkeys it could not grab. |
 | `touchpad-snap run <action>` / `--binding <name>` | Run one action (or a binding) through the running daemon. |
 | `touchpad-snap events` | Stream the hotkeys, swipes, pinches, holds and mouse triggers the daemon sees, as JSON lines. |
+| `touchpad-snap record [--timeout N]` | Claim the next gesture for a moment and print it as a trigger (used by the settings window). |
 | `touchpad-snap settings` | Open the settings window (needs `touchpad-snap-settings`, installed by `task install` or `cargo install --path crates/gui`). |
 | `touchpad-snap config init\|import\|schema\|path\|check` | Write / import / print the schema of / locate / validate the config file. |
 | `touchpad-snap autostart enable\|disable [--systemd]` | Start the daemon at login (XDG entry by default, systemd user unit with `--systemd`). |

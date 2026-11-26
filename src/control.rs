@@ -381,10 +381,14 @@ fn handle(request: Request, context: &Context) -> Response {
 fn record_trigger(context: &Context, timeout_ms: u64) -> Response {
     let result = (|| -> Result<Value> {
         let backend = crate::platform::connect()?;
-        backend.set_recording(true)?;
         let (tx, rx) = mpsc::channel();
         *context.recorder.lock().expect("control recorder") = Some(tx);
         RECORDING.store(true, Ordering::SeqCst);
+        if let Err(e) = backend.set_recording(true) {
+            RECORDING.store(false, Ordering::SeqCst);
+            *context.recorder.lock().expect("control recorder") = None;
+            return Err(e);
+        }
         let outcome = rx.recv_timeout(std::time::Duration::from_millis(timeout_ms));
         RECORDING.store(false, Ordering::SeqCst);
         *context.recorder.lock().expect("control recorder") = None;

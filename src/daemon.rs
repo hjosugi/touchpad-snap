@@ -614,6 +614,10 @@ impl Handler {
                     let Some((fingers, mods, dx, dy)) = self.record_swipe.take() else {
                         return;
                     };
+                    if phase == Phase::Cancel || dx.abs().max(dy.abs()) < self.cfg.gesture.threshold
+                    {
+                        return;
+                    }
                     let direction = if dx.abs() >= dy.abs() {
                         if dx < 0.0 { "left" } else { "right" }
                     } else if dy < 0.0 {
@@ -635,7 +639,7 @@ impl Handler {
                 mods,
                 scale,
             } => {
-                if phase == Phase::End {
+                if phase == Phase::End && !(0.95..=1.05).contains(&scale) {
                     control::record(serde_json::json!({
                         "event": "pinch",
                         "fingers": fingers,

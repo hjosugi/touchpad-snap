@@ -11,7 +11,6 @@ winget-pkgs fork) after checking `sha256sum -c`.
 """
 
 import argparse
-import hashlib
 import re
 import subprocess
 import sys
@@ -132,7 +131,12 @@ ManifestVersion: 1.6.0
 """)
 
     previous = sorted(
-        (ROOT / "packaging/winget/manifests/h/hjosugi/touchpad-snap").glob("*/hjosugi.touchpad-snap.locale.en-US.yaml")
+        (ROOT / "packaging/winget/manifests/h/hjosugi/touchpad-snap").glob(
+            "*/hjosugi.touchpad-snap.locale.en-US.yaml"
+        ),
+        key=lambda path: tuple(
+            int(part) for part in path.parent.name.split(".")
+        ),
     )
     locale = previous[-1].read_text() if previous else ""
     if locale:

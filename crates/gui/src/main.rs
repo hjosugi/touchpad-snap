@@ -1,3 +1,4 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
 //! `touchpad-snap-settings`: the settings window.
 //!
 //! It edits the same `config.json` the daemon watches, so a save applies
@@ -588,6 +589,9 @@ impl Drop for App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.record_rx.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
         if self.capture_hotkey {
             if let Some((key, mods)) = ctx.input(capture_key) {
                 if key == egui::Key::Escape {
@@ -1531,6 +1535,16 @@ fn hotkey_key_name(key: egui::Key) -> String {
         egui::Key::End => "end".into(),
         egui::Key::PageUp => "pageup".into(),
         egui::Key::PageDown => "pagedown".into(),
+        egui::Key::Num0 => "0".into(),
+        egui::Key::Num1 => "1".into(),
+        egui::Key::Num2 => "2".into(),
+        egui::Key::Num3 => "3".into(),
+        egui::Key::Num4 => "4".into(),
+        egui::Key::Num5 => "5".into(),
+        egui::Key::Num6 => "6".into(),
+        egui::Key::Num7 => "7".into(),
+        egui::Key::Num8 => "8".into(),
+        egui::Key::Num9 => "9".into(),
         other => format!("{other:?}"),
     }
 }
