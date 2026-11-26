@@ -53,7 +53,7 @@ KDE Plasma では小さな KWin スクリプトが拡張の役割を果たしま
 
 Linux では `touchpad-snap autostart enable --systemd` を使うと、XDG の代わりに `~/.config/systemd/user/touchpad-snap.service` を作成して有効化します。systemd がグラフィカルセッションと一緒に起動し、クラッシュ時は `Restart=on-failure` で再起動します。ログは `journalctl --user -u touchpad-snap`、状態は `systemctl --user status touchpad-snap` で確認できます。削除は `touchpad-snap autostart disable --systemd` です。XDG と systemd はどちらか一方だけを使ってください。リリースの tarball にはパッケージ用の `touchpad-snap.service` も同梱されています。
 
-対応する GNOME Shell: 46〜51。CI では 46（Ubuntu 24.04）、48（Debian 13）、49（Fedora 43）、50（Fedora 44）と Arch Linux の最新版（現時点で 51）で e2e テストを実行しています。47 は未テストです。
+daemon は GNOME 拡張 protocol 9 に対応しています（古い拡張でも新しいトリガー以外は動きます）。対応する GNOME Shell: 46〜51。CI では 46（Ubuntu 24.04）、48（Debian 13）、49（Fedora 43）、50（Fedora 44）と Arch Linux の最新版（現時点で 51）で e2e テストを実行しています。47 は未テストです。
 
 ### NixOS / Nix flake
 

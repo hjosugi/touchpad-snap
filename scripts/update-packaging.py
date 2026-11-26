@@ -90,6 +90,38 @@ def update_pkgbuild(version: str, sums: dict[str, str]) -> None:
     path.write_text(text)
 
 
+def update_srcinfo(version: str, sums: dict[str, str]) -> None:
+    """AUR's generated metadata; keep it in sync with PKGBUILD by hand here."""
+    base = f"https://github.com/{REPO}/releases/download/v{version}"
+    ext = UUID + ".shell-extension.zip"
+    lines = [
+        "pkgbase = touchpad-snap-bin",
+        "\tpkgdesc = Bind touchpad gestures and keyboard shortcuts to window and desktop actions (prebuilt)",
+        f"\tpkgver = {version}",
+        "\tpkgrel = 1",
+        f"\turl = https://github.com/{REPO}",
+        "\tarch = x86_64",
+        "\tarch = aarch64",
+        "\tlicense = MIT",
+        "\tmakedepends = unzip",
+        "\tprovides = touchpad-snap",
+        "\tconflicts = touchpad-snap",
+        "\tconflicts = window-jump-bin",
+        "\toptions = !strip",
+    ]
+    for arch, target in (
+        ("x86_64", TARGETS["linux_x64"]),
+        ("aarch64", TARGETS["linux_arm64"]),
+    ):
+        lines.append(f"\tsource_{arch} = {base}/{linux_name(version, target)}")
+        lines.append(f"\tsource_{arch} = {base}/{ext}")
+        lines.append(f"\tsha256sums_{arch} = {sums[linux_name(version, target)]}")
+        lines.append(f"\tsha256sums_{arch} = {sums[ext]}")
+    lines.append("")
+    lines.append("pkgname = touchpad-snap-bin")
+    write(ROOT / "packaging/aur/touchpad-snap-bin/.SRCINFO", "\n".join(lines) + "\n")
+
+
 def update_winget(version: str, sums: dict[str, str]) -> None:
     folder = ROOT / f"packaging/winget/manifests/h/hjosugi/touchpad-snap/{version}"
     write(folder / "hjosugi.touchpad-snap.yaml", f"""PackageIdentifier: hjosugi.touchpad-snap
@@ -153,7 +185,7 @@ ManifestVersion: 1.6.0
 
 
 def update_scoop(version: str, sums: dict[str, str]) -> None:
-    write(ROOT / "packaging/scoop/touchpad-snap.json", f"""{{
+    write(ROOT / "packaging/scoop/bucket/touchpad-snap.json", f"""{{
   "version": "{version}",
   "description": "Bind touchpad gestures and keyboard shortcuts to window and desktop actions.",
   "homepage": "https://github.com/{REPO}",
@@ -213,6 +245,7 @@ def main() -> None:
         sys.exit(f"SHA256SUMS is missing: {', '.join(sorted(missing))}")
 
     update_pkgbuild(args.version, sums)
+    update_srcinfo(args.version, sums)
     update_winget(args.version, sums)
     update_scoop(args.version, sums)
     print(f"Updated packaging for {args.version}")

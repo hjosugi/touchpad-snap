@@ -97,10 +97,7 @@ jobs:
         with:
           ref: ${{ env.TAG }}
       # The layout `gnome-extensions install` expects: metadata.json at the root.
-      - run: |
-          mkdir -p dist
-          cd gnome-extension/touchpad-snap@hjosugi.github.io
-          zip -r ../../dist/touchpad-snap@hjosugi.github.io.shell-extension.zip .
+      - run: python3 scripts/extension-zip.py
       - uses: actions/upload-artifact@v7
         with:
           name: dist-extension
