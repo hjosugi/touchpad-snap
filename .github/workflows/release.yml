@@ -57,7 +57,7 @@ jobs:
         run: |
           $pfx = Join-Path $env:RUNNER_TEMP "touchpad-snap.pfx"
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_PFX_BASE64))
-          foreach ($exe in @("touchpad-snap.exe", "touchpad-snapw.exe")) {
+          foreach ($exe in @("touchpad-snap.exe", "touchpad-snapw.exe", "touchpad-snap-settings.exe")) {
             $path = "target/${{ matrix.target }}/release/$exe"
             & signtool sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $path
             if ($LASTEXITCODE -ne 0) { throw "signtool failed for $exe" }
@@ -150,6 +150,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/update-packaging.py "${TAG#v}"
+      - name: Check the manifests against the published checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-packaging.py "${TAG#v}"
       - uses: actions/upload-artifact@v7
         with:
           name: packaging-${{ env.TAG }}
@@ -157,4 +161,5 @@ jobs:
             packaging/aur/**
             packaging/winget/**
             packaging/scoop/**
+          include-hidden-files: true
           if-no-files-found: error

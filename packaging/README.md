@@ -132,7 +132,7 @@ For a release `X.Y.Z`:
 
 ## Windows code signing (#15)
 
-The release workflow signs the two daemon executables before zipping them when
+The release workflow signs the daemon and settings executables before zipping them when
 the repository variable `WINDOWS_SIGNING` is `true`. It expects:
 
 - secret `WINDOWS_CERT_PFX`: the base64 of a code-signing `.pfx`,

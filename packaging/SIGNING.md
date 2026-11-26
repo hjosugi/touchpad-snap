@@ -11,8 +11,8 @@ Windows runners only:
 
 1. decode `secrets.WINDOWS_CERT_PFX` (base64) to a temporary `.pfx`,
 2. `signtool sign /f <pfx> /p <password> /fd SHA256 /tr <timestamp> /td SHA256`
-   `touchpad-snap.exe` and `touchpad-snapw.exe`,
-3. fail the build unless `Get-AuthenticodeSignature` reports `Valid`,
+   `touchpad-snap.exe`, `touchpad-snapw.exe` and `touchpad-snap-settings.exe`,
+3. fail the build unless `Get-AuthenticodeSignature` reports `Valid` for each,
 4. remove the `.pfx`.
 
 It runs only when the repository variable `WINDOWS_SIGNING` is `true`:
@@ -32,7 +32,7 @@ The `.pfx` must be base64 without line breaks (Linux/macOS:
 | Option | For | Notes |
 |---|---|---|
 | **Azure Trusted Signing** | easiest for OSS | Microsoft-managed short-lived certs; no PFX to store. It uses the `azure/trusted-signing-action` and OIDC/federated credentials instead of the PFX step; replace the `Sign (Windows)` step with that action and set the Azure secrets. SmartScreen reputation is immediate. |
-| **SignPath** (free for OSS) | no certificate purchase | Submit the two exes between build and zip and let `signpath/github-action-submit-signing-request` wait for the signed files. Replace the step; the rest of the workflow stays the same. |
+| **SignPath** (free for OSS) | no certificate purchase | Submit the three exes between build and zip and let `signpath/github-action-submit-signing-request` wait for the signed files. Replace the step; the rest of the workflow stays the same. |
 | **OV/EV certificate as PFX** | what the current step expects | OV builds SmartScreen reputation over downloads; EV (or Azure) skips it. Buy from a CA that allows code signing and export a PFX including the private key. Store it only in the GitHub secret, never in the repo. |
 
 For Azure Trusted Signing the secret names are not fixed by this repo; use the
@@ -49,6 +49,8 @@ Expand-Archive $zip -DestinationPath signed
 Get-AuthenticodeSignature .\signed\touchpad-snap-v0.7.0-x86_64-pc-windows-msvc\touchpad-snap.exe |
   Format-List Status, StatusMessage, SignerCertificate
 Get-AuthenticodeSignature .\signed\touchpad-snap-v0.7.0-x86_64-pc-windows-msvc\touchpad-snapw.exe |
+  Format-List Status
+Get-AuthenticodeSignature .\signed\touchpad-snap-v0.7.0-x86_64-pc-windows-msvc\touchpad-snap-settings.exe |
   Format-List Status
 ```
 

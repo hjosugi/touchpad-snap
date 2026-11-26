@@ -26,7 +26,7 @@
       # boots GNOME in a VM and swipes on a virtual touchpad (needs KVM).
       checks = forAllSystems (
         system: pkgs: {
-          inherit (self.packages.${system}) touchpad-snap gnome-shell-extension;
+          inherit (self.packages.${system}) touchpad-snap touchpad-snap-gui gnome-shell-extension;
           # Evaluates the NixOS module, its generated config and the user
           # unit; no KVM and no NixOS system build.
           module-eval = import ./nix/tests/module-eval.nix {
