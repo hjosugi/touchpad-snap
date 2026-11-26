@@ -39,6 +39,7 @@ tasks:
     desc: Install the binary (cargo install) and the GNOME extension into your home directory
     cmds:
       - cargo install --locked --path .
+      - cargo install --locked --path crates/gui
       - mkdir -p '{{.EXTENSION_DIR}}'
       - rm -rf '{{.EXTENSION_DIR}}/{{.UUID}}'
       - cp -r --no-preserve=mode gnome-extension/{{.UUID}} '{{.EXTENSION_DIR}}/{{.UUID}}'
