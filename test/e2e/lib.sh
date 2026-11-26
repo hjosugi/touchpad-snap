@@ -116,6 +116,10 @@ e2e_cleanup() {
     wait 2>/dev/null || true
 }
 [[ -n ${E2E_INNER:-} ]] && trap e2e_cleanup EXIT
+# A cancelled CI job or a timeout sends TERM/INT; turn it into a normal exit so
+# the EXIT trap kills the daemons and the clients started by the test.
+[[ -n ${E2E_INNER:-} ]] && trap 'exit 143' TERM
+[[ -n ${E2E_INNER:-} ]] && trap 'exit 130' INT
 
 fail() {
     echo "FAIL: $*" >&2
